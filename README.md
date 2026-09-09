@@ -62,9 +62,14 @@ reference, not a source or dependency. General SVG normalization uses `usvg`
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test
+python3 tools/check-material-symbols.py
 ```
 
-The core test suite is Rust-only. Android renderer/AOSP conformance remains
-optional and must not become a normal build dependency.
+The core test suite is Rust-only. The optional final command downloads and
+semantically compares the pinned, fixed-seed 100-icon Material Symbols corpus
+with Google's official Android drawables; those Apache-2.0 assets are not
+vendored. Run `bash tools/accept-v1.sh` for the complete V1 acceptance and local
+release packaging gate. Android renderer/AOSP conformance remains optional and
+must not become a normal build dependency.
 
 Licensed under `MIT OR Apache-2.0`.

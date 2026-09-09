@@ -1,0 +1,15 @@
+name: Material Symbols conformance
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  material-symbols:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: python3 tools/check-material-symbols.py

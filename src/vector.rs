@@ -1,0 +1,346 @@
+use usvg::tiny_skia_path::{PathSegment, Point, Transform};
+
+use crate::analysis::{Compatibility, Diagnostic, DiagnosticCode, Metrics, Severity};
+
+#[derive(Clone, Debug)]
+pub struct VectorDrawable {
+    pub width_dp: f32,
+    pub height_dp: f32,
+    pub viewport_width: f32,
+    pub viewport_height: f32,
+    pub children: Vec<VectorPath>,
+}
+
+#[derive(Clone, Debug)]
+pub struct VectorPath {
+    pub path_data: PathData,
+    pub fill: Option<Color>,
+    pub fill_alpha: f32,
+    pub fill_rule: FillRule,
+    pub stroke: Option<Color>,
+    pub stroke_alpha: f32,
+    pub stroke_width: f32,
+    pub stroke_cap: LineCap,
+    pub stroke_join: LineJoin,
+    pub stroke_miter: f32,
+}
+
+#[derive(Clone, Debug)]
+pub struct PathData(pub Vec<PathCommand>);
+
+#[derive(Clone, Debug)]
+pub enum PathCommand {
+    Move(f32, f32),
+    Line(f32, f32),
+    Quad(f32, f32, f32, f32),
+    Cubic(f32, f32, f32, f32, f32, f32),
+    Close,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Color(pub u8, pub u8, pub u8);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FillRule {
+    NonZero,
+    EvenOdd,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LineCap {
+    Butt,
+    Round,
+    Square,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LineJoin {
+    Miter,
+    Round,
+    Bevel,
+}
+
+pub(crate) fn lower(
+    tree: &usvg::Tree,
+    compatibility: &mut Compatibility,
+    diagnostics: &mut Vec<Diagnostic>,
+    metrics: &mut Metrics,
+) -> Option<VectorDrawable> {
+    let size = tree.size();
+    metrics.width = size.width();
+    metrics.height = size.height();
+    metrics.viewport_width = size.width();
+    metrics.viewport_height = size.height();
+    metrics.gradients = tree.linear_gradients().len() + tree.radial_gradients().len();
+    metrics.clip_paths = tree.clip_paths().len();
+    metrics.groups = count_groups(tree.root()).saturating_sub(1);
+
+    if metrics.gradients > 0 {
+        unsupported(
+            compatibility,
+            diagnostics,
+            DiagnosticCode::UnsupportedGradient,
+            "gradients require Android complex-color lowering, which is not yet supported",
+        );
+    }
+    if metrics.clip_paths > 0 {
+        unsupported(
+            compatibility,
+            diagnostics,
+            DiagnosticCode::UnsupportedClipPath,
+            "clip paths are detected but not yet lowered",
+        );
+    }
+
+    let mut paths = Vec::new();
+    visit_group(tree.root(), &mut paths, compatibility, diagnostics, metrics);
+    if compatibility.convertible() {
+        Some(VectorDrawable {
+            width_dp: size.width(),
+            height_dp: size.height(),
+            viewport_width: size.width(),
+            viewport_height: size.height(),
+            children: paths,
+        })
+    } else {
+        None
+    }
+}
+
+fn count_groups(group: &usvg::Group) -> usize {
+    1 + group
+        .children()
+        .iter()
+        .filter_map(|node| match node {
+            usvg::Node::Group(group) => Some(count_groups(group)),
+            _ => None,
+        })
+        .sum::<usize>()
+}
+
+fn visit_group(
+    group: &usvg::Group,
+    output: &mut Vec<VectorPath>,
+    compatibility: &mut Compatibility,
+    diagnostics: &mut Vec<Diagnostic>,
+    metrics: &mut Metrics,
+) {
+    if group.opacity().get() < 1.0 {
+        unsupported(
+            compatibility,
+            diagnostics,
+            DiagnosticCode::UnsupportedPaint,
+            "group opacity cannot be represented without changing overlap semantics",
+        );
+    }
+    if group.mask().is_some()
+        || !group.filters().is_empty()
+        || group.blend_mode() != usvg::BlendMode::Normal
+        || group.isolate()
+    {
+        unsupported(
+            compatibility,
+            diagnostics,
+            DiagnosticCode::UnsupportedPaint,
+            "the normalized tree requires unsupported masking, filtering, or compositing",
+        );
+    }
+    for node in group.children() {
+        match node {
+            usvg::Node::Group(group) => {
+                visit_group(group, output, compatibility, diagnostics, metrics)
+            }
+            usvg::Node::Path(path) => {
+                if !path.is_visible() {
+                    continue;
+                }
+                metrics.paths += 1;
+                let data = transformed_path(path);
+                metrics.path_commands += data.0.len();
+                let fill = path.fill().and_then(|fill| {
+                    color(fill.paint(), compatibility, diagnostics)
+                        .map(|color| (color, fill.opacity().get(), map_fill_rule(fill.rule())))
+                });
+                let stroke = path.stroke().and_then(|stroke| {
+                    if stroke.dasharray().is_some() {
+                        unsupported(
+                            compatibility,
+                            diagnostics,
+                            DiagnosticCode::UnsupportedPaint,
+                            "dashed strokes cannot be represented by VectorDrawable",
+                        );
+                    }
+                    if stroke.linejoin() == usvg::LineJoin::MiterClip {
+                        unsupported(
+                            compatibility,
+                            diagnostics,
+                            DiagnosticCode::UnsupportedPaint,
+                            "miter-clip stroke joins cannot be represented by VectorDrawable",
+                        );
+                    }
+                    color(stroke.paint(), compatibility, diagnostics).map(|color| {
+                        let scale = stroke_scale(path.abs_transform(), compatibility, diagnostics);
+                        (
+                            color,
+                            stroke.opacity().get(),
+                            stroke.width().get() * scale,
+                            map_cap(stroke.linecap()),
+                            map_join(stroke.linejoin()),
+                            stroke.miterlimit().get(),
+                        )
+                    })
+                });
+                if fill.is_some()
+                    && stroke.is_some()
+                    && path.paint_order() == usvg::PaintOrder::StrokeAndFill
+                {
+                    unsupported(
+                        compatibility,
+                        diagnostics,
+                        DiagnosticCode::UnsupportedPaint,
+                        "stroke-before-fill paint order cannot be represented by VectorDrawable",
+                    );
+                }
+                output.push(VectorPath {
+                    path_data: data,
+                    fill: fill.map(|value| value.0),
+                    fill_alpha: fill.map_or(1.0, |value| value.1),
+                    fill_rule: fill.map_or(FillRule::NonZero, |value| value.2),
+                    stroke: stroke.map(|value| value.0),
+                    stroke_alpha: stroke.map_or(1.0, |value| value.1),
+                    stroke_width: stroke.map_or(0.0, |value| value.2),
+                    stroke_cap: stroke.map_or(LineCap::Butt, |value| value.3),
+                    stroke_join: stroke.map_or(LineJoin::Miter, |value| value.4),
+                    stroke_miter: stroke.map_or(4.0, |value| value.5),
+                });
+            }
+            usvg::Node::Image(_) | usvg::Node::Text(_) => {
+                unsupported(
+                    compatibility,
+                    diagnostics,
+                    DiagnosticCode::UnsupportedPaint,
+                    "normalized SVG contains a non-vector node",
+                );
+            }
+        }
+    }
+}
+
+fn color(
+    paint: &usvg::Paint,
+    compatibility: &mut Compatibility,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Option<Color> {
+    match paint {
+        usvg::Paint::Color(color) => Some(Color(color.red, color.green, color.blue)),
+        _ => {
+            unsupported(
+                compatibility,
+                diagnostics,
+                DiagnosticCode::UnsupportedPaint,
+                "non-solid paint cannot be represented by the current lowering profile",
+            );
+            None
+        }
+    }
+}
+
+fn transformed_path(path: &usvg::Path) -> PathData {
+    let transform = path.abs_transform();
+    PathData(
+        path.data()
+            .segments()
+            .map(|segment| match segment {
+                PathSegment::MoveTo(point) => {
+                    let point = mapped(transform, point);
+                    PathCommand::Move(point.x, point.y)
+                }
+                PathSegment::LineTo(point) => {
+                    let point = mapped(transform, point);
+                    PathCommand::Line(point.x, point.y)
+                }
+                PathSegment::QuadTo(control, point) => {
+                    let control = mapped(transform, control);
+                    let point = mapped(transform, point);
+                    PathCommand::Quad(control.x, control.y, point.x, point.y)
+                }
+                PathSegment::CubicTo(a, b, point) => {
+                    let a = mapped(transform, a);
+                    let b = mapped(transform, b);
+                    let point = mapped(transform, point);
+                    PathCommand::Cubic(a.x, a.y, b.x, b.y, point.x, point.y)
+                }
+                PathSegment::Close => PathCommand::Close,
+            })
+            .collect(),
+    )
+}
+
+fn mapped(transform: Transform, mut point: Point) -> Point {
+    transform.map_point(&mut point);
+    point
+}
+
+fn stroke_scale(
+    transform: Transform,
+    compatibility: &mut Compatibility,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> f32 {
+    let x = transform.sx.hypot(transform.ky);
+    let y = transform.kx.hypot(transform.sy);
+    let dot = transform.sx * transform.kx + transform.ky * transform.sy;
+    let epsilon = 1.0e-4;
+    if (x - y).abs() > epsilon || dot.abs() > epsilon {
+        unsupported(
+            compatibility,
+            diagnostics,
+            DiagnosticCode::UnsupportedStrokeTransform,
+            "a stroked path has a non-uniform or skew transform",
+        );
+    }
+    x
+}
+
+fn unsupported(
+    compatibility: &mut Compatibility,
+    diagnostics: &mut Vec<Diagnostic>,
+    code: DiagnosticCode,
+    message: &str,
+) {
+    compatibility.worsen(Compatibility::Unsupported);
+    if !diagnostics
+        .iter()
+        .any(|item| item.code.as_str() == code.as_str())
+    {
+        diagnostics.push(Diagnostic {
+            code,
+            severity: Severity::Error,
+            message: message.to_owned(),
+            location: None,
+            suggestion: None,
+        });
+    }
+}
+
+fn map_fill_rule(rule: usvg::FillRule) -> FillRule {
+    match rule {
+        usvg::FillRule::NonZero => FillRule::NonZero,
+        usvg::FillRule::EvenOdd => FillRule::EvenOdd,
+    }
+}
+
+fn map_cap(cap: usvg::LineCap) -> LineCap {
+    match cap {
+        usvg::LineCap::Butt => LineCap::Butt,
+        usvg::LineCap::Round => LineCap::Round,
+        usvg::LineCap::Square => LineCap::Square,
+    }
+}
+
+fn map_join(join: usvg::LineJoin) -> LineJoin {
+    match join {
+        usvg::LineJoin::Miter | usvg::LineJoin::MiterClip => LineJoin::Miter,
+        usvg::LineJoin::Round => LineJoin::Round,
+        usvg::LineJoin::Bevel => LineJoin::Bevel,
+    }
+}

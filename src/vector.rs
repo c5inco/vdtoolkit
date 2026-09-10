@@ -93,7 +93,14 @@ pub(crate) fn lower(
     }
 
     let mut paths = Vec::new();
-    visit_group(tree.root(), &mut paths, compatibility, diagnostics, metrics);
+    visit_group(
+        tree.root(),
+        &mut paths,
+        1.0,
+        compatibility,
+        diagnostics,
+        metrics,
+    );
     if compatibility.convertible() {
         Some(VectorDrawable {
             width_dp: size.width(),
@@ -121,11 +128,13 @@ fn count_groups(group: &usvg::Group) -> usize {
 fn visit_group(
     group: &usvg::Group,
     output: &mut Vec<VectorPath>,
+    inherited_alpha: f32,
     compatibility: &mut Compatibility,
     diagnostics: &mut Vec<Diagnostic>,
     metrics: &mut Metrics,
 ) {
-    if group.opacity().get() < 1.0 {
+    let group_alpha = group.opacity().get();
+    if group_alpha < 1.0 && (visible_path_count(group) > 1 || contains_fill_and_stroke(group)) {
         unsupported(
             compatibility,
             diagnostics,
@@ -133,6 +142,7 @@ fn visit_group(
             "group opacity cannot be represented without changing overlap semantics",
         );
     }
+    let inherited_alpha = inherited_alpha * group_alpha;
     if group.mask().is_some()
         || !group.filters().is_empty()
         || group.blend_mode() != usvg::BlendMode::Normal
@@ -147,9 +157,14 @@ fn visit_group(
     }
     for node in group.children() {
         match node {
-            usvg::Node::Group(group) => {
-                visit_group(group, output, compatibility, diagnostics, metrics)
-            }
+            usvg::Node::Group(group) => visit_group(
+                group,
+                output,
+                inherited_alpha,
+                compatibility,
+                diagnostics,
+                metrics,
+            ),
             usvg::Node::Path(path) => {
                 if !path.is_visible() {
                     continue;
@@ -158,8 +173,13 @@ fn visit_group(
                 let data = transformed_path(path);
                 metrics.path_commands += data.0.len();
                 let fill = path.fill().and_then(|fill| {
-                    color(fill.paint(), compatibility, diagnostics)
-                        .map(|color| (color, fill.opacity().get(), map_fill_rule(fill.rule())))
+                    color(fill.paint(), compatibility, diagnostics).map(|color| {
+                        (
+                            color,
+                            fill.opacity().get() * inherited_alpha,
+                            map_fill_rule(fill.rule()),
+                        )
+                    })
                 });
                 let stroke = path.stroke().and_then(|stroke| {
                     if stroke.dasharray().is_some() {
@@ -182,7 +202,7 @@ fn visit_group(
                         let scale = stroke_scale(path.abs_transform(), compatibility, diagnostics);
                         (
                             color,
-                            stroke.opacity().get(),
+                            stroke.opacity().get() * inherited_alpha,
                             stroke.width().get() * scale,
                             map_cap(stroke.linecap()),
                             map_join(stroke.linejoin()),
@@ -224,6 +244,26 @@ fn visit_group(
             }
         }
     }
+}
+
+fn visible_path_count(group: &usvg::Group) -> usize {
+    group
+        .children()
+        .iter()
+        .map(|node| match node {
+            usvg::Node::Group(group) => visible_path_count(group),
+            usvg::Node::Path(path) => usize::from(path.is_visible()),
+            usvg::Node::Image(_) | usvg::Node::Text(_) => 1,
+        })
+        .sum()
+}
+
+fn contains_fill_and_stroke(group: &usvg::Group) -> bool {
+    group.children().iter().any(|node| match node {
+        usvg::Node::Group(group) => contains_fill_and_stroke(group),
+        usvg::Node::Path(path) => path.fill().is_some() && path.stroke().is_some(),
+        usvg::Node::Image(_) | usvg::Node::Text(_) => false,
+    })
 }
 
 fn color(

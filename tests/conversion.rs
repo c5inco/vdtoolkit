@@ -92,6 +92,39 @@ fn resolves_inherited_paint_and_flattens_rotation() {
 }
 
 #[test]
+fn lowers_single_path_opacity_without_changing_compositing() {
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <path d="M2 2H22V22H2Z" fill="#102030" style="opacity: .3"/>
+    </svg>"##;
+
+    let asset = svg2vd::convert(source).unwrap();
+    let xml = svg2vd::xml::write(&asset.drawable);
+    assert_eq!(
+        asset.analysis.compatibility,
+        Compatibility::ExactWithNormalization
+    );
+    assert!(xml.contains("android:fillAlpha=\"0.3\""));
+}
+
+#[test]
+fn rejects_opacity_when_painted_content_can_overlap() {
+    for content in [
+        r##"<path d="M2 2H22V22H2Z" fill="#102030" stroke="#405060" opacity=".3"/>"##,
+        r##"<g opacity=".3"><rect x="2" y="2" width="12" height="12"/><rect x="8" y="8" width="12" height="12"/></g>"##,
+    ] {
+        let source = format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">{content}</svg>"#
+        );
+        let analysis = svg2vd::analyze(source.as_bytes()).unwrap();
+        assert_eq!(analysis.compatibility, Compatibility::Unsupported);
+        assert!(analysis.diagnostics.iter().any(|diagnostic| {
+            matches!(diagnostic.code, DiagnosticCode::UnsupportedPaint)
+                && diagnostic.message.contains("group opacity")
+        }));
+    }
+}
+
+#[test]
 fn normalizes_arc_geometry_and_emits_parseable_xml() {
     let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
         <path d="M2 12A10 10 0 0 1 22 12" fill="none" stroke="#000"/>
@@ -161,6 +194,68 @@ fn rejects_stroke_features_vector_drawable_cannot_express() {
             analysis.compatibility,
             Compatibility::Unsupported,
             "feature was silently accepted: {extra}"
+        );
+    }
+}
+
+#[test]
+fn aosp_edge_fixtures_have_stable_conversion_outcomes() {
+    let convertible = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 8">
+        <g transform="matrix(0 -1 1 0 0 8)" fill="#123456">
+            <path d="M1 1H7V4H1Z"/>
+        </g>
+    </svg>"##;
+    let asset = svg2vd::convert(convertible).unwrap();
+    assert_eq!(
+        asset.analysis.compatibility,
+        Compatibility::ExactWithNormalization
+    );
+    assert_eq!(asset.drawable.width_dp, 12.0);
+    assert_eq!(asset.drawable.height_dp, 8.0);
+
+    let unsupported = [
+        (
+            "percentage dimensions",
+            DiagnosticCode::UnsupportedDimensions,
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="24"><path d="M0 0H1V1Z"/></svg>"##,
+        ),
+        (
+            "gradient paint",
+            DiagnosticCode::UnsupportedGradient,
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><defs><linearGradient id="g"><stop/><stop offset="1"/></linearGradient></defs><path d="M0 0H24V24Z" fill="url(#g)"/></svg>"##,
+        ),
+        (
+            "clip path",
+            DiagnosticCode::UnsupportedClipPath,
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><defs><clipPath id="c"><path d="M0 0H12V24H0Z"/></clipPath></defs><path d="M0 0H24V24H0Z" clip-path="url(#c)"/></svg>"##,
+        ),
+        (
+            "mask",
+            DiagnosticCode::UnsupportedMask,
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><mask id="m"><path d="M0 0H12V24H0Z"/></mask><path d="M0 0H24V24H0Z" mask="url(#m)"/></svg>"##,
+        ),
+        (
+            "pattern paint",
+            DiagnosticCode::UnsupportedPattern,
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><defs><pattern id="p" width="2" height="2"><path d="M0 0H1V1H0Z"/></pattern></defs><path d="M0 0H24V24H0Z" fill="url(#p)"/></svg>"##,
+        ),
+        (
+            "animation",
+            DiagnosticCode::UnsupportedAnimation,
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M0 0H1V1Z"><animate attributeName="opacity" values="0;1"/></path></svg>"##,
+        ),
+    ];
+
+    for (name, expected_code, source) in unsupported {
+        let analysis = svg2vd::analyze(source.as_bytes()).unwrap();
+        assert_eq!(analysis.compatibility, Compatibility::Unsupported, "{name}");
+        assert!(
+            analysis
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code.as_str() == expected_code.as_str()),
+            "{name} did not report {}",
+            expected_code.as_str()
         );
     }
 }

@@ -189,6 +189,9 @@ fn preflight(document: &roxmltree::Document<'_>) -> (Compatibility, Vec<Diagnost
         if node.has_attribute("transform") {
             mark_normalization(&mut compatibility, &mut diagnostics, location());
         }
+        if has_nondefault_opacity(&node) {
+            mark_normalization(&mut compatibility, &mut diagnostics, location());
+        }
         if node.has_attribute("filter") || style_contains(&node, "filter:") {
             push_unsupported(
                 &mut compatibility,
@@ -271,6 +274,18 @@ fn href<'a, 'input>(node: &roxmltree::Node<'a, 'input>) -> Option<&'a str> {
 fn style_contains(node: &roxmltree::Node<'_, '_>, property: &str) -> bool {
     node.attribute("style")
         .is_some_and(|style| style.to_ascii_lowercase().contains(property))
+}
+
+fn has_nondefault_opacity(node: &roxmltree::Node<'_, '_>) -> bool {
+    let nondefault = |value: &str| value.trim().parse::<f32>() != Ok(1.0);
+    node.attribute("opacity").is_some_and(nondefault)
+        || node.attribute("style").is_some_and(|style| {
+            style.split(';').any(|declaration| {
+                declaration.split_once(':').is_some_and(|(name, value)| {
+                    name.trim().eq_ignore_ascii_case("opacity") && nondefault(value)
+                })
+            })
+        })
 }
 
 fn is_percentage(value: &str) -> bool {

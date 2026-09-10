@@ -65,7 +65,7 @@ jobs:
           directory="svg2vd-${{ github.ref_name }}-${{ matrix.target }}"
           mkdir "$directory"
           cp "target/${{ matrix.target }}/release/${{ matrix.executable }}" "$directory/"
-          cp README.md LICENSE-MIT LICENSE-APACHE "$directory/"
+          cp README.md CHANGELOG.md LICENSE-MIT LICENSE-APACHE "$directory/"
           tar -czf "$directory.tar.gz" "$directory"
           if command -v sha256sum >/dev/null; then
             sha256sum "$directory.tar.gz" > "$directory.tar.gz.sha256"

@@ -4,8 +4,28 @@
 converting, and optimizing SVG assets for Android VectorDrawable. It does not
 require Android Studio, the Android SDK, Gradle, Java, the JVM, or AOSP.
 
+## Install
+
+Download a native archive and its SHA-256 checksum from
+[GitHub Releases](https://github.com/c5inco/svg2vd/releases), or install from
+crates.io:
+
 ```sh
-cargo install --path .
+cargo install svg2vd --locked
+```
+
+To build the current checkout instead:
+
+```sh
+cargo install --path . --locked
+```
+
+`svg2vd` supports Linux x86-64, macOS Intel and Apple Silicon, and Windows
+x86-64 release artifacts. Building from source requires Rust 1.85 or newer.
+
+## Quick start
+
+```sh
 svg2vd convert icon.svg -o ic_icon.xml
 svg2vd check icon.svg
 svg2vd inspect icon.svg --format json
@@ -14,9 +34,20 @@ svg2vd icon.svg -o ic_icon.xml
 ```
 
 Directories are accepted by every command. Directory conversion requires `-o`
-and preserves the input tree below that output directory. `check` exits 0 for
-exactly convertible input, 2 for incompatible input, and 1 for I/O or malformed
-input.
+and preserves the input tree below that output directory. The first positional
+form is shorthand for `convert`.
+
+| Command | Purpose |
+| --- | --- |
+| `convert` | Produce deterministic VectorDrawable XML. |
+| `check` | Test compatibility without writing XML. |
+| `inspect` | Report compatibility, diagnostics, minimum Android API, and metrics. |
+| `optimize` | Convert and safely round numeric precision. |
+
+`check` and `inspect` exit 0 when every input is convertible, 2 when any input
+is incompatible, and 1 for malformed input or I/O errors. `--strict` accepts
+only inputs requiring no normalization. Conversion errors exit 1. JSON reports
+are intended for automation and include stable diagnostic codes.
 
 ## Compatibility profile
 
@@ -93,9 +124,12 @@ current snapshot converts 802 of 812 icons; all 802 outputs are byte-identical
 on repeat.
 
 Android renderer conformance is available as an optional, standalone harness in
-[`tools/android-renderer`](tools/android-renderer/README.md). It converts its SVG
-fixtures with the current binary and verifies actual VectorDrawable pixels on
-API 21, API 24, and a modern Android API. It is not part of Cargo, CI, packaging,
-or the V1 acceptance gate.
+[`tools/android-renderer`](https://github.com/c5inco/svg2vd/tree/main/tools/android-renderer).
+It converts its SVG fixtures with the current binary and verifies actual
+VectorDrawable pixels on API 21, API 24, and a modern Android API. It is not
+part of Cargo, CI, packaging, or the V1 acceptance gate.
+
+See the [changelog](CHANGELOG.md) for release notes. Maintainers can follow the
+[release checklist](https://github.com/c5inco/svg2vd/blob/main/docs/releasing.md).
 
 Licensed under `MIT OR Apache-2.0`.

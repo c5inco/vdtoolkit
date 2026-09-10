@@ -66,6 +66,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 python3 tools/check-material-symbols.py
 python3 tools/check-material-symbols.py --suite twotone-100
+python3 tools/check-studio-icons.py
 ```
 
 The core test suite is Rust-only. The optional corpus commands download and
@@ -77,5 +78,13 @@ tools/accept-v1.sh` for the complete V1 acceptance and local release packaging
 gate. The exhaustive corpus runs manually and before release, not on a timer,
 because its pinned contents are immutable. Android renderer/AOSP conformance
 remains optional and must not become a normal build dependency.
+
+The Studio Icons command is a separate, observational SVG stress suite. It
+checks a content-hashed public snapshot for compatibility, complete conversion,
+and deterministic output, but is not a release gate: the site provides no
+immutable asset archive, explicit asset license, or official VectorDrawables.
+No Studio Icons metadata or artwork is redistributed by this repository. The
+current snapshot converts 771 of 812 icons; all 771 outputs are byte-identical
+on repeat.
 
 Licensed under `MIT OR Apache-2.0`.

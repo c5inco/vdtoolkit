@@ -18,20 +18,43 @@ source constructs. Consequently, source XML is inspected before `usvg`, while
 geometry and computed styles come from the normalized tree. Image resolvers are
 explicitly disabled because their defaults can read local files.
 
-The initial profile deliberately diagnoses gradients and clip paths instead of
-emitting guessed Android XML. AOSP emits these as API-24-era platform resource
-constructs but does not itself encode a min-SDK policy. The profile reports API
-21 only for the currently emitted plain VectorDrawable subset.
+The initial profile deliberately diagnosed gradients and clip paths instead of
+emitting guessed Android XML. Follow-up verification against the framework
+implementation established that `<clip-path>` and `android:pathData` are API 21,
+children render in XML order, and sequential clips intersect. Clip paths do not
+support `android:fillType`; that attribute is available for ordinary paths from
+API 24. The converter now emits one nonzero path per clip definition and uses
+nested VectorDrawable groups to preserve clip scope and intersection. It still
+rejects multi-path unions, even-odd clips, nested clip definitions, and effects
+inside clip definitions rather than changing their semantics.
 
 Focused integration fixtures preserve the pinned AOSP baseline's high-value
 boundaries without copying its implementation: viewBox-only sizing, affine
 matrix normalization, percentage-dimension rejection, and stable rejection of
-gradients, clip paths, masks, patterns, and animation. Google Material corpora
-provide the paired SVG/VectorDrawable geometry checks. The legacy Two Tone set
-is kept separate because its multiple paths and fill alpha exercise compositing
-semantics absent from the outlined sample.
+gradients, complex clips, masks, patterns, and animation. Google Material
+corpora provide the paired SVG/VectorDrawable geometry checks. The legacy Two
+Tone set is kept separate because its multiple paths and fill alpha exercise
+compositing semantics absent from the outlined sample.
 
 The direct dependencies are all available under MIT, Apache-2.0, or a dual
 MIT/Apache-2.0 license. No AOSP source code or Material Symbols asset is included
 in the package. The optional Material test downloads Apache-2.0 assets from an
 exact pinned Google commit.
+
+## Studio Icons stress corpus
+
+`studio-icons.web.app` currently publishes 812 light-theme SVG icons. Its
+hashed metadata module gives every icon a section, name, description, declared
+size, and public SVG URL. A content-hashed observational suite downloads those
+assets transiently and measures compatibility and repeated-output determinism.
+
+The site does not identify a public source repository, explicit asset license,
+or immutable artwork archive. It also provides no paired VectorDrawables.
+Therefore these assets are not vendored and the suite is intentionally excluded
+from CI and release gates. Snapshot drift stops with an actionable digest rather
+than being interpreted as a converter regression.
+
+The pinned snapshot currently converts 771 of 812 icons (426 exact and 345
+exact with normalization), with all 771 byte-identical on repeat. Conservative
+clip-path lowering increased coverage from 622 to 771; the remaining 41 assets
+use masks, filters, a gradient, or other unsupported paint semantics.

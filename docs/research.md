@@ -58,3 +58,13 @@ The pinned snapshot currently converts 771 of 812 icons (426 exact and 345
 exact with normalization), with all 771 byte-identical on repeat. Conservative
 clip-path lowering increased coverage from 622 to 771; the remaining 41 assets
 use masks, filters, a gradient, or other unsupported paint semantics.
+
+Mask triage found 58 definitions across 39 icons. Fifty-six definitions contain
+one opaque white shape; the other two use a white base plus black subtraction.
+Six of the nominally single-shape masks use even-odd geometry, which Android
+clip paths cannot encode because `<clip-path>` has no `android:fillType`.
+Lowering the remaining hard nonzero masks to a mask-region clip followed by a
+geometry clip raises coverage to 802 of 812 icons (426 exact and 376 exact with
+normalization), all deterministic. The eight remaining mask diagnostics are the
+six even-odd definitions and two subtractive definitions; no lossy mask is
+accepted.

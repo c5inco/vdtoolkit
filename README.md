@@ -23,16 +23,18 @@ input.
 The current profile converts dimensions, `viewBox`, paths, primitive shapes,
 `<use>`, inherited styles, nested affine transforms, solid fills, fill opacity,
 fill rules, solid strokes, stroke opacity/width/caps/joins, conservative
-single-path clips, and deterministic XML. Geometry transforms are flattened. A
-stroke may only be flattened through a similarity transform (translation,
-rotation, reflection, and uniform scale).
+single-path clips, hard white single-shape masks, and deterministic XML. Masks
+in that restricted subset are lowered to scoped clip intersections. Geometry
+transforms are flattened. A stroke may only be flattened through a similarity
+transform (translation, rotation, reflection, and uniform scale).
 
-The source preflight rejects DTDs, entity declarations, masks, filters, text,
-images, patterns, animation, external references, unsupported compositing,
-gradients, non-uniformly transformed strokes, and clip semantics VectorDrawable
-cannot represent exactly. A clip definition must resolve to one nonzero path;
-multi-path unions, even-odd rules, nested clips, and paint effects inside clip
-definitions are rejected rather than silently changed.
+The source preflight rejects DTDs, entity declarations, filters, text, images,
+patterns, animation, external references, unsupported compositing, gradients,
+non-uniformly transformed strokes, and clip or mask semantics VectorDrawable
+cannot represent exactly. A clip definition must resolve to one nonzero path.
+A mask must resolve to one fully opaque white nonzero shape. Multi-path unions,
+even-odd rules, alpha or grayscale masks, nested effects, and paint effects
+inside definitions are rejected rather than silently changed.
 
 `Compatibility` has four stable states: `exact`,
 `exact_with_normalization`, `approximate`, and `unsupported`. Conversion only
@@ -84,7 +86,7 @@ checks a content-hashed public snapshot for compatibility, complete conversion,
 and deterministic output, but is not a release gate: the site provides no
 immutable asset archive, explicit asset license, or official VectorDrawables.
 No Studio Icons metadata or artwork is redistributed by this repository. The
-current snapshot converts 771 of 812 icons; all 771 outputs are byte-identical
+current snapshot converts 802 of 812 icons; all 802 outputs are byte-identical
 on repeat.
 
 Licensed under `MIT OR Apache-2.0`.

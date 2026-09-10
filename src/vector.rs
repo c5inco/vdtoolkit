@@ -164,8 +164,7 @@ fn visit_group(
         );
     }
     let inherited_alpha = inherited_alpha * group_alpha;
-    if group.mask().is_some()
-        || !group.filters().is_empty()
+    if !group.filters().is_empty()
         || group.blend_mode() != usvg::BlendMode::Normal
         || group.isolate()
     {
@@ -266,11 +265,12 @@ fn visit_group(
             }
         }
     }
+    let mut clips = Vec::new();
     if let Some(clip_path) = group.clip_path() {
         match lower_clip_path(clip_path, group.abs_transform()) {
             Some(path_data) => {
                 metrics.path_commands += path_data.0.len();
-                children.insert(0, VectorNode::ClipPath(path_data));
+                clips.push(path_data);
             }
             None => unsupported(
                 compatibility,
@@ -279,9 +279,33 @@ fn visit_group(
                 "clip path requires unsupported union, nesting, or even-odd semantics",
             ),
         }
-        output.push(VectorNode::Group(VectorGroup { children }));
-    } else {
+    }
+    if let Some(mask) = group.mask() {
+        match lower_mask(mask, group.abs_transform()) {
+            Some(mask_clips) => {
+                metrics.path_commands += mask_clips
+                    .iter()
+                    .map(|path_data| path_data.0.len())
+                    .sum::<usize>();
+                clips.extend(mask_clips);
+            }
+            None => unsupported(
+                compatibility,
+                diagnostics,
+                DiagnosticCode::UnsupportedMask,
+                "mask requires alpha, luminance, subtraction, nesting, or effects VectorDrawable cannot represent",
+            ),
+        }
+    }
+    if clips.is_empty() {
         output.extend(children);
+    } else {
+        let mut scoped = clips
+            .into_iter()
+            .map(VectorNode::ClipPath)
+            .collect::<Vec<_>>();
+        scoped.extend(children);
+        output.push(VectorNode::Group(VectorGroup { children: scoped }));
     }
 }
 
@@ -325,6 +349,78 @@ fn collect_clip_paths<'a>(group: &'a usvg::Group, paths: &mut Vec<&'a usvg::Path
         }
     }
     Some(())
+}
+
+fn lower_mask(mask: &usvg::Mask, target_transform: Transform) -> Option<Vec<PathData>> {
+    if mask.mask().is_some() || mask.kind() != usvg::MaskType::Luminance {
+        return None;
+    }
+    let mut paths = Vec::new();
+    collect_mask_paths(mask.root(), &mut paths)?;
+    if paths.len() != 1 {
+        return None;
+    }
+    let path = paths[0];
+    let fill = path.fill()?;
+    if fill.rule() == usvg::FillRule::EvenOdd
+        || fill.opacity().get() != 1.0
+        || path.stroke().is_some()
+        || !matches!(fill.paint(), usvg::Paint::Color(color) if *color == usvg::Color::white())
+    {
+        return None;
+    }
+
+    let rect = mask.rect();
+    let region = transformed_rect(
+        rect.left(),
+        rect.top(),
+        rect.right(),
+        rect.bottom(),
+        target_transform,
+    );
+    let geometry = transformed_path_with(path, target_transform.pre_concat(path.abs_transform()));
+    Some(vec![region, geometry])
+}
+
+fn collect_mask_paths<'a>(group: &'a usvg::Group, paths: &mut Vec<&'a usvg::Path>) -> Option<()> {
+    if group.opacity().get() != 1.0
+        || group.clip_path().is_some()
+        || group.mask().is_some()
+        || !group.filters().is_empty()
+        || group.blend_mode() != usvg::BlendMode::Normal
+        || group.isolate()
+    {
+        return None;
+    }
+    for node in group.children() {
+        match node {
+            usvg::Node::Group(group) => collect_mask_paths(group, paths)?,
+            usvg::Node::Path(path) if path.is_visible() => paths.push(path),
+            usvg::Node::Path(_) => {}
+            usvg::Node::Image(_) | usvg::Node::Text(_) => return None,
+        }
+    }
+    Some(())
+}
+
+fn transformed_rect(
+    left: f32,
+    top: f32,
+    right: f32,
+    bottom: f32,
+    transform: Transform,
+) -> PathData {
+    let top_left = mapped(transform, Point::from_xy(left, top));
+    let top_right = mapped(transform, Point::from_xy(right, top));
+    let bottom_right = mapped(transform, Point::from_xy(right, bottom));
+    let bottom_left = mapped(transform, Point::from_xy(left, bottom));
+    PathData(vec![
+        PathCommand::Move(top_left.x, top_left.y),
+        PathCommand::Line(top_right.x, top_right.y),
+        PathCommand::Line(bottom_right.x, bottom_right.y),
+        PathCommand::Line(bottom_left.x, bottom_left.y),
+        PathCommand::Close,
+    ])
 }
 
 fn visible_path_count(group: &usvg::Group) -> usize {

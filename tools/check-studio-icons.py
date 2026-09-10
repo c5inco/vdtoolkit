@@ -19,7 +19,7 @@ DATA_ASSET = "/assets/data-Bk27tcYL.js"
 DATA_SHA256 = "f83e2c3d71d7feedab59b56c24c81b76196a04ccbd3d3b7e65f1f4f2ed3e75d7"
 CORPUS_SHA256 = "110d489ebf80ffc7fbc06e564caca85bca5a997d49a9a4bd57953d95a4af346e"
 ICON_COUNT = 812
-MINIMUM_CONVERTIBLE = 771
+MINIMUM_CONVERTIBLE = 802
 
 
 def fetch(url: str) -> bytes:

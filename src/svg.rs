@@ -97,13 +97,16 @@ fn preflight(document: &roxmltree::Document<'_>) -> (Compatibility, Vec<Diagnost
                     }
                 }
             }
+            "mask" if source_mask_may_lower(&node) => {
+                mark_normalization(&mut compatibility, &mut diagnostics, location())
+            }
             "mask" => push_unsupported(
                 &mut compatibility,
                 &mut diagnostics,
                 DiagnosticCode::UnsupportedMask,
-                "masks cannot be represented exactly by VectorDrawable",
+                "only one fully opaque white mask shape can be lowered exactly",
                 location(),
-                Some("Replace the mask with outlined or clipped path geometry."),
+                Some("Replace alpha, grayscale, or subtractive masking with outlined geometry."),
             ),
             "filter"
                 if node
@@ -290,6 +293,81 @@ fn has_nondefault_opacity(node: &roxmltree::Node<'_, '_>) -> bool {
                 })
             })
         })
+}
+
+fn source_mask_may_lower(mask: &roxmltree::Node<'_, '_>) -> bool {
+    let children = mask
+        .children()
+        .filter(roxmltree::Node::is_element)
+        .collect::<Vec<_>>();
+    if children.len() != 1 {
+        return false;
+    }
+    let shape = children[0];
+    if !matches!(
+        shape.tag_name().name(),
+        "path" | "rect" | "circle" | "ellipse" | "polygon" | "polyline"
+    ) || shape.children().any(|child| child.is_element())
+    {
+        return false;
+    }
+
+    let fill = shape.attribute("fill").or_else(|| mask.attribute("fill"));
+    if !fill.is_some_and(is_white) || has_nondefault_alpha(mask) || has_nondefault_alpha(&shape) {
+        return false;
+    }
+    if [mask, &shape].into_iter().any(|node| {
+        node.attribute("stroke")
+            .is_some_and(|stroke| !stroke.eq_ignore_ascii_case("none"))
+            || node.has_attribute("filter")
+            || node.has_attribute("mask")
+            || node.has_attribute("clip-path")
+    }) {
+        return false;
+    }
+
+    if mask
+        .attribute("mask-type")
+        .is_some_and(|kind| !kind.eq_ignore_ascii_case("luminance"))
+        || mask.attribute("style").is_some_and(|style| {
+            style
+                .split(';')
+                .filter(|declaration| !declaration.trim().is_empty())
+                .any(|declaration| {
+                    declaration.split_once(':').is_none_or(|(name, value)| {
+                        !name.trim().eq_ignore_ascii_case("mask-type")
+                            || !value.trim().eq_ignore_ascii_case("luminance")
+                    })
+                })
+        })
+    {
+        return false;
+    }
+    for attribute in ["width", "height"] {
+        if mask.attribute(attribute).is_some_and(|value| {
+            value
+                .trim()
+                .parse::<f32>()
+                .map_or(true, |value| value <= 0.0)
+        }) {
+            return false;
+        }
+    }
+    true
+}
+
+fn has_nondefault_alpha(node: &roxmltree::Node<'_, '_>) -> bool {
+    ["opacity", "fill-opacity"].into_iter().any(|attribute| {
+        node.attribute(attribute)
+            .is_some_and(|value| value.trim().parse::<f32>() != Ok(1.0))
+    })
+}
+
+fn is_white(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "white" | "#fff" | "#ffffff" | "rgb(255,255,255)"
+    )
 }
 
 fn is_percentage(value: &str) -> bool {

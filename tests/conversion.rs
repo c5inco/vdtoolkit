@@ -299,6 +299,59 @@ fn lowers_object_bounding_box_clips_to_viewport_geometry() {
 }
 
 #[test]
+fn lowers_opaque_white_masks_to_scoped_clips() {
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <defs><mask id="m" maskUnits="userSpaceOnUse" x="0" y="0" width="20" height="18" fill="#fff">
+            <rect x="2" y="3" width="8" height="9"/>
+        </mask></defs>
+        <g transform="translate(4 5)">
+            <path d="M0 0H20V20H0Z" fill="#123456" mask="url(#m)"/>
+        </g>
+    </svg>"##;
+
+    let asset = svg2vd::convert(source).unwrap();
+    let xml = svg2vd::xml::write(&asset.drawable);
+    assert_eq!(xml.matches("<clip-path").count(), 2);
+    let region = xml.find("M4,5 L24,5 L24,23 L4,23 Z").unwrap();
+    let mask = xml.find("M6,8 L14,8 L14,17 L6,17 Z").unwrap();
+    let path = xml.find("M4,5 L24,5 L24,25 L4,25 Z").unwrap();
+    assert!(region < mask && mask < path);
+    assert_eq!(asset.analysis.minimum_api, Some(21));
+}
+
+#[test]
+fn lowers_object_bounding_box_mask_content() {
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <defs><mask id="m" maskContentUnits="objectBoundingBox" fill="white">
+            <rect x="0" y="0" width=".5" height="1"/>
+        </mask></defs>
+        <rect x="4" y="6" width="8" height="10" fill="#123456" mask="url(#m)"/>
+    </svg>"##;
+
+    let xml = svg2vd::xml::write(&svg2vd::convert(source).unwrap().drawable);
+    assert_eq!(xml.matches("<clip-path").count(), 2);
+    assert!(xml.contains("android:pathData=\"M4,6 L8,6 L8,16 L4,16 Z\""));
+    assert!(xml.contains("android:pathData=\"M4,6 L12,6 L12,16 L4,16 Z\""));
+}
+
+#[test]
+fn rejects_masks_that_are_not_hard_white_geometry() {
+    for source in [
+        br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><mask id="m"><path fill="#888" d="M0 0H12V24H0Z"/></mask><path d="M0 0H24V24H0Z" mask="url(#m)"/></svg>"##.as_slice(),
+        br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><mask id="m"><path fill="#fff" fill-opacity=".5" d="M0 0H12V24H0Z"/></mask><path d="M0 0H24V24H0Z" mask="url(#m)"/></svg>"##.as_slice(),
+        br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><mask id="m"><path fill="#fff" fill-rule="evenodd" d="M0 0H24V24H0ZM4 4V20H20V4Z"/></mask><path d="M0 0H24V24H0Z" mask="url(#m)"/></svg>"##.as_slice(),
+        br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><mask id="m" fill="#000"><path fill="#fff" d="M0 0H24V24H0Z"/><path d="M4 4H20V20H4Z"/></mask><path d="M0 0H24V24H0Z" mask="url(#m)"/></svg>"##.as_slice(),
+    ] {
+        let analysis = svg2vd::analyze(source).unwrap();
+        assert_eq!(analysis.compatibility, Compatibility::Unsupported);
+        assert!(analysis
+            .diagnostics
+            .iter()
+            .any(|diagnostic| matches!(diagnostic.code, DiagnosticCode::UnsupportedMask)));
+    }
+}
+
+#[test]
 fn preserves_nested_clip_intersection_and_scope() {
     let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
         <defs>

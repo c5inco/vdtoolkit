@@ -72,9 +72,13 @@ fn main() -> ExitCode {
 
 fn normalized_args() -> Vec<OsString> {
     let mut args: Vec<_> = std::env::args_os().collect();
-    if let Some(first) = args.get(1).and_then(|value| value.to_str())
-        && !matches!(first, "convert" | "check" | "inspect" | "optimize")
-        && !first.starts_with('-')
+    if args
+        .get(1)
+        .and_then(|value| value.to_str())
+        .is_some_and(|first| {
+            !matches!(first, "convert" | "check" | "inspect" | "optimize")
+                && !first.starts_with('-')
+        })
     {
         args.insert(1, OsString::from("convert"));
     }

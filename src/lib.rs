@@ -1,21 +1,58 @@
-pub mod analysis;
-pub mod error;
-pub mod optimize;
-pub mod svg;
-pub mod vector;
-pub mod xml;
+//! Experimental Rust embedding API for SVG compatibility analysis and
+//! VectorDrawable conversion.
+//!
+//! The command-line interface is the primary V1 product. This API intentionally
+//! exposes only complete analysis and conversion results; its compatibility is
+//! not guaranteed across `0.x` releases.
+//!
+//! # Example
+//!
+//! ```
+//! let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+//!     <path d="M2 2H22V22H2Z" fill="#123456"/>
+//! </svg>"##;
+//! let asset = svg2vd::convert(source)?;
+//! assert_eq!(asset.analysis.minimum_api, Some(21));
+//! assert!(asset.to_xml().contains("<vector"));
+//! # Ok::<(), svg2vd::Error>(())
+//! ```
+
+mod analysis;
+mod error;
+mod optimize;
+mod svg;
+mod vector;
+mod xml;
 
 use std::path::Path;
 
-pub use analysis::{Analysis, Compatibility, Diagnostic, DiagnosticCode, Metrics, Severity};
+pub use analysis::{
+    Analysis, Compatibility, Diagnostic, DiagnosticCode, ElementLocation, Metrics, Severity,
+};
 pub use error::{Error, Result};
-pub use vector::VectorDrawable;
 
+/// A converted SVG and its compatibility analysis.
+#[derive(Clone, Debug)]
 pub struct Asset {
-    pub drawable: VectorDrawable,
+    drawable: vector::VectorDrawable,
+    /// Compatibility, minimum Android API, diagnostics, and source metrics.
     pub analysis: Analysis,
 }
 
+impl Asset {
+    /// Serialize this asset as deterministic Android VectorDrawable XML.
+    pub fn to_xml(&self) -> String {
+        xml::write(&self.drawable)
+    }
+
+    /// Safely reduce numeric precision in the generated drawable.
+    pub fn optimize(&mut self) {
+        optimize::optimize(&mut self.drawable);
+        self.analysis.metrics.estimated_xml_bytes = self.to_xml().len();
+    }
+}
+
+/// Analyze an SVG file without converting it.
 pub fn analyze_file(path: &Path) -> Result<Analysis> {
     let source = std::fs::read(path).map_err(|source| Error::Read {
         path: path.to_owned(),
@@ -24,10 +61,12 @@ pub fn analyze_file(path: &Path) -> Result<Analysis> {
     analyze(&source)
 }
 
+/// Analyze SVG bytes without converting them.
 pub fn analyze(source: &[u8]) -> Result<Analysis> {
     Ok(svg::process(source, false)?.analysis)
 }
 
+/// Convert an SVG file exactly or with safe normalization.
 pub fn convert_file(path: &Path) -> Result<Asset> {
     let source = std::fs::read(path).map_err(|source| Error::Read {
         path: path.to_owned(),
@@ -36,6 +75,7 @@ pub fn convert_file(path: &Path) -> Result<Asset> {
     convert(&source)
 }
 
+/// Convert SVG bytes exactly or with safe normalization.
 pub fn convert(source: &[u8]) -> Result<Asset> {
     let processed = svg::process(source, true)?;
     if !processed.analysis.compatibility.convertible() {

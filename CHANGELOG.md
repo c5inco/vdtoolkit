@@ -18,6 +18,8 @@ follow [Semantic Versioning](https://semver.org/).
   Android API requirements derived from generated output.
 - Stable diagnostics, JSON reports, strict compatibility checks, and rejection
   of unsupported or lossy SVG constructs.
+- A small experimental Rust API for embedding analysis and conversion during
+  the `0.x` series.
 - Paired Material corpus conformance, Studio Icons stress coverage, release
   packaging, and optional Android pixel-renderer verification.
 

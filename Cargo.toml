@@ -18,6 +18,7 @@ include = [
     "/CHANGELOG.md",
     "/LICENSE-MIT",
     "/LICENSE-APACHE",
+    "/tests/**",
 ]
 
 [dependencies]

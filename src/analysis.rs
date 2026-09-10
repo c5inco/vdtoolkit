@@ -1,5 +1,6 @@
 use serde::Serialize;
 
+/// How faithfully an SVG can be represented as a VectorDrawable.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Compatibility {
@@ -10,6 +11,7 @@ pub enum Compatibility {
 }
 
 impl Compatibility {
+    /// Whether conversion is allowed without approximation or data loss.
     pub fn convertible(self) -> bool {
         matches!(self, Self::Exact | Self::ExactWithNormalization)
     }
@@ -19,39 +21,62 @@ impl Compatibility {
     }
 }
 
+/// Compatibility and output requirements discovered for one SVG.
 #[derive(Clone, Debug, Serialize)]
 pub struct Analysis {
+    /// The strongest compatibility classification encountered.
     pub compatibility: Compatibility,
+    /// The minimum verified Android API for converted output, when convertible.
     pub minimum_api: Option<u32>,
+    /// Actionable compatibility and normalization findings.
     pub diagnostics: Vec<Diagnostic>,
+    /// Geometry and output-size measurements.
     pub metrics: Metrics,
 }
 
+/// Measurements collected while analyzing an SVG.
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct Metrics {
+    /// Normalized drawable width.
     pub width: f32,
+    /// Normalized drawable height.
     pub height: f32,
+    /// VectorDrawable viewport width.
     pub viewport_width: f32,
+    /// VectorDrawable viewport height.
     pub viewport_height: f32,
+    /// Number of visible painted paths.
     pub paths: usize,
+    /// Number of emitted path commands, including clip geometry.
     pub path_commands: usize,
+    /// Number of normalized SVG groups.
     pub groups: usize,
+    /// Number of source gradients.
     pub gradients: usize,
+    /// Number of source clip paths.
     pub clip_paths: usize,
+    /// Serialized VectorDrawable size before optional optimization.
     pub estimated_xml_bytes: usize,
 }
 
+/// One compatibility, safety, or normalization finding.
 #[derive(Clone, Debug, Serialize)]
 pub struct Diagnostic {
+    /// Stable machine-readable diagnostic identifier.
     pub code: DiagnosticCode,
+    /// Diagnostic severity.
     pub severity: Severity,
+    /// Human-readable explanation.
     pub message: String,
+    /// Source element location when available.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub location: Option<ElementLocation>,
+    /// Suggested remediation when available.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub suggestion: Option<String>,
 }
 
+/// Diagnostic severity.
 #[derive(Clone, Copy, Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Severity {
@@ -60,13 +85,18 @@ pub enum Severity {
     Info,
 }
 
+/// Location of an SVG element in the source document.
 #[derive(Clone, Debug, Serialize)]
 pub struct ElementLocation {
+    /// Local SVG element name.
     pub element: String,
+    /// One-based source line.
     pub line: u32,
+    /// One-based source column.
     pub column: u32,
 }
 
+/// Stable diagnostic identifier.
 #[derive(Clone, Copy, Debug, Serialize)]
 pub enum DiagnosticCode {
     #[serde(rename = "SVGVD001")]
@@ -102,6 +132,7 @@ pub enum DiagnosticCode {
 }
 
 impl DiagnosticCode {
+    /// Return the stable `SVGVDnnn` identifier.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::UnsupportedMask => "SVGVD001",

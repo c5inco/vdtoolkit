@@ -28,18 +28,24 @@ enum Command {
 
 #[derive(Args)]
 struct ConvertArgs {
+    /// SVG file or directory to convert.
     input: PathBuf,
+    /// Output XML file or directory. Required for directory input.
     #[arg(short, long)]
     output: Option<PathBuf>,
+    /// Reject SVGs that require safe normalization.
     #[arg(long)]
     strict: bool,
 }
 
 #[derive(Args)]
 struct ReportArgs {
+    /// SVG file or directory to inspect.
     input: PathBuf,
+    /// Report format.
     #[arg(long, value_enum, default_value_t = Format::Human)]
     format: Format,
+    /// Treat safe normalization as incompatible.
     #[arg(long)]
     strict: bool,
 }
@@ -109,11 +115,11 @@ fn convert(args: ConvertArgs, optimize: bool) -> Result<bool> {
                 input.display()
             )));
         }
-        let generated_bytes = svg2vd::xml::write(&asset.drawable).len();
+        let generated_bytes = asset.to_xml().len();
         if optimize {
-            svg2vd::optimize::optimize(&mut asset.drawable);
+            asset.optimize();
         }
-        let xml = svg2vd::xml::write(&asset.drawable);
+        let xml = asset.to_xml();
         if optimize {
             let original_bytes = std::fs::metadata(&input)
                 .map(|metadata| metadata.len())

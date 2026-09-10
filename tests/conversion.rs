@@ -1,7 +1,6 @@
 use std::fs;
 use std::process::Command;
 
-use svg2vd::vector::VectorNode;
 use svg2vd::{Compatibility, DiagnosticCode, Error};
 
 #[test]
@@ -12,7 +11,7 @@ fn converts_viewbox_geometry_colors_and_fill_rule() {
     </svg>"##;
 
     let asset = svg2vd::convert(source).unwrap();
-    let xml = svg2vd::xml::write(&asset.drawable);
+    let xml = asset.to_xml();
 
     assert_eq!(asset.analysis.compatibility, Compatibility::Exact);
     assert!(xml.contains("android:width=\"20dp\""));
@@ -34,7 +33,7 @@ fn normalizes_shapes_nested_transforms_and_uniform_strokes() {
     </svg>"##;
 
     let asset = svg2vd::convert(source).unwrap();
-    let xml = svg2vd::xml::write(&asset.drawable);
+    let xml = asset.to_xml();
 
     assert_eq!(
         asset.analysis.compatibility,
@@ -66,13 +65,9 @@ fn normalizes_every_core_shape_and_local_use() {
         Compatibility::ExactWithNormalization
     );
     assert_eq!(asset.analysis.metrics.paths, 7);
-    assert!(
-        asset
-            .drawable
-            .children
-            .iter()
-            .all(|node| matches!(node, VectorNode::Path(path) if !path.path_data.0.is_empty()))
-    );
+    let xml = asset.to_xml();
+    assert_eq!(xml.matches("<path").count(), 7);
+    assert!(!xml.contains("android:pathData=\"\""));
 }
 
 #[test]
@@ -85,7 +80,7 @@ fn resolves_inherited_paint_and_flattens_rotation() {
     </svg>"##;
 
     let asset = svg2vd::convert(source).unwrap();
-    let xml = svg2vd::xml::write(&asset.drawable);
+    let xml = asset.to_xml();
     assert!(xml.contains("android:pathData=\"M-2,1 L-2,3\""));
     assert!(xml.contains("android:fillColor=\"#102030\""));
     assert!(xml.contains("android:strokeColor=\"#405060\""));
@@ -100,7 +95,7 @@ fn lowers_single_path_opacity_without_changing_compositing() {
     </svg>"##;
 
     let asset = svg2vd::convert(source).unwrap();
-    let xml = svg2vd::xml::write(&asset.drawable);
+    let xml = asset.to_xml();
     assert_eq!(
         asset.analysis.compatibility,
         Compatibility::ExactWithNormalization
@@ -132,7 +127,7 @@ fn normalizes_arc_geometry_and_emits_parseable_xml() {
         <path d="M2 12A10 10 0 0 1 22 12" fill="none" stroke="#000"/>
     </svg>"##;
 
-    let xml = svg2vd::xml::write(&svg2vd::convert(source).unwrap().drawable);
+    let xml = svg2vd::convert(source).unwrap().to_xml();
     assert!(xml.contains(" C"), "arc should normalize to cubic geometry");
     assert!(xml.contains("22,12"));
     roxmltree::Document::parse(&xml).unwrap();
@@ -212,8 +207,8 @@ fn aosp_edge_fixtures_have_stable_conversion_outcomes() {
         asset.analysis.compatibility,
         Compatibility::ExactWithNormalization
     );
-    assert_eq!(asset.drawable.width_dp, 12.0);
-    assert_eq!(asset.drawable.height_dp, 8.0);
+    assert_eq!(asset.analysis.metrics.width, 12.0);
+    assert_eq!(asset.analysis.metrics.height, 8.0);
 
     let unsupported = [
         (
@@ -272,7 +267,7 @@ fn lowers_transformed_single_path_clips_with_api_21_ordering() {
     </svg>"##;
 
     let asset = svg2vd::convert(source).unwrap();
-    let xml = svg2vd::xml::write(&asset.drawable);
+    let xml = asset.to_xml();
     let clip = xml.find("<clip-path").unwrap();
     let path = xml.find("<path").unwrap();
     assert!(clip < path, "clip must precede the content it affects");
@@ -292,7 +287,7 @@ fn lowers_object_bounding_box_clips_to_viewport_geometry() {
     </svg>"##;
 
     let asset = svg2vd::convert(source).unwrap();
-    let xml = svg2vd::xml::write(&asset.drawable);
+    let xml = asset.to_xml();
     assert!(xml.contains("android:pathData=\"M4,6 L8,6 L8,16 L4,16 Z\""));
     assert!(xml.contains("android:pathData=\"M4,6 L12,6 L12,16 L4,16 Z\""));
     assert_eq!(asset.analysis.minimum_api, Some(21));
@@ -310,7 +305,7 @@ fn lowers_opaque_white_masks_to_scoped_clips() {
     </svg>"##;
 
     let asset = svg2vd::convert(source).unwrap();
-    let xml = svg2vd::xml::write(&asset.drawable);
+    let xml = asset.to_xml();
     assert_eq!(xml.matches("<clip-path").count(), 2);
     let region = xml.find("M4,5 L24,5 L24,23 L4,23 Z").unwrap();
     let mask = xml.find("M6,8 L14,8 L14,17 L6,17 Z").unwrap();
@@ -329,7 +324,7 @@ fn lowers_object_bounding_box_mask_content() {
     </svg>"##;
 
     let asset = svg2vd::convert(source).unwrap();
-    let xml = svg2vd::xml::write(&asset.drawable);
+    let xml = asset.to_xml();
     assert_eq!(xml.matches("<clip-path").count(), 2);
     assert!(xml.contains("android:pathData=\"M4,6 L8,6 L8,16 L4,16 Z\""));
     assert!(xml.contains("android:pathData=\"M4,6 L12,6 L12,16 L4,16 Z\""));
@@ -368,7 +363,7 @@ fn preserves_nested_clip_intersection_and_scope() {
     </svg>"##;
 
     let asset = svg2vd::convert(source).unwrap();
-    let xml = svg2vd::xml::write(&asset.drawable);
+    let xml = asset.to_xml();
     assert_eq!(xml.matches("<group>").count(), 2);
     assert_eq!(xml.matches("<clip-path").count(), 2);
     let outer_clip = xml.find("M1,0 L21,0 L21,20 L1,20 Z").unwrap();
@@ -399,9 +394,25 @@ fn output_is_deterministic() {
     let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
         <circle cx="12" cy="12" r="8" fill="#ff0055"/>
     </svg>"##;
-    let first = svg2vd::xml::write(&svg2vd::convert(source).unwrap().drawable);
-    let second = svg2vd::xml::write(&svg2vd::convert(source).unwrap().drawable);
+    let first = svg2vd::convert(source).unwrap().to_xml();
+    let second = svg2vd::convert(source).unwrap().to_xml();
     assert_eq!(first.as_bytes(), second.as_bytes());
+}
+
+#[test]
+fn embedding_api_serializes_and_optimizes_an_asset() {
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <path d="M1.234567 2.345678L20.987654 21.876543" fill="#123456"/>
+    </svg>"##;
+    let mut asset = svg2vd::convert(source).unwrap();
+    let before = asset.to_xml();
+
+    asset.optimize();
+    let after = asset.to_xml();
+
+    assert!(after.len() < before.len());
+    assert!(after.contains("M1.235,2.346"));
+    assert_eq!(asset.analysis.metrics.estimated_xml_bytes, after.len());
 }
 
 #[test]

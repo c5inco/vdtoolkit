@@ -49,6 +49,25 @@ is incompatible, and 1 for malformed input or I/O errors. `--strict` accepts
 only inputs requiring no normalization. Conversion errors exit 1. JSON reports
 are intended for automation and include stable diagnostic codes.
 
+## Rust API
+
+Rust programs can embed the same analyzer and converter without launching a
+subprocess:
+
+```rust
+let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+    <path d="M2 2H22V22H2Z" fill="#123456"/>
+</svg>"##;
+let asset = svg2vd::convert(source)?;
+assert_eq!(asset.analysis.minimum_api, Some(21));
+let xml = asset.to_xml();
+# Ok::<(), svg2vd::Error>(())
+```
+
+The CLI is the stable V1 interface. The deliberately small Rust API exposes
+analysis, conversion, XML serialization, and safe optimization, but remains
+experimental and may change between `0.x` releases.
+
 ## Compatibility profile
 
 The current profile converts dimensions, `viewBox`, paths, primitive shapes,

@@ -29,11 +29,12 @@ The gate maps to the V1 product criteria as follows:
    separate shorthand, curve, and filled-area self-tests.
 7. **Core and AOSP-derived edge cases:** tests cover non-zero viewBox origins,
    viewBox-only dimensions, percentage-dimension rejection, matrix transforms,
-   stable gradient/clip/mask/pattern/animation rejection, primitive shapes,
-   arcs, relative/shorthand paths through the corpus, nested translation,
-   scaling and rotation, style inheritance, local `<use>`, fills, fill opacity,
-   even-odd rules, strokes, stroke opacity/width/caps/joins, and unsafe stroke
-   transforms.
+   single-path clips with transformed and object-bounding-box geometry, nested
+   clip intersection and scope, stable rejection of unrepresentable clips and
+   gradient/mask/pattern/animation features, primitive shapes, arcs,
+   relative/shorthand paths through the corpus, nested translation, scaling and
+   rotation, style inheritance, local `<use>`, fills, fill opacity, even-odd
+   rules, strokes, stroke opacity/width/caps/joins, and unsafe stroke transforms.
 8. **No silent loss:** source preflight and normalized-tree checks reject known
    unsupported or lossy constructs before output.
 9. **Actionable errors:** stable diagnostic codes, source locations, optional

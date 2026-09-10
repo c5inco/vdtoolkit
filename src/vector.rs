@@ -8,7 +8,19 @@ pub struct VectorDrawable {
     pub height_dp: f32,
     pub viewport_width: f32,
     pub viewport_height: f32,
-    pub children: Vec<VectorPath>,
+    pub children: Vec<VectorNode>,
+}
+
+#[derive(Clone, Debug)]
+pub enum VectorNode {
+    Group(VectorGroup),
+    Path(VectorPath),
+    ClipPath(PathData),
+}
+
+#[derive(Clone, Debug)]
+pub struct VectorGroup {
+    pub children: Vec<VectorNode>,
 }
 
 #[derive(Clone, Debug)]
@@ -60,6 +72,24 @@ pub enum LineJoin {
     Bevel,
 }
 
+impl VectorDrawable {
+    pub fn minimum_api(&self) -> u32 {
+        if contains_even_odd(&self.children) {
+            24
+        } else {
+            21
+        }
+    }
+}
+
+fn contains_even_odd(nodes: &[VectorNode]) -> bool {
+    nodes.iter().any(|node| match node {
+        VectorNode::Group(group) => contains_even_odd(&group.children),
+        VectorNode::Path(path) => path.fill_rule == FillRule::EvenOdd,
+        VectorNode::ClipPath(_) => false,
+    })
+}
+
 pub(crate) fn lower(
     tree: &usvg::Tree,
     compatibility: &mut Compatibility,
@@ -83,19 +113,10 @@ pub(crate) fn lower(
             "gradients require Android complex-color lowering, which is not yet supported",
         );
     }
-    if metrics.clip_paths > 0 {
-        unsupported(
-            compatibility,
-            diagnostics,
-            DiagnosticCode::UnsupportedClipPath,
-            "clip paths are detected but not yet lowered",
-        );
-    }
-
-    let mut paths = Vec::new();
+    let mut children = Vec::new();
     visit_group(
         tree.root(),
-        &mut paths,
+        &mut children,
         1.0,
         compatibility,
         diagnostics,
@@ -107,7 +128,7 @@ pub(crate) fn lower(
             height_dp: size.height(),
             viewport_width: size.width(),
             viewport_height: size.height(),
-            children: paths,
+            children,
         })
     } else {
         None
@@ -127,7 +148,7 @@ fn count_groups(group: &usvg::Group) -> usize {
 
 fn visit_group(
     group: &usvg::Group,
-    output: &mut Vec<VectorPath>,
+    output: &mut Vec<VectorNode>,
     inherited_alpha: f32,
     compatibility: &mut Compatibility,
     diagnostics: &mut Vec<Diagnostic>,
@@ -155,11 +176,12 @@ fn visit_group(
             "the normalized tree requires unsupported masking, filtering, or compositing",
         );
     }
+    let mut children = Vec::new();
     for node in group.children() {
         match node {
             usvg::Node::Group(group) => visit_group(
                 group,
-                output,
+                &mut children,
                 inherited_alpha,
                 compatibility,
                 diagnostics,
@@ -221,7 +243,7 @@ fn visit_group(
                         "stroke-before-fill paint order cannot be represented by VectorDrawable",
                     );
                 }
-                output.push(VectorPath {
+                children.push(VectorNode::Path(VectorPath {
                     path_data: data,
                     fill: fill.map(|value| value.0),
                     fill_alpha: fill.map_or(1.0, |value| value.1),
@@ -232,7 +254,7 @@ fn visit_group(
                     stroke_cap: stroke.map_or(LineCap::Butt, |value| value.3),
                     stroke_join: stroke.map_or(LineJoin::Miter, |value| value.4),
                     stroke_miter: stroke.map_or(4.0, |value| value.5),
-                });
+                }));
             }
             usvg::Node::Image(_) | usvg::Node::Text(_) => {
                 unsupported(
@@ -244,6 +266,65 @@ fn visit_group(
             }
         }
     }
+    if let Some(clip_path) = group.clip_path() {
+        match lower_clip_path(clip_path, group.abs_transform()) {
+            Some(path_data) => {
+                metrics.path_commands += path_data.0.len();
+                children.insert(0, VectorNode::ClipPath(path_data));
+            }
+            None => unsupported(
+                compatibility,
+                diagnostics,
+                DiagnosticCode::UnsupportedClipPath,
+                "clip path requires unsupported union, nesting, or even-odd semantics",
+            ),
+        }
+        output.push(VectorNode::Group(VectorGroup { children }));
+    } else {
+        output.extend(children);
+    }
+}
+
+fn lower_clip_path(clip_path: &usvg::ClipPath, target_transform: Transform) -> Option<PathData> {
+    if clip_path.clip_path().is_some() {
+        return None;
+    }
+    let mut paths = Vec::new();
+    collect_clip_paths(clip_path.root(), &mut paths)?;
+    if paths.len() != 1 {
+        return None;
+    }
+    let path = paths[0];
+    if path
+        .fill()
+        .is_some_and(|fill| fill.rule() == usvg::FillRule::EvenOdd)
+    {
+        return None;
+    }
+    let transform = target_transform
+        .pre_concat(clip_path.transform())
+        .pre_concat(path.abs_transform());
+    Some(transformed_path_with(path, transform))
+}
+
+fn collect_clip_paths<'a>(group: &'a usvg::Group, paths: &mut Vec<&'a usvg::Path>) -> Option<()> {
+    if group.clip_path().is_some()
+        || group.mask().is_some()
+        || !group.filters().is_empty()
+        || group.blend_mode() != usvg::BlendMode::Normal
+        || group.isolate()
+    {
+        return None;
+    }
+    for node in group.children() {
+        match node {
+            usvg::Node::Group(group) => collect_clip_paths(group, paths)?,
+            usvg::Node::Path(path) if path.is_visible() => paths.push(path),
+            usvg::Node::Path(_) => {}
+            usvg::Node::Image(_) | usvg::Node::Text(_) => return None,
+        }
+    }
+    Some(())
 }
 
 fn visible_path_count(group: &usvg::Group) -> usize {
@@ -286,7 +367,10 @@ fn color(
 }
 
 fn transformed_path(path: &usvg::Path) -> PathData {
-    let transform = path.abs_transform();
+    transformed_path_with(path, path.abs_transform())
+}
+
+fn transformed_path_with(path: &usvg::Path, transform: Transform) -> PathData {
     PathData(
         path.data()
             .segments()

@@ -22,23 +22,25 @@ input.
 
 The current profile converts dimensions, `viewBox`, paths, primitive shapes,
 `<use>`, inherited styles, nested affine transforms, solid fills, fill opacity,
-fill rules, solid strokes, stroke opacity/width/caps/joins, and deterministic
-XML. Geometry transforms are flattened. A stroke may only be flattened through
-a similarity transform (translation, rotation, reflection, and uniform scale).
+fill rules, solid strokes, stroke opacity/width/caps/joins, conservative
+single-path clips, and deterministic XML. Geometry transforms are flattened. A
+stroke may only be flattened through a similarity transform (translation,
+rotation, reflection, and uniform scale).
 
 The source preflight rejects DTDs, entity declarations, masks, filters, text,
 images, patterns, animation, external references, unsupported compositing,
-gradients, clip paths, and non-uniformly transformed strokes. These features are
-never silently discarded. Gradients and clip paths are reported in metrics but
-remain outside the conversion profile in 0.1.0.
+gradients, non-uniformly transformed strokes, and clip semantics VectorDrawable
+cannot represent exactly. A clip definition must resolve to one nonzero path;
+multi-path unions, even-odd rules, nested clips, and paint effects inside clip
+definitions are rejected rather than silently changed.
 
 `Compatibility` has four stable states: `exact`,
 `exact_with_normalization`, `approximate`, and `unsupported`. Conversion only
 accepts the first two. `--strict` accepts only `exact`.
 
-Plain VectorDrawable output targets platform API 21. Future clip-path or complex
-color output will report its independently verified API requirement rather than
-changing this claim silently.
+Plain paths and clip paths target platform API 21. Ordinary paths using
+`android:fillType` require API 24. The analysis report derives the minimum API
+from the emitted drawable instead of assigning one level to every conversion.
 
 ## Security and determinism
 

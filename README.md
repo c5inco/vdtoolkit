@@ -63,13 +63,17 @@ cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test
 python3 tools/check-material-symbols.py
+python3 tools/check-material-symbols.py --suite twotone-100
 ```
 
-The core test suite is Rust-only. The optional final command downloads and
-semantically compares the pinned, fixed-seed 100-icon Material Symbols corpus
+The core test suite is Rust-only. The optional corpus commands download and
+semantically compare pinned, fixed-seed 100-icon outlined and Two Tone corpora
 with Google's official Android drawables; those Apache-2.0 assets are not
-vendored. Run `bash tools/accept-v1.sh` for the complete V1 acceptance and local
-release packaging gate. Android renderer/AOSP conformance remains optional and
-must not become a normal build dependency.
+vendored. Two Tone comparison includes per-path fill alpha. Use `--suite
+outlined-all` for the exhaustive pinned outlined corpus. Run `bash
+tools/accept-v1.sh` for the complete V1 acceptance and local release packaging
+gate. The exhaustive corpus runs manually and before release, not on a timer,
+because its pinned contents are immutable. Android renderer/AOSP conformance
+remains optional and must not become a normal build dependency.
 
 Licensed under `MIT OR Apache-2.0`.

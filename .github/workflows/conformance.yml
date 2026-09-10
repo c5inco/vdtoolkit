@@ -1,15 +1,27 @@
-name: Material Symbols conformance
+name: Material conformance
 
 on:
   workflow_dispatch:
+    inputs:
+      scope:
+        description: Corpus scope
+        required: true
+        default: full
+        type: choice
+        options:
+          - sampled
+          - full
 
 permissions:
   contents: read
 
 jobs:
-  material-symbols:
+  material:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: python3 tools/check-material-symbols.py
+      - run: python3 tools/check-material-symbols.py --suite twotone-100
+      - if: inputs.scope == 'full'
+        run: python3 tools/check-material-symbols.py --suite outlined-all

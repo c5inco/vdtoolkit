@@ -23,6 +23,14 @@ emitting guessed Android XML. AOSP emits these as API-24-era platform resource
 constructs but does not itself encode a min-SDK policy. The profile reports API
 21 only for the currently emitted plain VectorDrawable subset.
 
+Focused integration fixtures preserve the pinned AOSP baseline's high-value
+boundaries without copying its implementation: viewBox-only sizing, affine
+matrix normalization, percentage-dimension rejection, and stable rejection of
+gradients, clip paths, masks, patterns, and animation. Google Material corpora
+provide the paired SVG/VectorDrawable geometry checks. The legacy Two Tone set
+is kept separate because its multiple paths and fill alpha exercise compositing
+semantics absent from the outlined sample.
+
 The direct dependencies are all available under MIT, Apache-2.0, or a dual
 MIT/Apache-2.0 license. No AOSP source code or Material Symbols asset is included
 in the package. The optional Material test downloads Apache-2.0 assets from an

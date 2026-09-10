@@ -13,6 +13,7 @@ cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test --locked
 python3 tools/check-material-symbols.py
+python3 tools/check-material-symbols.py --suite twotone-100
 cargo build --release --locked
 
 install_root=$(mktemp -d)

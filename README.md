@@ -134,6 +134,14 @@ let xml = asset.to_xml();
 The CLI is the stable interface. The Rust API may change between `0.x`
 releases.
 
+## WebAssembly and Figma proof of concept
+
+Browser-oriented `wasm-bindgen` bindings live in `bindings/wasm`. A minimal
+Figma Dev Mode codegen plugin uses those bindings to convert an exact `FRAME`
+selection in Figma's native Code panel, without a visible UI or network access.
+See [the development plugin guide](docs/figma-codegen.md) for build, import,
+test, and plugin-ID setup instructions.
+
 ## Development
 
 ```sh

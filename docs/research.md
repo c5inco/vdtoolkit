@@ -46,6 +46,8 @@ exact pinned Google commit.
 
 ## Studio Icons stress corpus
 
+_Snapshot figures below are as of 2026-09-10 and drift as the site changes._
+
 `studio-icons.web.app` currently publishes 812 light-theme SVG icons. Its
 hashed metadata module gives every icon a section, name, description, declared
 size, and public SVG URL. A content-hashed observational suite downloads those

@@ -48,6 +48,29 @@ official Android pair at the pinned commit. The same exhaustive suite gates
 release builds. It is intentionally not scheduled: upstream bytes cannot change
 without changing the pinned commit.
 
+## Optional checks
+
+These run manually and are not Cargo, CI, or packaging dependencies.
+
+```sh
+python3 tools/check-material-symbols.py                       # 100 outlined icons vs Google drawables
+python3 tools/check-material-symbols.py --suite twotone-100   # 100 Two Tone icons, includes fill alpha
+python3 tools/check-material-symbols.py --suite outlined-all  # exhaustive pinned outlined corpus
+python3 tools/check-studio-icons.py                           # Studio Icons stress suite
+```
+
+The Material corpora download Apache-2.0 assets from the pinned Google commit
+and compare geometry against the official Android drawables. Nothing is
+vendored. The Studio Icons suite is observational only: it checks a
+content-hashed public snapshot for compatibility and deterministic output but is
+not a release gate, because the site publishes no immutable archive, asset
+license, or official VectorDrawables. See
+[research.md](research.md#studio-icons-stress-corpus) for current figures.
+
+[`tools/android-renderer`](../tools/android-renderer) is a standalone harness
+that converts its SVG fixtures with the current binary and verifies rendered
+VectorDrawable pixels on API 21, API 24, and a modern Android API.
+
 The generated local package is written below `target/release-dist/`. Publishing
 or signing a release is intentionally separate because it changes external
 state and is not necessary to validate the V1 implementation.

@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""Semantically compare svg2vd output with 100 official Android drawables."""
+"""Semantically compare svg2vd output with pinned official Android drawables."""
 
+import argparse
 import concurrent.futures
+import math
 import pathlib
 import re
 import shutil
@@ -16,7 +18,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 CARGO = shutil.which("cargo") or str(pathlib.Path.home() / ".cargo/bin/cargo")
 ANDROID = "{http://schemas.android.com/apk/res/android}"
 TOKEN = re.compile(r"[AaCcHhLlMmQqSsTtVvZz]|[-+]?(?:\d*\.\d+|\d+\.?)(?:[eE][-+]?\d+)?")
-ARITY = {"M": 2, "L": 2, "H": 1, "V": 1, "Q": 4, "T": 2, "C": 6, "S": 4}
+ARITY = {"M": 2, "L": 2, "H": 1, "V": 1, "Q": 4, "T": 2, "C": 6, "S": 4, "A": 7}
 
 
 def android_path(svg_path: str) -> str:
@@ -55,8 +57,6 @@ def canonical_path(data: str) -> list[tuple[str, tuple[float, ...]]]:
         if not command:
             raise ValueError(f"path data has no command near token {index}: {data}")
         upper = command.upper()
-        if upper == "A":
-            raise ValueError("arc comparison is not implemented for this corpus")
         arity = ARITY[upper]
         if index + arity > len(tokens) or tokens[index].isalpha():
             raise ValueError(f"incomplete {command} command: {data}")
@@ -110,6 +110,10 @@ def canonical_path(data: str) -> list[tuple[str, tuple[float, ...]]]:
             point = (values[2] + x, values[3] + y) if relative else tuple(values[2:])
             output.append(("C", first + second + point))
             cubic_control, current = second, point
+        elif upper == "A":
+            point = (values[5] + x, values[6] + y) if relative else tuple(values[5:])
+            output.append(("A", tuple(values[:5]) + point))
+            current = point
 
         if upper not in ("Q", "T"):
             quad_control = None
@@ -146,6 +150,11 @@ def simplify_path(
             continue
 
         endpoint = (values[-2], values[-1])
+        if command == "A":
+            if endpoint != current:
+                subpath.append((command, values))
+            current = endpoint
+            continue
         controls = values[:-2]
         is_zero = endpoint == current and all(
             (controls[index], controls[index + 1]) == current
@@ -196,32 +205,69 @@ def point_on_segment(
     return abs(cross) <= 1e-9 and 0.0 <= dot <= squared_length
 
 
-def vector_geometry(path: pathlib.Path) -> tuple[float, float, list[list[tuple[str, tuple[float, ...]]]]]:
+def vector_geometry(
+    path: pathlib.Path,
+) -> tuple[
+    float,
+    float,
+    list[tuple[float, list[tuple[str, tuple[float, ...]]]]],
+]:
     root = ET.parse(path).getroot()
     width = float(root.attrib[ANDROID + "viewportWidth"])
     height = float(root.attrib[ANDROID + "viewportHeight"])
     paths = [
-        canonical_path(node.attrib[ANDROID + "pathData"])
+        (
+            float(node.attrib.get(ANDROID + "fillAlpha", "1")),
+            canonical_path(node.attrib[ANDROID + "pathData"]),
+        )
         for node in root.iter("path")
         if ANDROID + "pathData" in node.attrib
     ]
     return width, height, paths
 
 
-def assert_same_geometry(generated: pathlib.Path, official: pathlib.Path) -> None:
+def assert_same_geometry(
+    generated: pathlib.Path, official: pathlib.Path, compare_alpha: bool
+) -> None:
     generated_width, generated_height, actual = vector_geometry(generated)
     official_width, official_height, expected = vector_geometry(official)
     if len(actual) != len(expected):
         raise AssertionError(f"{generated.name}: path count {len(actual)} != {len(expected)}")
-    for path_index, (actual_path, expected_path) in enumerate(zip(actual, expected)):
+    for path_index, ((actual_alpha, actual_path), (expected_alpha, expected_path)) in enumerate(
+        zip(actual, expected)
+    ):
+        if compare_alpha and abs(actual_alpha - expected_alpha) > 1e-6:
+            raise AssertionError(
+                f"{generated.name}: path {path_index} fill alpha "
+                f"{actual_alpha} != {expected_alpha}"
+            )
+        if paths_numerically_equal(actual_path, expected_path):
+            continue
         actual_contours = flatten(actual_path, generated_width, generated_height)
         expected_contours = flatten(expected_path, official_width, official_height)
         difference = filled_area_difference(actual_contours, expected_contours)
-        if difference > 2e-5:
+        # SVG circles normalize to cubic Béziers while official Android assets
+        # retain arcs; allow only their sub-pixel approximation error.
+        if difference > 5e-5:
             raise AssertionError(
                 f"{generated.name}: path {path_index} differs by "
                 f"{difference:.8f} normalized filled area"
             )
+
+
+def paths_numerically_equal(
+    left: list[tuple[str, tuple[float, ...]]],
+    right: list[tuple[str, tuple[float, ...]]],
+) -> bool:
+    return len(left) == len(right) and all(
+        left_command == right_command
+        and len(left_values) == len(right_values)
+        and all(
+            math.isclose(left_value, right_value, rel_tol=1e-7, abs_tol=1e-5)
+            for left_value, right_value in zip(left_values, right_values)
+        )
+        for (left_command, left_values), (right_command, right_values) in zip(left, right)
+    )
 
 
 def flatten(
@@ -254,8 +300,8 @@ def flatten(
             control = point(values[0], values[1])
             end = point(values[2], values[3])
             start = current
-            for step in range(1, 33):
-                t = step / 32
+            for step in range(1, 65):
+                t = step / 64
                 inverse = 1 - t
                 contour.append(
                     (
@@ -273,8 +319,8 @@ def flatten(
             second = point(values[2], values[3])
             end = point(values[4], values[5])
             start = current
-            for step in range(1, 33):
-                t = step / 32
+            for step in range(1, 65):
+                t = step / 64
                 inverse = 1 - t
                 contour.append(
                     (
@@ -289,10 +335,111 @@ def flatten(
                     )
                 )
             current = end
+        elif command == "A":
+            end = point(values[5], values[6])
+            contour.extend(
+                arc_points(
+                    current,
+                    end,
+                    values[0] / width,
+                    values[1] / height,
+                    values[2],
+                    bool(values[3]),
+                    bool(values[4]),
+                )
+            )
+            current = end
         elif command == "Z":
             finish()
     finish()
     return contours
+
+
+def arc_points(
+    start: tuple[float, float],
+    end: tuple[float, float],
+    radius_x: float,
+    radius_y: float,
+    rotation_degrees: float,
+    large_arc: bool,
+    sweep: bool,
+) -> list[tuple[float, float]]:
+    """Sample an SVG endpoint-parameterized elliptical arc independently."""
+    radius_x, radius_y = abs(radius_x), abs(radius_y)
+    if radius_x == 0 or radius_y == 0 or start == end:
+        return [end]
+    rotation = math.radians(rotation_degrees % 360)
+    cosine, sine = math.cos(rotation), math.sin(rotation)
+    half_x = (start[0] - end[0]) / 2
+    half_y = (start[1] - end[1]) / 2
+    transformed_x = cosine * half_x + sine * half_y
+    transformed_y = -sine * half_x + cosine * half_y
+    scale = (transformed_x / radius_x) ** 2 + (transformed_y / radius_y) ** 2
+    if scale > 1:
+        scale = math.sqrt(scale)
+        radius_x *= scale
+        radius_y *= scale
+    numerator = max(
+        0.0,
+        radius_x**2 * radius_y**2
+        - radius_x**2 * transformed_y**2
+        - radius_y**2 * transformed_x**2,
+    )
+    denominator = (
+        radius_x**2 * transformed_y**2 + radius_y**2 * transformed_x**2
+    )
+    factor = math.sqrt(numerator / denominator) if denominator else 0.0
+    if large_arc == sweep:
+        factor = -factor
+    center_x_prime = factor * radius_x * transformed_y / radius_y
+    center_y_prime = -factor * radius_y * transformed_x / radius_x
+    center_x = (
+        cosine * center_x_prime
+        - sine * center_y_prime
+        + (start[0] + end[0]) / 2
+    )
+    center_y = (
+        sine * center_x_prime
+        + cosine * center_y_prime
+        + (start[1] + end[1]) / 2
+    )
+
+    def angle(first: tuple[float, float], second: tuple[float, float]) -> float:
+        return math.atan2(
+            first[0] * second[1] - first[1] * second[0],
+            first[0] * second[0] + first[1] * second[1],
+        )
+
+    unit_start = (
+        (transformed_x - center_x_prime) / radius_x,
+        (transformed_y - center_y_prime) / radius_y,
+    )
+    unit_end = (
+        (-transformed_x - center_x_prime) / radius_x,
+        (-transformed_y - center_y_prime) / radius_y,
+    )
+    start_angle = angle((1.0, 0.0), unit_start)
+    delta = angle(unit_start, unit_end)
+    if sweep and delta < 0:
+        delta += 2 * math.pi
+    elif not sweep and delta > 0:
+        delta -= 2 * math.pi
+    steps = max(32, math.ceil(abs(delta) / (math.pi / 2)) * 64)
+    points = []
+    for step in range(1, steps + 1):
+        theta = start_angle + delta * step / steps
+        points.append(
+            (
+                center_x
+                + cosine * radius_x * math.cos(theta)
+                - sine * radius_y * math.sin(theta),
+                center_y
+                + sine * radius_x * math.cos(theta)
+                + cosine * radius_y * math.sin(theta),
+            )
+        )
+    points[-1] = end
+    return points
 
 
 def scanline_intervals(
@@ -378,17 +525,118 @@ def verify_oracle() -> None:
     triangle = flatten(canonical_path("M0 0L10 0L0 10Z"), 10, 10)
     assert filled_area_difference(square, same_square) == 0.0
     assert filled_area_difference(square, triangle) > 0.4
+    semicircle = arc_points((0.0, 0.0), (2.0, 0.0), 1.0, 1.0, 0.0, False, True)
+    assert semicircle[-1] == (2.0, 0.0)
+    assert max(abs(y) for _, y in semicircle) > 0.99
+
+
+def manifest_lines(path: pathlib.Path) -> list[str]:
+    return [
+        line
+        for line in path.read_text().splitlines()
+        if line and not line.startswith("#")
+    ]
+
+
+def sample_entries(suite: str) -> list[tuple[str, str]]:
+    if suite == "outlined-100":
+        paths = manifest_lines(ROOT / "tests/material-symbols.txt")
+        entries = [(path, android_path(path)) for path in paths]
+    else:
+        lines = manifest_lines(ROOT / "tests/material-icons-twotone.txt")
+        entries = [
+            (fields[1], fields[2])
+            for line in lines
+            if len(fields := line.split("\t")) == 3
+        ]
+    if len(entries) != 100 or len(set(entries)) != 100:
+        raise SystemExit(f"{suite} manifest must contain exactly 100 unique pairs")
+    return entries
+
+
+def prepare_full_corpus(
+    sources: pathlib.Path, official: pathlib.Path, temporary: pathlib.Path
+) -> int:
+    print(f"Fetching outlined corpus at {COMMIT} with a sparse checkout", flush=True)
+    checkout = temporary / "upstream"
+    subprocess.run(["git", "init", "--quiet", checkout], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            checkout,
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/google/material-design-icons.git",
+        ],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", checkout, "config", "core.sparseCheckout", "true"], check=True
+    )
+    subprocess.run(
+        ["git", "-C", checkout, "config", "core.sparseCheckoutCone", "false"],
+        check=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            checkout,
+            "fetch",
+            "--quiet",
+            "--depth=1",
+            "--filter=blob:none",
+            "origin",
+            COMMIT,
+        ],
+        check=True,
+    )
+    tree_paths = subprocess.run(
+        ["git", "-C", checkout, "ls-tree", "-r", "--name-only", "FETCH_HEAD"],
+        check=True,
+        stdout=subprocess.PIPE,
+        text=True,
+    ).stdout.splitlines()
+    available = set(tree_paths)
+    svg_paths = sorted(
+        path
+        for path in tree_paths
+        if path.startswith("symbols/web/")
+        and "/materialsymbolsoutlined/" in path
+        and path.endswith("_24px.svg")
+        and pathlib.PurePosixPath(path).name
+        == f"{pathlib.PurePosixPath(path).parts[-3]}_24px.svg"
+    )
+    pairs = [(path, android_path(path)) for path in svg_paths]
+    missing = [android for _, android in pairs if android not in available]
+    if missing:
+        raise RuntimeError(f"{len(missing)} outlined SVGs lack official Android pairs")
+    checkout.joinpath(".git/info/sparse-checkout").write_text(
+        "".join(f"/{path}\n/{android}\n" for path, android in pairs)
+    )
+    subprocess.run(
+        ["git", "-C", checkout, "checkout", "--quiet", "--detach", "FETCH_HEAD"],
+        check=True,
+    )
+    print(f"Preparing {len(pairs)} paired outlined assets", flush=True)
+    for index, (svg_path, android) in enumerate(pairs):
+        name = f"{index:05}-{pathlib.PurePosixPath(svg_path).parts[-3]}"
+        shutil.copyfile(checkout / svg_path, sources / f"{name}.svg")
+        shutil.copyfile(checkout / android, official / f"{name}.xml")
+    return len(pairs)
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--suite",
+        choices=("outlined-100", "twotone-100", "outlined-all"),
+        default="outlined-100",
+    )
+    suite = parser.parse_args().suite
     verify_oracle()
-    paths = [
-        line
-        for line in (ROOT / "tests/material-symbols.txt").read_text().splitlines()
-        if line and not line.startswith("#")
-    ]
-    if len(paths) != 100 or len(set(paths)) != 100:
-        raise SystemExit("material-symbols.txt must contain exactly 100 unique paths")
 
     with tempfile.TemporaryDirectory(prefix="svg2vd-material-") as temporary:
         temporary = pathlib.Path(temporary)
@@ -398,14 +646,22 @@ def main() -> None:
         second = temporary / "generated-again"
         for directory in (sources, official, generated, second):
             directory.mkdir()
-        downloads = []
-        for index, path in enumerate(paths):
-            name = f"{index:03}-{path.split('/')[2]}"
-            downloads.extend(
-                [(path, sources / f"{name}.svg"), (android_path(path), official / f"{name}.xml")]
-            )
-        with concurrent.futures.ThreadPoolExecutor(max_workers=12) as executor:
-            list(executor.map(download, downloads))
+        if suite == "outlined-all":
+            count = prepare_full_corpus(sources, official, temporary)
+        else:
+            entries = sample_entries(suite)
+            downloads = []
+            for index, (svg_path, android) in enumerate(entries):
+                name = f"{index:03}-{svg_path.split('/')[2]}"
+                downloads.extend(
+                    [
+                        (svg_path, sources / f"{name}.svg"),
+                        (android, official / f"{name}.xml"),
+                    ]
+                )
+            with concurrent.futures.ThreadPoolExecutor(max_workers=12) as executor:
+                list(executor.map(download, downloads))
+            count = len(entries)
 
         subprocess.run([CARGO, "build", "--release", "--locked"], cwd=ROOT, check=True)
         binary = ROOT / "target/release/svg2vd"
@@ -415,10 +671,18 @@ def main() -> None:
         for first in sorted(generated.glob("*.xml")):
             if first.read_bytes() != (second / first.name).read_bytes():
                 raise AssertionError(f"{first.name}: conversion is not deterministic")
-            assert_same_geometry(first, official / first.name)
+            assert_same_geometry(
+                first, official / first.name, compare_alpha=suite == "twotone-100"
+            )
 
-    print("100 / 100 Material Symbols match official Android geometry")
-    print("100 / 100 Material Symbols produce byte-identical repeated output")
+    label = {
+        "outlined-100": "sampled outlined Material Symbols",
+        "twotone-100": "sampled legacy Two Tone Material Icons",
+        "outlined-all": "pinned outlined Material Symbols",
+    }[suite]
+    semantics = "geometry and fill alpha" if suite == "twotone-100" else "geometry"
+    print(f"{count} / {count} {label} match official Android {semantics}")
+    print(f"{count} / {count} {label} produce byte-identical repeated output")
 
 
 if __name__ == "__main__":

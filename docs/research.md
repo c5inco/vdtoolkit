@@ -19,12 +19,15 @@ geometry and computed styles come from the normalized tree. Image resolvers are
 explicitly disabled because their defaults can read local files.
 
 The initial profile deliberately diagnosed gradients and clip paths instead of
-emitting guessed Android XML. Follow-up verification against the framework
-implementation established that `<clip-path>` and `android:pathData` are API 21,
-children render in XML order, and sequential clips intersect. Clip paths do not
-support `android:fillType`; that attribute is available for ordinary paths from
-API 24. The converter now emits one nonzero path per clip definition and uses
-nested VectorDrawable groups to preserve clip scope and intersection. It still
+emitting guessed Android XML. Renderer verification established that
+`<clip-path>` and `android:pathData` are API 21 and a single transformed clip
+renders correctly there. Android API 21 does not, however, reliably restore a
+clip after a nested group or intersect sequential clips; the same fixtures
+render as intended on API 24 and 34. Drawables containing multiple clips
+therefore report API 24. Clip paths do not support `android:fillType`; that
+attribute is also available for ordinary paths from API 24. The converter emits
+one nonzero path per clip definition and uses nested VectorDrawable groups to
+preserve clip scope and intersection on the supported boundary. It still
 rejects multi-path unions, even-odd clips, nested clip definitions, and effects
 inside clip definitions rather than changing their semantics.
 

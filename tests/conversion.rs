@@ -316,7 +316,7 @@ fn lowers_opaque_white_masks_to_scoped_clips() {
     let mask = xml.find("M6,8 L14,8 L14,17 L6,17 Z").unwrap();
     let path = xml.find("M4,5 L24,5 L24,25 L4,25 Z").unwrap();
     assert!(region < mask && mask < path);
-    assert_eq!(asset.analysis.minimum_api, Some(21));
+    assert_eq!(asset.analysis.minimum_api, Some(24));
 }
 
 #[test]
@@ -328,10 +328,12 @@ fn lowers_object_bounding_box_mask_content() {
         <rect x="4" y="6" width="8" height="10" fill="#123456" mask="url(#m)"/>
     </svg>"##;
 
-    let xml = svg2vd::xml::write(&svg2vd::convert(source).unwrap().drawable);
+    let asset = svg2vd::convert(source).unwrap();
+    let xml = svg2vd::xml::write(&asset.drawable);
     assert_eq!(xml.matches("<clip-path").count(), 2);
     assert!(xml.contains("android:pathData=\"M4,6 L8,6 L8,16 L4,16 Z\""));
     assert!(xml.contains("android:pathData=\"M4,6 L12,6 L12,16 L4,16 Z\""));
+    assert_eq!(asset.analysis.minimum_api, Some(24));
 }
 
 #[test]
@@ -374,7 +376,7 @@ fn preserves_nested_clip_intersection_and_scope() {
     let inner_clip = xml.find("M6,2 L16,2 L16,12 L6,12 Z").unwrap();
     let path = xml.find("M4,0 L24,0 L24,20 L4,20 Z").unwrap();
     assert!(outer_clip < inner_group && inner_group < inner_clip && inner_clip < path);
-    assert_eq!(asset.analysis.minimum_api, Some(21));
+    assert_eq!(asset.analysis.minimum_api, Some(24));
 }
 
 #[test]

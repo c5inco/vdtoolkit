@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.svg2vd.renderer.test">
+    <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="35" />
+    <instrumentation
+        android:name="android.test.InstrumentationTestRunner"
+        android:targetPackage="com.svg2vd.renderer" />
+    <application>
+        <uses-library android:name="android.test.runner" />
+    </application>
+</manifest>

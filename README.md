@@ -40,9 +40,12 @@ inside definitions are rejected rather than silently changed.
 `exact_with_normalization`, `approximate`, and `unsupported`. Conversion only
 accepts the first two. `--strict` accepts only `exact`.
 
-Plain paths and clip paths target platform API 21. Ordinary paths using
-`android:fillType` require API 24. The analysis report derives the minimum API
-from the emitted drawable instead of assigning one level to every conversion.
+Plain paths and a single clip path target platform API 21. Drawables that need
+multiple clips for intersection or scope target API 24 because Android API 21
+does not reliably restore/intersect the clip canvas. Ordinary paths using
+`android:fillType` also require API 24. The analysis report derives the minimum
+API from the emitted drawable instead of assigning one level to every
+conversion.
 
 ## Security and determinism
 
@@ -88,5 +91,11 @@ immutable asset archive, explicit asset license, or official VectorDrawables.
 No Studio Icons metadata or artwork is redistributed by this repository. The
 current snapshot converts 802 of 812 icons; all 802 outputs are byte-identical
 on repeat.
+
+Android renderer conformance is available as an optional, standalone harness in
+[`tools/android-renderer`](tools/android-renderer/README.md). It converts its SVG
+fixtures with the current binary and verifies actual VectorDrawable pixels on
+API 21, API 24, and a modern Android API. It is not part of Cargo, CI, packaging,
+or the V1 acceptance gate.
 
 Licensed under `MIT OR Apache-2.0`.

@@ -74,7 +74,7 @@ pub enum LineJoin {
 
 impl VectorDrawable {
     pub fn minimum_api(&self) -> u32 {
-        if contains_even_odd(&self.children) {
+        if contains_even_odd(&self.children) || count_clip_paths(&self.children) > 1 {
             24
         } else {
             21
@@ -88,6 +88,17 @@ fn contains_even_odd(nodes: &[VectorNode]) -> bool {
         VectorNode::Path(path) => path.fill_rule == FillRule::EvenOdd,
         VectorNode::ClipPath(_) => false,
     })
+}
+
+fn count_clip_paths(nodes: &[VectorNode]) -> usize {
+    nodes
+        .iter()
+        .map(|node| match node {
+            VectorNode::Group(group) => count_clip_paths(&group.children),
+            VectorNode::ClipPath(_) => 1,
+            VectorNode::Path(_) => 0,
+        })
+        .sum()
 }
 
 pub(crate) fn lower(

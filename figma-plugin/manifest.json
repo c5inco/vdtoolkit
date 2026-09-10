@@ -1,0 +1,18 @@
+{
+  "name": "svg2vd Dev Mode Codegen",
+  "id": "REPLACE_WITH_YOUR_FIGMA_PLUGIN_ID",
+  "api": "1.0.0",
+  "main": "dist/code.js",
+  "ui": "dist/ui.html",
+  "editorType": ["dev"],
+  "capabilities": ["codegen"],
+  "codegenLanguages": [
+    {
+      "label": "Android VectorDrawable",
+      "value": "android-vectordrawable"
+    }
+  ],
+  "networkAccess": {
+    "allowedDomains": ["none"]
+  }
+}

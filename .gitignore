@@ -3,3 +3,8 @@
 /tools/android-renderer/compose/.gradle
 /tools/android-renderer/compose/**/build
 /tools/android-renderer/compose/local.properties
+/bindings/wasm/pkg
+/bindings/wasm/target
+/figma-plugin/dist
+/figma-plugin/node_modules
+/figma-plugin/vendor

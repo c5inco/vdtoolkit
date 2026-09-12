@@ -41,14 +41,16 @@ svg2vd optimize icon.svg -o ic_icon.xml   # convert with smaller numbers, same r
 | `inspect` | Report compatibility, diagnostics, minimum Android API, content bounds, and metrics. |
 | `optimize` | Convert, then shorten numbers where it cannot change rendering. |
 
-Every command accepts a file or a directory. `--format json` produces a stable
-report with diagnostic codes for use in CI. `--strict` accepts only input that
-needs no normalization at all.
+Every command accepts a file or a directory. In a directory, a file that fails
+is named on stderr and the remaining files are still processed. `--format json`
+produces a stable report with diagnostic codes for use in CI, and lists a
+`path` and `error` for any file that could not be read or parsed. `--strict`
+accepts only input that needs no normalization at all.
 
 | Exit code | Meaning |
 | --- | --- |
 | 0 | Every input converted, or is convertible. |
-| 1 | Malformed input, I/O error, or a conversion failure. |
+| 1 | At least one file was malformed, unreadable, or failed to convert. |
 | 2 | `check`/`inspect` only: at least one input is incompatible. |
 
 ## Example

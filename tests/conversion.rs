@@ -693,3 +693,59 @@ fn reports_content_bounds_including_strokes_clamped_to_the_viewport() {
             .is_none()
     );
 }
+
+#[test]
+fn cli_directory_runs_report_every_file_and_continue_past_failures() {
+    let temp = tempfile::tempdir().unwrap();
+    let input = temp.path().join("icons");
+    let output = temp.path().join("drawable");
+    fs::create_dir_all(&input).unwrap();
+    let ok = r##"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><path d="M0 0L1 1" fill="#000"/></svg>"##;
+    fs::write(input.join("a_ok.svg"), ok).unwrap();
+    fs::write(input.join("b_broken.svg"), "not svg").unwrap();
+    fs::write(input.join("c_ok.svg"), ok).unwrap();
+    fs::write(
+        input.join("d_text.svg"),
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><text>x</text></svg>"#,
+    )
+    .unwrap();
+    let run = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_svg2vd"))
+            .args(args)
+            .output()
+            .unwrap()
+    };
+
+    let convert = run(&[input.to_str().unwrap(), "-o", output.to_str().unwrap()]);
+    assert_eq!(convert.status.code(), Some(1));
+    assert!(output.join("a_ok.xml").is_file());
+    assert!(output.join("c_ok.xml").is_file());
+    let stderr = String::from_utf8(convert.stderr).unwrap();
+    assert!(stderr.contains("b_broken.svg"), "{stderr}");
+    assert!(stderr.contains("d_text.svg"), "{stderr}");
+    assert!(stderr.contains("2 of 4 SVGs failed"), "{stderr}");
+
+    let check = run(&["check", input.to_str().unwrap(), "--format", "json"]);
+    assert_eq!(check.status.code(), Some(1));
+    let json: serde_json::Value = serde_json::from_slice(&check.stdout).unwrap();
+    let entries = json.as_array().unwrap();
+    assert_eq!(entries.len(), 4);
+    assert!(
+        entries[1]["error"]
+            .as_str()
+            .unwrap()
+            .contains("malformed SVG XML")
+    );
+    assert_eq!(entries[3]["compatibility"], "unsupported");
+    assert!(entries[0]["metrics"]["content_bounds"].is_object());
+
+    let inspect = run(&["inspect", input.to_str().unwrap()]);
+    assert_eq!(inspect.status.code(), Some(1));
+    let stdout = String::from_utf8(inspect.stdout).unwrap();
+    assert!(
+        stdout.contains("Could not analyze: malformed SVG XML"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("1 could not be analyzed"), "{stdout}");
+    assert!(stdout.contains("Content bounds:"), "{stdout}");
+}

@@ -15,6 +15,13 @@ follow [Semantic Versioning](https://semver.org/).
 - `inspect` reports content bounds: the painted area including strokes,
   clamped to the viewport.
 
+### Fixed
+
+- `convert`, `check`, and `inspect` no longer stop at the first failing file in
+  a directory. Each failure is reported with its path, the remaining files are
+  processed, and the command exits 1. JSON reports include an entry with the
+  path and error for files that could not be read or parsed.
+
 ### Changed
 
 - The experimental Rust API now boxes the analysis inside

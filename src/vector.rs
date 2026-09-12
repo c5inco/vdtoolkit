@@ -617,7 +617,7 @@ fn lower_linear_gradient(
     let dx = gradient.x2() - gradient.x1();
     let dy = gradient.y2() - gradient.y1();
     let length_squared = dx * dx + dy * dy;
-    if length_squared <= f32::EPSILON {
+    if length_squared == 0.0 {
         // SVG paints a zero-length linear gradient with its last stop.
         return solid_from_last_stop(&stops);
     }
@@ -637,18 +637,32 @@ fn lower_linear_gradient(
     let direction_y = (inverse.kx * dx + inverse.sy * dy) / length_squared;
     let direction_squared = direction_x * direction_x + direction_y * direction_y;
     let start = mapped(transform, Point::from_xy(gradient.x1(), gradient.y1()));
+    let end_x = start.x + direction_x / direction_squared;
+    let end_y = start.y + direction_y / direction_squared;
+    // Degeneracy is judged on the mapped axis in viewport units: a tiny source
+    // axis under a large transform is a real gradient, while an axis shorter
+    // than the XML writer can express would serialize as a single point.
+    if !(end_x - start.x).hypot(end_y - start.y).is_finite()
+        || (end_x - start.x).hypot(end_y - start.y) < MINIMUM_EXTENT
+    {
+        return solid_from_last_stop(&stops);
+    }
     Some((
         Paint::Linear(LinearGradient {
             start_x: start.x,
             start_y: start.y,
-            end_x: start.x + direction_x / direction_squared,
-            end_y: start.y + direction_y / direction_squared,
+            end_x,
+            end_y,
             stops,
             tile_mode: tile_mode(gradient.spread_method()),
         }),
         1.0,
     ))
 }
+
+/// Smallest gradient extent, in viewport units, that the XML writer's six
+/// decimal places can express. Anything below it would serialize as zero.
+pub const MINIMUM_EXTENT: f32 = 0.000_001;
 
 /// Re-express a radial gradient in viewport coordinates when Android can draw it.
 ///
@@ -690,11 +704,13 @@ fn lower_radial_gradient(
         require_normalization(compatibility, diagnostics);
     }
     let center = mapped(transform, Point::from_xy(gradient.cx(), gradient.cy()));
+    // Android requires a strictly positive radius; keep it representable.
+    let radius = (radius * scale).max(MINIMUM_EXTENT);
     Some((
         Paint::Radial(RadialGradient {
             center_x: center.x,
             center_y: center.y,
-            radius: radius * scale,
+            radius,
             stops,
             tile_mode: tile_mode(gradient.spread_method()),
         }),

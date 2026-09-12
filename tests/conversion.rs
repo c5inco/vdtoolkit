@@ -902,3 +902,48 @@ fn optimize_keeps_gradient_geometry_valid() {
     );
     roxmltree::Document::parse(&xml).unwrap();
 }
+
+#[test]
+fn gradient_degeneracy_is_judged_after_the_gradient_transform() {
+    // A 0.0003-unit axis scaled by 100000 spans 30 viewport units.
+    let scaled = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <defs><linearGradient id="g" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="0.0003" y2="0"
+            gradientTransform="scale(100000)"><stop stop-color="#000"/><stop offset="1" stop-color="#fff"/></linearGradient></defs>
+        <path d="M0 0H24V24H0Z" fill="url(#g)"/>
+    </svg>"##;
+    let xml = svg2vd::convert(scaled).unwrap().to_xml();
+    assert!(
+        xml.contains("aapt"),
+        "scaled gradient must stay a gradient:\n{xml}"
+    );
+    assert_close(attribute(&xml, "endX") - attribute(&xml, "startX"), 30.0);
+
+    // An axis below the writer's resolution would serialize as a point, so it
+    // is painted as the last stop instead.
+    let sub_resolution = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <defs><linearGradient id="g" gradientUnits="userSpaceOnUse" x1="5" y1="5" x2="5.0000004" y2="5">
+            <stop stop-color="#f00"/><stop offset="1" stop-color="#00f"/></linearGradient></defs>
+        <path d="M0 0H24V24H0Z" fill="url(#g)"/>
+    </svg>"##;
+    let xml = svg2vd::convert(sub_resolution).unwrap().to_xml();
+    assert!(
+        !xml.contains("aapt"),
+        "sub-resolution axis must lower to a solid:\n{xml}"
+    );
+    assert!(xml.contains(r##"android:fillColor="#0000FF""##));
+}
+
+#[test]
+fn radial_radius_stays_positive_without_optimization() {
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <defs><radialGradient id="r" gradientUnits="userSpaceOnUse" cx="12" cy="12" r="0.0000004">
+            <stop stop-color="#fff"/><stop offset="1" stop-color="#000"/></radialGradient></defs>
+        <path d="M0 0H24V24H0Z" fill="url(#r)"/>
+    </svg>"##;
+    let xml = svg2vd::convert(source).unwrap().to_xml();
+    let radius = attribute(&xml, "gradientRadius");
+    assert!(
+        radius > 0.0,
+        "unoptimized radius must be positive, got {radius}:\n{xml}"
+    );
+}

@@ -27,7 +27,7 @@ mod xml;
 use std::path::Path;
 
 pub use analysis::{
-    Analysis, Compatibility, Diagnostic, DiagnosticCode, ElementLocation, Metrics, Severity,
+    Analysis, Bounds, Compatibility, Diagnostic, DiagnosticCode, ElementLocation, Metrics, Severity,
 };
 pub use error::{Error, Result};
 
@@ -79,7 +79,7 @@ pub fn convert_file(path: &Path) -> Result<Asset> {
 pub fn convert(source: &[u8]) -> Result<Asset> {
     let processed = svg::process(source, true)?;
     if !processed.analysis.compatibility.convertible() {
-        return Err(Error::Incompatible(processed.analysis));
+        return Err(Error::Incompatible(Box::new(processed.analysis)));
     }
     Ok(Asset {
         drawable: processed

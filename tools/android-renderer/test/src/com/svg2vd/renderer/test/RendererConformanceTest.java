@@ -47,6 +47,24 @@ public final class RendererConformanceTest extends InstrumentationTestCase {
         assertTransparent(bitmap, 230, 120);       // outside outer path
     }
 
+    public void testSkewedLinearGradientPixels() {
+        if (!requireApi24Drawable("skewed_linear_gradient")) return;
+        Bitmap bitmap = render("skewed_linear_gradient");
+        assertPixel(bitmap, 40, 40, 0xFF1267D6);   // above the horizontal color edge
+        assertPixel(bitmap, 220, 40, 0xFF1267D6);  // naive endpoint mapping paints orange
+        assertPixel(bitmap, 20, 200, 0xFFE37A19);  // naive endpoint mapping paints blue
+        assertPixel(bitmap, 200, 200, 0xFFE37A19); // below the edge
+    }
+
+    public void testScaledCircularRadialGradientPixels() {
+        if (!requireApi24Drawable("radial_gradient")) return;
+        Bitmap bitmap = render("radial_gradient");
+        assertPixel(bitmap, 120, 120, 0xFF159A55); // inner band at the scaled center
+        assertPixel(bitmap, 180, 120, 0xFFC52A54); // outer band, 6 units from center
+        assertPixel(bitmap, 120, 60, 0xFFC52A54);  // outer band, vertical axis
+        assertPixel(bitmap, 20, 20, 0xFFC52A54);   // clamped beyond the radius
+    }
+
     private Bitmap render(String name) {
         return render(resourceId(name));
     }

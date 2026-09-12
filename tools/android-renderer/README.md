@@ -12,6 +12,10 @@ Install a JDK plus Android SDK platform and build-tools packages, then run:
 ANDROID_HOME="$HOME/Android/Sdk" tools/android-renderer/build.sh
 ```
 
+The script uses the newest installed platform and build-tools by default. Set
+`PLATFORM_VERSION` (for example `android-36`) or `BUILD_TOOLS_VERSION` to pin
+either one.
+
 The script builds `svg2vd`, converts every SVG in `fixtures/`, inspects each
 asset's minimum API, and places generated XML in `drawable/` or `drawable-v24/`
 as appropriate. It then creates two minimal APKs without Gradle or third-party
@@ -33,7 +37,30 @@ The tests render at 10 pixels per viewport unit. Assertions are at least one
 viewport unit from an edge and allow a maximum channel error of 2 only for
 platform rasterization variance; transparent assertions require alpha <= 2.
 They cover native/transformed clips, nested intersection and clip scope, hard
-white mask geometry plus mask-region clipping, and ordinary even-odd fill. On
+white mask geometry plus mask-region clipping, ordinary even-odd fill, a skewed
+linear gradient, and a uniformly scaled radial gradient. On
 API 21 the single native clip is rendered while multi-clip and even-odd
 resources must be unavailable. On API 24+ all interior, exterior, intersection,
 scope, mask-region, ring, and hole pixels are checked.
+
+## Compose renderer
+
+`compose/` is a small Gradle project that loads the same generated drawables
+with `painterResource` and checks the same pixels through Compose's own
+VectorDrawable parser. Run `build.sh` first so `build/generated/res` exists,
+then:
+
+```sh
+cd tools/android-renderer/compose
+./gradlew assembleDebug assembleDebugAndroidTest
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+adb shell am instrument -w \
+  com.svg2vd.renderer.compose.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+The module's minimum is API 23 because current Compose no longer supports 21.
+Two tests are expected to fail on API 24 and above: `nested_clip_scope` and
+the diagnostic `diag_clip_then_plain_group`. They document a Compose parser
+divergence where a `</group>` closes enclosing clip paths; see `RESULTS.md`.
+The Compose module is not part of Cargo, CI, packaging, or the acceptance gate.

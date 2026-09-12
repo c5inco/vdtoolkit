@@ -6,6 +6,33 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Linear gradients and circular radial gradients on fills and strokes, written
+  as inline `aapt` gradients. Stop opacity and all spread methods are kept, and
+  gradients report API 24 as the minimum. Radial gradients with a focal point,
+  a focal radius, or an elliptical shape are still rejected.
+- `inspect` reports content bounds: the painted area including strokes,
+  clamped to the viewport.
+- Optional Compose renderer harness under `tools/android-renderer/compose`
+  that verifies generated drawables, including gradients, through Jetpack
+  Compose's VectorDrawable parser. It records one Compose divergence: a
+  `</group>` closes enclosing clip paths, so a sibling after a nested group
+  renders unclipped in Compose while the platform clips it correctly.
+
+### Fixed
+
+- `convert`, `check`, and `inspect` no longer stop at the first failing file in
+  a directory. Each failure is reported with its path, the remaining files are
+  processed, and the command exits 1. JSON reports include an entry with the
+  path and error for files that could not be read or parsed.
+
+### Changed
+
+- The experimental Rust API now boxes the analysis inside
+  `Error::Incompatible`. Field access and pattern matches are unchanged; code
+  that moves the analysis out needs to dereference the box.
+
 ## [0.1.0] - 2026-09-10
 
 ### Added

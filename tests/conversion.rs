@@ -217,9 +217,9 @@ fn aosp_edge_fixtures_have_stable_conversion_outcomes() {
             r##"<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="24"><path d="M0 0H1V1Z"/></svg>"##,
         ),
         (
-            "gradient paint",
+            "focal radial gradient",
             DiagnosticCode::UnsupportedGradient,
-            r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><defs><linearGradient id="g"><stop/><stop offset="1"/></linearGradient></defs><path d="M0 0H24V24Z" fill="url(#g)"/></svg>"##,
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><defs><radialGradient id="g" fx=".2"><stop stop-color="#fff"/><stop offset="1"/></radialGradient></defs><path d="M0 0H24V24H0Z" fill="url(#g)"/></svg>"##,
         ),
         (
             "multi-path clip union",
@@ -484,4 +484,534 @@ fn optimize_reports_before_and_after_sizes() {
     assert_eq!(xml.matches("M1.235,2.346").count(), 2);
     assert!(!xml.contains("1.234567"));
     assert!(!xml.contains("2.345678"));
+}
+
+fn attribute(xml: &str, name: &str) -> f32 {
+    let key = format!("android:{name}=\"");
+    let start = xml
+        .find(&key)
+        .unwrap_or_else(|| panic!("missing android:{name} in\n{xml}"))
+        + key.len();
+    let end = xml[start..].find('"').unwrap() + start;
+    xml[start..end].parse().unwrap()
+}
+
+fn assert_close(actual: f32, expected: f32) {
+    assert!(
+        (actual - expected).abs() < 1.0e-3,
+        "expected {expected}, got {actual}"
+    );
+}
+
+#[test]
+fn lowers_user_space_linear_gradient_with_stop_alpha_and_spread() {
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <defs><linearGradient id="g" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="24" y2="0" spreadMethod="reflect">
+            <stop offset="0" stop-color="#3DDC84"/>
+            <stop offset="1" stop-color="#0B6E4F" stop-opacity=".5"/>
+        </linearGradient></defs>
+        <path d="M0 0H24V24H0Z" fill="url(#g)" fill-opacity=".8"/>
+    </svg>"##;
+
+    let asset = svg2vd::convert(source).unwrap();
+    let xml = asset.to_xml();
+    assert_eq!(asset.analysis.compatibility, Compatibility::Exact);
+    assert_eq!(asset.analysis.minimum_api, Some(24));
+    assert!(xml.contains(r#"xmlns:aapt="http://schemas.android.com/aapt""#));
+    assert!(xml.contains(r#"<aapt:attr name="android:fillColor">"#));
+    assert!(!xml.contains("android:fillColor=\""));
+    assert!(xml.contains(r#"android:type="linear""#));
+    assert!(xml.contains(r#"android:tileMode="mirror""#));
+    assert!(xml.contains(r##"<item android:offset="0" android:color="#3DDC84"/>"##));
+    assert!(xml.contains(r##"<item android:offset="1" android:color="#800B6E4F"/>"##));
+    assert!(xml.contains(r#"android:fillAlpha="0.8""#));
+    for (name, expected) in [
+        ("startX", 0.0),
+        ("startY", 0.0),
+        ("endX", 24.0),
+        ("endY", 0.0),
+    ] {
+        assert_close(attribute(&xml, name), expected);
+    }
+    roxmltree::Document::parse(&xml).unwrap();
+}
+
+#[test]
+fn solid_drawables_do_not_declare_the_aapt_namespace() {
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <path d="M0 0H24V24H0Z" fill="#123456"/>
+    </svg>"##;
+    let asset = svg2vd::convert(source).unwrap();
+    assert!(!asset.to_xml().contains("xmlns:aapt"));
+    assert_eq!(asset.analysis.minimum_api, Some(21));
+}
+
+#[test]
+fn maps_object_bounding_box_linear_gradients_to_viewport_coordinates() {
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <defs><linearGradient id="g"><stop stop-color="#000"/><stop offset="1" stop-color="#fff"/></linearGradient></defs>
+        <rect x="4" y="6" width="8" height="10" fill="url(#g)"/>
+    </svg>"##;
+
+    let asset = svg2vd::convert(source).unwrap();
+    let xml = asset.to_xml();
+    assert_eq!(
+        asset.analysis.compatibility,
+        Compatibility::ExactWithNormalization
+    );
+    for (name, expected) in [
+        ("startX", 4.0),
+        ("startY", 6.0),
+        ("endX", 12.0),
+        ("endY", 6.0),
+    ] {
+        assert_close(attribute(&xml, name), expected);
+    }
+}
+
+#[test]
+fn skewed_linear_gradients_follow_the_inverse_transpose() {
+    // skewX keeps horizontal lines horizontal, so a vertical gradient stays
+    // vertical. Mapping only the end point would tilt it to 45 degrees.
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <defs><linearGradient id="g" gradientUnits="userSpaceOnUse" gradientTransform="skewX(45)"
+            x1="0" y1="0" x2="0" y2="10"><stop stop-color="#000"/><stop offset="1" stop-color="#fff"/></linearGradient></defs>
+        <path d="M0 0H10V10H0Z" fill="url(#g)"/>
+    </svg>"##;
+
+    let xml = svg2vd::convert(source).unwrap().to_xml();
+    for (name, expected) in [
+        ("startX", 0.0),
+        ("startY", 0.0),
+        ("endX", 0.0),
+        ("endY", 10.0),
+    ] {
+        assert_close(attribute(&xml, name), expected);
+    }
+}
+
+#[test]
+fn zero_length_linear_gradients_paint_their_last_stop() {
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <defs><linearGradient id="g" gradientUnits="userSpaceOnUse" x1="5" y1="5" x2="5" y2="5">
+            <stop stop-color="#3DDC84"/><stop offset="1" stop-color="#0B6E4F" stop-opacity=".5"/>
+        </linearGradient></defs>
+        <path d="M0 0H24V24H0Z" fill="url(#g)"/>
+    </svg>"##;
+
+    let asset = svg2vd::convert(source).unwrap();
+    let xml = asset.to_xml();
+    assert!(xml.contains(r##"android:fillColor="#0B6E4F""##));
+    assert!(xml.contains(r#"android:fillAlpha="0.5""#));
+    assert!(!xml.contains("aapt"));
+    assert_eq!(asset.analysis.minimum_api, Some(21));
+}
+
+#[test]
+fn lowers_circular_radial_gradients_and_gradient_strokes_under_uniform_scale() {
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <defs>
+            <radialGradient id="r" gradientUnits="userSpaceOnUse" cx="6" cy="6" r="4" spreadMethod="repeat">
+                <stop stop-color="#fff"/><stop offset="1" stop-color="#000"/>
+            </radialGradient>
+            <linearGradient id="s" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="12" y2="0">
+                <stop stop-color="#f00"/><stop offset="1" stop-color="#00f"/>
+            </linearGradient>
+        </defs>
+        <g transform="scale(2)">
+            <path d="M0 0H12V12H0Z" fill="url(#r)" stroke="url(#s)" stroke-width=".5"/>
+        </g>
+    </svg>"##;
+
+    let mut asset = svg2vd::convert(source).unwrap();
+    let xml = asset.to_xml();
+    assert!(xml.contains(r#"android:type="radial""#));
+    assert!(xml.contains(r#"android:tileMode="repeat""#));
+    assert!(xml.contains(r#"<aapt:attr name="android:strokeColor">"#));
+    assert!(xml.contains(r#"android:strokeWidth="1""#));
+    assert_close(attribute(&xml, "centerX"), 12.0);
+    assert_close(attribute(&xml, "centerY"), 12.0);
+    assert_close(attribute(&xml, "gradientRadius"), 8.0);
+    assert_close(attribute(&xml, "endX"), 24.0);
+    assert_eq!(xml.matches("</path>").count(), 1);
+    roxmltree::Document::parse(&xml).unwrap();
+
+    asset.optimize();
+    roxmltree::Document::parse(&asset.to_xml()).unwrap();
+}
+
+#[test]
+fn rejects_radial_gradients_android_cannot_draw() {
+    for (name, source) in [
+        (
+            "ellipse from a non-square bounding box",
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><defs><radialGradient id="r"><stop/><stop offset="1" stop-color="#fff"/></radialGradient></defs><rect width="20" height="10" fill="url(#r)"/></svg>"##,
+        ),
+        (
+            "non-uniform gradient transform",
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><defs><radialGradient id="r" gradientUnits="userSpaceOnUse" cx="12" cy="12" r="6" gradientTransform="scale(2 1)"><stop/><stop offset="1" stop-color="#fff"/></radialGradient></defs><path d="M0 0H24V24H0Z" fill="url(#r)"/></svg>"##,
+        ),
+        (
+            "focal radius",
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><defs><radialGradient id="r" gradientUnits="userSpaceOnUse" cx="12" cy="12" r="10" fr="2"><stop/><stop offset="1" stop-color="#fff"/></radialGradient></defs><path d="M0 0H24V24H0Z" fill="url(#r)"/></svg>"##,
+        ),
+    ] {
+        let analysis = svg2vd::analyze(source.as_bytes()).unwrap();
+        assert_eq!(analysis.compatibility, Compatibility::Unsupported, "{name}");
+        assert!(
+            analysis
+                .diagnostics
+                .iter()
+                .any(|diagnostic| matches!(diagnostic.code, DiagnosticCode::UnsupportedGradient)),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn reports_content_bounds_including_strokes_clamped_to_the_viewport() {
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <rect x="4" y="6" width="8" height="10" fill="#000"/>
+        <path d="M2 20H30" stroke="#000" stroke-width="2"/>
+    </svg>"##;
+    let bounds = svg2vd::analyze(source)
+        .unwrap()
+        .metrics
+        .content_bounds
+        .unwrap();
+    assert_close(bounds.left, 2.0);
+    assert_close(bounds.top, 6.0);
+    assert_close(bounds.right, 24.0);
+    assert_close(bounds.bottom, 21.0);
+
+    let empty = br#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"/>"#;
+    assert!(
+        svg2vd::analyze(empty)
+            .unwrap()
+            .metrics
+            .content_bounds
+            .is_none()
+    );
+}
+
+#[test]
+fn cli_directory_runs_report_every_file_and_continue_past_failures() {
+    let temp = tempfile::tempdir().unwrap();
+    let input = temp.path().join("icons");
+    let output = temp.path().join("drawable");
+    fs::create_dir_all(&input).unwrap();
+    let ok = r##"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><path d="M0 0L1 1" fill="#000"/></svg>"##;
+    fs::write(input.join("a_ok.svg"), ok).unwrap();
+    fs::write(input.join("b_broken.svg"), "not svg").unwrap();
+    fs::write(input.join("c_ok.svg"), ok).unwrap();
+    fs::write(
+        input.join("d_text.svg"),
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><text>x</text></svg>"#,
+    )
+    .unwrap();
+    let run = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_svg2vd"))
+            .args(args)
+            .output()
+            .unwrap()
+    };
+
+    let convert = run(&[input.to_str().unwrap(), "-o", output.to_str().unwrap()]);
+    assert_eq!(convert.status.code(), Some(1));
+    assert!(output.join("a_ok.xml").is_file());
+    assert!(output.join("c_ok.xml").is_file());
+    let stderr = String::from_utf8(convert.stderr).unwrap();
+    assert!(stderr.contains("b_broken.svg"), "{stderr}");
+    assert!(stderr.contains("d_text.svg"), "{stderr}");
+    assert!(stderr.contains("2 of 4 SVGs failed"), "{stderr}");
+
+    let check = run(&["check", input.to_str().unwrap(), "--format", "json"]);
+    assert_eq!(check.status.code(), Some(1));
+    let json: serde_json::Value = serde_json::from_slice(&check.stdout).unwrap();
+    let entries = json.as_array().unwrap();
+    assert_eq!(entries.len(), 4);
+    assert!(
+        entries[1]["error"]
+            .as_str()
+            .unwrap()
+            .contains("malformed SVG XML")
+    );
+    assert_eq!(entries[3]["compatibility"], "unsupported");
+    assert!(entries[0]["metrics"]["content_bounds"].is_object());
+
+    let inspect = run(&["inspect", input.to_str().unwrap()]);
+    assert_eq!(inspect.status.code(), Some(1));
+    let stdout = String::from_utf8(inspect.stdout).unwrap();
+    assert!(
+        stdout.contains("Could not analyze: malformed SVG XML"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("1 could not be analyzed"), "{stdout}");
+    assert!(stdout.contains("Content bounds:"), "{stdout}");
+}
+
+#[test]
+fn content_bounds_ignore_hidden_and_unpainted_geometry() {
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <path d="M0 0H24V24H0Z" visibility="hidden" fill="#000"/>
+        <path d="M2 2H30V6H2Z" fill="none" stroke="none"/>
+        <rect x="4" y="6" width="8" height="10" fill="#000"/>
+    </svg>"##;
+    let analysis = svg2vd::analyze(source).unwrap();
+    assert_eq!(analysis.metrics.paths, 1);
+    let bounds = analysis.metrics.content_bounds.unwrap();
+    assert_close(bounds.left, 4.0);
+    assert_close(bounds.top, 6.0);
+    assert_close(bounds.right, 12.0);
+    assert_close(bounds.bottom, 16.0);
+
+    let only_hidden = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <path d="M0 0H24V24H0Z" visibility="hidden" fill="#000"/>
+    </svg>"##;
+    assert!(
+        svg2vd::analyze(only_hidden)
+            .unwrap()
+            .metrics
+            .content_bounds
+            .is_none()
+    );
+}
+
+#[test]
+fn single_stop_gradients_paint_a_solid_color() {
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <defs>
+            <linearGradient id="g" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="24" y2="0">
+                <stop offset="0" stop-color="#3DDC84" stop-opacity=".5"/>
+            </linearGradient>
+            <radialGradient id="r"><stop offset="0" stop-color="#123456"/></radialGradient>
+        </defs>
+        <path d="M0 0H12V24H0Z" fill="url(#g)"/>
+        <path d="M12 0H24V24H12Z" fill="url(#r)"/>
+    </svg>"##;
+    let asset = svg2vd::convert(source).unwrap();
+    let xml = asset.to_xml();
+    assert!(xml.contains(r##"android:fillColor="#3DDC84""##));
+    assert!(xml.contains(r#"android:fillAlpha="0.5""#));
+    assert!(xml.contains(r##"android:fillColor="#123456""##));
+    assert!(
+        !xml.contains("aapt"),
+        "single-stop gradients must not become gradients:\n{xml}"
+    );
+    assert_eq!(asset.analysis.minimum_api, Some(21));
+}
+
+#[test]
+fn content_bounds_ignore_fully_transparent_paint() {
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <path d="M0 0H24V24H0Z" fill="#000" fill-opacity="0"/>
+        <path d="M0 0H24V24H0Z" fill="none" stroke="#000" stroke-width="4" stroke-opacity="0"/>
+        <g opacity="0"><path d="M0 0H24V24H0Z" fill="#000"/></g>
+        <path d="M0 0H24V24H0Z" fill="none" stroke="#000" stroke-width="0"/>
+        <rect x="4" y="6" width="8" height="10" fill="#000" stroke="#000" stroke-width="4" stroke-opacity="0"/>
+    </svg>"##;
+    let analysis = svg2vd::analyze(source).unwrap();
+    let bounds = analysis.metrics.content_bounds.unwrap();
+    // Only the rect's fill paints; its transparent stroke must not widen the bounds.
+    assert_close(bounds.left, 4.0);
+    assert_close(bounds.top, 6.0);
+    assert_close(bounds.right, 12.0);
+    assert_close(bounds.bottom, 16.0);
+
+    let nothing_visible = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <path d="M0 0H24V24H0Z" fill="#000" fill-opacity="0"/>
+    </svg>"##;
+    assert!(
+        svg2vd::analyze(nothing_visible)
+            .unwrap()
+            .metrics
+            .content_bounds
+            .is_none()
+    );
+}
+
+#[test]
+fn content_bounds_ignore_gradients_whose_stops_are_all_transparent() {
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <defs>
+            <linearGradient id="clear" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="24" y2="0">
+                <stop offset="0" stop-color="#000" stop-opacity="0"/>
+                <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+            </linearGradient>
+            <radialGradient id="faint" gradientUnits="userSpaceOnUse" cx="8" cy="11" r="6">
+                <stop offset="0" stop-color="#000" stop-opacity="0"/>
+                <stop offset="1" stop-color="#000" stop-opacity=".5"/>
+            </radialGradient>
+        </defs>
+        <path d="M0 0H24V24H0Z" fill="url(#clear)"/>
+        <path d="M0 0H24V24H0Z" fill="none" stroke="url(#clear)" stroke-width="4"/>
+        <rect x="4" y="6" width="8" height="10" fill="url(#faint)"/>
+    </svg>"##;
+    let analysis = svg2vd::analyze(source).unwrap();
+    assert_eq!(
+        analysis.metrics.paths, 3,
+        "transparent gradients are still emitted"
+    );
+    let bounds = analysis.metrics.content_bounds.unwrap();
+    assert_close(bounds.left, 4.0);
+    assert_close(bounds.top, 6.0);
+    assert_close(bounds.right, 12.0);
+    assert_close(bounds.bottom, 16.0);
+
+    let only_clear = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <defs><linearGradient id="clear" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="24" y2="0">
+            <stop offset="0" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#fff" stop-opacity="0"/>
+        </linearGradient></defs>
+        <path d="M0 0H24V24H0Z" fill="url(#clear)"/>
+    </svg>"##;
+    assert!(
+        svg2vd::analyze(only_clear)
+            .unwrap()
+            .metrics
+            .content_bounds
+            .is_none()
+    );
+}
+
+#[test]
+fn optimize_keeps_gradient_geometry_valid() {
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <defs>
+            <radialGradient id="tiny" gradientUnits="userSpaceOnUse" cx="12" cy="12" r="0.0004">
+                <stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#000"/>
+            </radialGradient>
+            <linearGradient id="short" gradientUnits="userSpaceOnUse" x1="5" y1="5" x2="5.0004" y2="5">
+                <stop offset="0" stop-color="#f00"/><stop offset="1" stop-color="#00f"/>
+            </linearGradient>
+        </defs>
+        <path d="M0 0H12V24H0Z" fill="url(#tiny)"/>
+        <path d="M12 0H24V24H12Z" fill="url(#short)"/>
+    </svg>"##;
+    let mut asset = svg2vd::convert(source).unwrap();
+    asset.optimize();
+    let xml = asset.to_xml();
+    let radius = attribute(&xml, "gradientRadius");
+    assert!(
+        radius > 0.0,
+        "radius must stay positive after optimize, got {radius}"
+    );
+    assert!(
+        (attribute(&xml, "startX"), attribute(&xml, "startY"))
+            != (attribute(&xml, "endX"), attribute(&xml, "endY")),
+        "linear gradient axis must not collapse to a point:\n{xml}"
+    );
+    roxmltree::Document::parse(&xml).unwrap();
+}
+
+#[test]
+fn gradient_degeneracy_is_judged_after_the_gradient_transform() {
+    // A 0.0003-unit axis scaled by 100000 spans 30 viewport units.
+    let scaled = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <defs><linearGradient id="g" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="0.0003" y2="0"
+            gradientTransform="scale(100000)"><stop stop-color="#000"/><stop offset="1" stop-color="#fff"/></linearGradient></defs>
+        <path d="M0 0H24V24H0Z" fill="url(#g)"/>
+    </svg>"##;
+    let xml = svg2vd::convert(scaled).unwrap().to_xml();
+    assert!(
+        xml.contains("aapt"),
+        "scaled gradient must stay a gradient:\n{xml}"
+    );
+    assert_close(attribute(&xml, "endX") - attribute(&xml, "startX"), 30.0);
+
+    // A nonzero axis below the writer's resolution is a hard edge between the
+    // stop colors, so it stays a gradient with distinctly serialized ends.
+    let sub_resolution = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <defs><linearGradient id="g" gradientUnits="userSpaceOnUse" x1="5" y1="5" x2="5.0000004" y2="5.0000004">
+            <stop stop-color="#f00"/><stop offset="1" stop-color="#00f"/></linearGradient></defs>
+        <path d="M0 0H24V24H0Z" fill="url(#g)"/>
+    </svg>"##;
+    let xml = svg2vd::convert(sub_resolution).unwrap().to_xml();
+    assert!(
+        xml.contains("aapt"),
+        "sub-resolution axis must stay a gradient:\n{xml}"
+    );
+    assert!(
+        attribute(&xml, "startX") != attribute(&xml, "endX")
+            && attribute(&xml, "startY") != attribute(&xml, "endY"),
+        "axis ends must serialize distinctly:\n{xml}"
+    );
+    assert!((attribute(&xml, "endX") - 5.0).abs() < 0.00001);
+}
+
+#[test]
+fn radial_radius_stays_positive_without_optimization() {
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <defs><radialGradient id="r" gradientUnits="userSpaceOnUse" cx="12" cy="12" r="0.0000004">
+            <stop stop-color="#fff"/><stop offset="1" stop-color="#000"/></radialGradient></defs>
+        <path d="M0 0H24V24H0Z" fill="url(#r)"/>
+    </svg>"##;
+    let xml = svg2vd::convert(source).unwrap().to_xml();
+    let radius = attribute(&xml, "gradientRadius");
+    assert!(
+        radius > 0.0,
+        "unoptimized radius must be positive, got {radius}:\n{xml}"
+    );
+}
+
+#[test]
+fn content_bounds_use_the_serialized_gradient_alpha() {
+    // Every stop is positive but below 0.5/255, so each item serializes with
+    // alpha 00 and the gradient renders nothing.
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <defs><linearGradient id="faint" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="24" y2="0">
+            <stop offset="0" stop-color="#000" stop-opacity="0.001"/>
+            <stop offset="1" stop-color="#fff" stop-opacity="0.0019"/>
+        </linearGradient></defs>
+        <path d="M0 0H24V24H0Z" fill="url(#faint)"/>
+        <rect x="4" y="6" width="8" height="10" fill="#000"/>
+    </svg>"##;
+    let asset = svg2vd::convert(source).unwrap();
+    let xml = asset.to_xml();
+    assert!(xml.contains(r##"android:color="#00000000""##), "{xml}");
+    assert!(xml.contains(r##"android:color="#00FFFFFF""##), "{xml}");
+    let bounds = asset.analysis.metrics.content_bounds.unwrap();
+    assert_close(bounds.left, 4.0);
+    assert_close(bounds.top, 6.0);
+    assert_close(bounds.right, 12.0);
+    assert_close(bounds.bottom, 16.0);
+
+    // The first opacity that rounds to alpha 01 counts as painted.
+    let barely = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <defs><linearGradient id="g" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="24" y2="0">
+            <stop offset="0" stop-color="#000" stop-opacity="0.002"/>
+            <stop offset="1" stop-color="#000" stop-opacity="0.002"/>
+        </linearGradient></defs>
+        <path d="M0 0H24V24H0Z" fill="url(#g)"/>
+    </svg>"##;
+    let asset = svg2vd::convert(barely).unwrap();
+    assert!(asset.to_xml().contains(r##"android:color="#01000000""##));
+    assert_close(asset.analysis.metrics.content_bounds.unwrap().right, 24.0);
+}
+
+#[test]
+fn content_bounds_use_the_serialized_path_alpha_and_stroke_width() {
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <path d="M0 0H24V24H0Z" fill="#000" fill-opacity="0.0000004"/>
+        <path d="M0 0H24V24H0Z" fill="none" stroke="#000" stroke-width="4" stroke-opacity="0.0000004"/>
+        <path d="M0 0H24V24H0Z" fill="none" stroke="#000" stroke-width="0.0000004"/>
+        <rect x="4" y="6" width="8" height="10" fill="#000"/>
+    </svg>"##;
+    let asset = svg2vd::convert(source).unwrap();
+    let xml = asset.to_xml();
+    assert!(xml.contains(r#"android:fillAlpha="0""#), "{xml}");
+    assert!(xml.contains(r#"android:strokeAlpha="0""#), "{xml}");
+    assert!(xml.contains(r#"android:strokeWidth="0""#), "{xml}");
+    let bounds = asset.analysis.metrics.content_bounds.unwrap();
+    assert_close(bounds.left, 4.0);
+    assert_close(bounds.top, 6.0);
+    assert_close(bounds.right, 12.0);
+    assert_close(bounds.bottom, 16.0);
+
+    // The smallest alpha the writer keeps nonzero still counts as painted.
+    let faint = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <path d="M0 0H24V24H0Z" fill="#000" fill-opacity="0.000001"/>
+    </svg>"##;
+    let asset = svg2vd::convert(faint).unwrap();
+    assert!(asset.to_xml().contains(r#"android:fillAlpha="0.000001""#));
+    assert_close(asset.analysis.metrics.content_bounds.unwrap().right, 24.0);
 }

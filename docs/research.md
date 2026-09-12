@@ -73,3 +73,44 @@ geometry clip raises coverage to 802 of 812 icons (426 exact and 376 exact with
 normalization), all deterministic. The eight remaining mask diagnostics are the
 six even-odd definitions and two subtractive definitions; no lossy mask is
 accepted.
+
+## Gradient lowering
+
+VectorDrawable gradients are inline complex colors from API 24. Linear
+gradients support any start and end point; radial gradients support only a
+center and a radius. The converter maps each gradient into viewport
+coordinates with the path's absolute transform combined with the gradient
+transform, where `usvg` has already folded object-bounding-box units into that
+transform.
+
+A linear gradient stays linear under every affine map, but its end point is
+not simply the mapped `x2, y2`. Under skew or non-uniform scale the gradient
+direction is carried by the inverse transpose of the transform, which keeps
+every line of constant color where the SVG renders it. A zero-length linear
+gradient is painted with its last stop, as SVG specifies.
+
+Radial gradients convert only when the combined transform is a similarity and
+the focal point coincides with the center. Everything else would become an
+ellipse or a focal gradient, which Android cannot draw, so it is rejected with
+`SVGVD003`. The renderer harness includes a skewed linear fixture and a scaled
+radial fixture whose assertions sit where a naive endpoint mapping would paint
+the wrong color.
+
+## Compose renderer divergence
+
+Jetpack Compose parses VectorDrawable XML itself for `painterResource` and
+`ImageVector.vectorResource`; it does not use the platform `VectorDrawable`.
+Verified with Compose BOM 2026.01.01 on API 24, 34, and 36: gradients, the
+hard white mask lowering, even-odd fills, and a single clip render identically
+to the platform. Nested clip scope does not. Compose turns each `<clip-path>`
+into an implicit group and closes every open clip group at any `</group>`, so
+a path that follows a nested group escapes the enclosing clip. A clip followed
+only by sibling paths is unaffected. The platform renderer handles the same
+XML correctly on API 21 through 36, so the converter output is correct
+VectorDrawable and the difference is on the Compose side.
+
+The converter keeps emitting platform-exact structure. If Compose parity for
+nested clip scope becomes a requirement, the lowering would need to re-emit
+the enclosing clip after each nested group or wrap trailing siblings in their
+own group, both of which change output for every affected drawable and should
+be an explicit option rather than a silent change.

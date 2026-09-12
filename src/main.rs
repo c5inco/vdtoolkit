@@ -63,14 +63,36 @@ struct FileAnalysis<'a> {
     analysis: &'a Analysis,
 }
 
+#[derive(Serialize)]
+struct FileFailure {
+    path: String,
+    error: String,
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+enum ReportEntry<'a> {
+    Analysis(FileAnalysis<'a>),
+    Failed(FileFailure),
+}
+
+/// Overall result of a command across every input file.
+#[derive(Clone, Copy)]
+enum Outcome {
+    Passed,
+    Incompatible,
+    Failed,
+}
+
 fn main() -> ExitCode {
     let args = normalized_args();
     let cli = Cli::parse_from(args);
     match run(cli) {
-        Ok(true) => ExitCode::SUCCESS,
-        Ok(false) => ExitCode::from(2),
+        Ok(Outcome::Passed) => ExitCode::SUCCESS,
+        Ok(Outcome::Incompatible) => ExitCode::from(2),
+        Ok(Outcome::Failed) => ExitCode::from(1),
         Err(error) => {
-            print_error(&error);
+            print_error(None, &error);
             ExitCode::from(1)
         }
     }
@@ -91,7 +113,7 @@ fn normalized_args() -> Vec<OsString> {
     args
 }
 
-fn run(cli: Cli) -> Result<bool> {
+fn run(cli: Cli) -> Result<Outcome> {
     match cli.command {
         Command::Convert(args) => convert(args, false),
         Command::Optimize(args) => convert(args, true),
@@ -100,100 +122,141 @@ fn run(cli: Cli) -> Result<bool> {
     }
 }
 
-fn convert(args: ConvertArgs, optimize: bool) -> Result<bool> {
+fn convert(args: ConvertArgs, optimize: bool) -> Result<Outcome> {
     let inputs = inputs(&args.input)?;
     if args.input.is_dir() && args.output.is_none() {
         return Err(Error::InvalidInput(
             "directory conversion requires an output directory".to_owned(),
         ));
     }
-    for input in inputs {
-        let mut asset = svg2vd::convert_file(&input)?;
-        if args.strict && asset.analysis.compatibility != Compatibility::Exact {
-            return Err(Error::InvalidInput(format!(
-                "{} requires normalization and was rejected by --strict",
-                input.display()
-            )));
-        }
-        let generated_bytes = asset.to_xml().len();
-        if optimize {
-            asset.optimize();
-        }
-        let xml = asset.to_xml();
-        if optimize {
-            let original_bytes = std::fs::metadata(&input)
-                .map(|metadata| metadata.len())
-                .unwrap_or_default();
-            let reduction = if generated_bytes == 0 {
-                0.0
-            } else {
-                100.0 * (generated_bytes.saturating_sub(xml.len())) as f64 / generated_bytes as f64
-            };
-            eprintln!("{}", input.display());
-            eprintln!("Original SVG: {original_bytes} bytes");
-            eprintln!("Generated drawable: {generated_bytes} bytes");
-            eprintln!("Optimized drawable: {} bytes", xml.len());
-            eprintln!("Reduction: {reduction:.1}%");
-        }
-        let output = output_path(&args.input, &input, args.output.as_deref());
-        if let Some(output) = output {
-            if let Some(parent) = output.parent() {
-                std::fs::create_dir_all(parent).map_err(|source| Error::Write {
-                    path: parent.to_owned(),
-                    source,
-                })?;
-            }
-            std::fs::write(&output, xml).map_err(|source| Error::Write {
-                path: output,
-                source,
-            })?;
-        } else {
-            print!("{xml}");
+    let mut failures = 0;
+    for input in &inputs {
+        if let Err(error) = convert_one(&args, input, optimize) {
+            print_error(Some(input), &error);
+            failures += 1;
         }
     }
-    Ok(true)
+    if failures > 0 && inputs.len() > 1 {
+        eprintln!("{failures} of {} SVGs failed", inputs.len());
+    }
+    Ok(if failures == 0 {
+        Outcome::Passed
+    } else {
+        Outcome::Failed
+    })
 }
 
-fn report(args: ReportArgs, inspect: bool) -> Result<bool> {
+fn convert_one(args: &ConvertArgs, input: &Path, optimize: bool) -> Result<()> {
+    let mut asset = svg2vd::convert_file(input)?;
+    if args.strict && asset.analysis.compatibility != Compatibility::Exact {
+        return Err(Error::InvalidInput(
+            "requires normalization and was rejected by --strict".to_owned(),
+        ));
+    }
+    let generated_bytes = asset.to_xml().len();
+    if optimize {
+        asset.optimize();
+    }
+    let xml = asset.to_xml();
+    if optimize {
+        let original_bytes = std::fs::metadata(input)
+            .map(|metadata| metadata.len())
+            .unwrap_or_default();
+        let reduction = if generated_bytes == 0 {
+            0.0
+        } else {
+            100.0 * (generated_bytes.saturating_sub(xml.len())) as f64 / generated_bytes as f64
+        };
+        eprintln!("{}", input.display());
+        eprintln!("Original SVG: {original_bytes} bytes");
+        eprintln!("Generated drawable: {generated_bytes} bytes");
+        eprintln!("Optimized drawable: {} bytes", xml.len());
+        eprintln!("Reduction: {reduction:.1}%");
+    }
+    let output = output_path(&args.input, input, args.output.as_deref());
+    if let Some(output) = output {
+        if let Some(parent) = output.parent() {
+            std::fs::create_dir_all(parent).map_err(|source| Error::Write {
+                path: parent.to_owned(),
+                source,
+            })?;
+        }
+        std::fs::write(&output, xml).map_err(|source| Error::Write {
+            path: output,
+            source,
+        })?;
+    } else {
+        print!("{xml}");
+    }
+    Ok(())
+}
+
+fn report(args: ReportArgs, inspect: bool) -> Result<Outcome> {
     let inputs = inputs(&args.input)?;
     let mut reports = Vec::new();
     let mut passed = true;
+    let mut failed = 0;
     for input in &inputs {
-        let analysis = svg2vd::analyze_file(input)?;
-        passed &= if args.strict {
-            analysis.compatibility == Compatibility::Exact
-        } else {
-            analysis.compatibility.convertible()
-        };
-        reports.push((input, analysis));
+        let result = svg2vd::analyze_file(input);
+        match &result {
+            Ok(analysis) => {
+                passed &= if args.strict {
+                    analysis.compatibility == Compatibility::Exact
+                } else {
+                    analysis.compatibility.convertible()
+                };
+            }
+            Err(_) => failed += 1,
+        }
+        reports.push((input, result));
     }
     match args.format {
         Format::Json => {
             let values: Vec<_> = reports
                 .iter()
-                .map(|(path, analysis)| FileAnalysis {
-                    path: path.display().to_string(),
-                    analysis,
+                .map(|(path, result)| match result {
+                    Ok(analysis) => ReportEntry::Analysis(FileAnalysis {
+                        path: path.display().to_string(),
+                        analysis,
+                    }),
+                    Err(error) => ReportEntry::Failed(FileFailure {
+                        path: path.display().to_string(),
+                        error: error.to_string(),
+                    }),
                 })
                 .collect();
             println!("{}", serde_json::to_string_pretty(&values).unwrap());
+            for (path, result) in &reports {
+                if let Err(error) = result {
+                    print_error(Some(path.as_path()), error);
+                }
+            }
         }
         Format::Human => {
-            for (index, (path, analysis)) in reports.iter().enumerate() {
+            for (index, (path, result)) in reports.iter().enumerate() {
                 if reports.len() > 1 {
                     if index > 0 {
                         println!();
                     }
                     println!("{}", path.display());
                 }
-                print_human(analysis, inspect);
+                match result {
+                    Ok(analysis) => print_human(analysis, inspect),
+                    Err(error) => println!("✗ Could not analyze: {error}"),
+                }
             }
             if reports.len() > 1 {
                 print_summary(&reports);
             }
         }
     }
-    Ok(passed)
+    Ok(if failed > 0 {
+        Outcome::Failed
+    } else if passed {
+        Outcome::Passed
+    } else {
+        Outcome::Incompatible
+    })
 }
 
 fn print_human(analysis: &Analysis, inspect: bool) {
@@ -232,6 +295,13 @@ fn print_human(analysis: &Analysis, inspect: bool) {
         println!("Groups: {}", metrics.groups);
         println!("Clip paths: {}", metrics.clip_paths);
         println!("Gradients: {}", metrics.gradients);
+        match metrics.content_bounds {
+            Some(bounds) => println!(
+                "Content bounds: left {}, top {}, right {}, bottom {}",
+                bounds.left, bounds.top, bounds.right, bounds.bottom
+            ),
+            None => println!("Content bounds: none"),
+        }
         println!("Estimated XML size: {} bytes", metrics.estimated_xml_bytes);
     }
     println!("Compatibility: {:?}", analysis.compatibility);
@@ -241,13 +311,18 @@ fn print_human(analysis: &Analysis, inspect: bool) {
     }
 }
 
-fn print_summary(reports: &[(&PathBuf, Analysis)]) {
-    let count = |compatibility| {
+fn print_summary(reports: &[(&PathBuf, Result<Analysis>)]) {
+    let count = |compatibility: Compatibility| {
         reports
             .iter()
-            .filter(|(_, analysis)| analysis.compatibility == compatibility)
+            .filter(|(_, result)| {
+                result
+                    .as_ref()
+                    .is_ok_and(|analysis| analysis.compatibility == compatibility)
+            })
             .count()
     };
+    let failed = reports.iter().filter(|(_, result)| result.is_err()).count();
     println!("\n{} SVGs checked", reports.len());
     println!("{} exact", count(Compatibility::Exact));
     println!(
@@ -256,6 +331,9 @@ fn print_summary(reports: &[(&PathBuf, Analysis)]) {
     );
     println!("{} approximate", count(Compatibility::Approximate));
     println!("{} unsupported", count(Compatibility::Unsupported));
+    if failed > 0 {
+        println!("{failed} could not be analyzed");
+    }
 }
 
 fn inputs(path: &Path) -> Result<Vec<PathBuf>> {
@@ -297,8 +375,11 @@ fn output_path(root: &Path, input: &Path, output: Option<&Path>) -> Option<PathB
     Some(output.join(relative).with_extension("xml"))
 }
 
-fn print_error(error: &Error) {
-    eprintln!("error: {error}");
+fn print_error(path: Option<&Path>, error: &Error) {
+    match path {
+        Some(path) => eprintln!("error: {}: {error}", path.display()),
+        None => eprintln!("error: {error}"),
+    }
     if let Error::Incompatible(analysis) = error {
         for diagnostic in &analysis.diagnostics {
             eprintln!("{}  {}", diagnostic.code.as_str(), diagnostic.message);

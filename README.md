@@ -38,17 +38,19 @@ svg2vd optimize icon.svg -o ic_icon.xml   # convert with smaller numbers, same r
 | --- | --- |
 | `convert` | Write VectorDrawable XML. Directory input requires `-o`. |
 | `check` | Report compatibility only. |
-| `inspect` | Report compatibility, diagnostics, minimum Android API, and metrics. |
+| `inspect` | Report compatibility, diagnostics, minimum Android API, content bounds, and metrics. |
 | `optimize` | Convert, then shorten numbers where it cannot change rendering. |
 
-Every command accepts a file or a directory. `--format json` produces a stable
-report with diagnostic codes for use in CI. `--strict` accepts only input that
-needs no normalization at all.
+Every command accepts a file or a directory. In a directory, a file that fails
+is named on stderr and the remaining files are still processed. `--format json`
+produces a stable report with diagnostic codes for use in CI, and lists a
+`path` and `error` for any file that could not be read or parsed. `--strict`
+accepts only input that needs no normalization at all.
 
 | Exit code | Meaning |
 | --- | --- |
 | 0 | Every input converted, or is convertible. |
-| 1 | Malformed input, I/O error, or a conversion failure. |
+| 1 | At least one file was malformed, unreadable, or failed to convert. |
 | 2 | `check`/`inspect` only: at least one input is incompatible. |
 
 ## Example
@@ -79,11 +81,12 @@ becomes
 
 | Supported | Rejected |
 | --- | --- |
-| Paths and basic shapes | Gradients and patterns |
+| Paths and basic shapes | Patterns |
 | `width`/`height` and `viewBox` | Text, images, filters, animation |
 | `<use>`, `<defs>`, inherited CSS styles | DTDs, entity declarations, external references |
 | Nested affine transforms (flattened into geometry) | Strokes under non-uniform scale or skew |
 | Solid fills, fill opacity, fill rules | Alpha or grayscale masks, even-odd or multi-path clips |
+| Linear gradients and circular radial gradients, including stop opacity and spread methods | Radial gradients with a focal point, a focal radius, or an elliptical shape |
 | Solid strokes: opacity, width, caps, joins | Nested effects or paint effects inside `<clipPath>`/`<mask>` |
 | Single-path clips and hard white single-shape masks (lowered to clips) | |
 
@@ -92,8 +95,10 @@ becomes
 the first two, and `--strict` accepts only `exact`.
 
 The reported minimum API comes from the emitted drawable, not a fixed constant.
-Plain paths and a single clip target API 21. Drawables that need multiple clips
-or `android:fillType` target API 24. See [docs/research.md](docs/research.md)
+Plain paths and a single clip target API 21. Drawables that need multiple clips,
+`android:fillType`, or gradients target API 24. Gradients are written inline
+with the `aapt` namespace, which the Android build tools compile into color
+resources. See [docs/research.md](docs/research.md)
 for the renderer findings behind those levels.
 
 ## Rust API (experimental)

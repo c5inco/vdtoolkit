@@ -42,3 +42,25 @@ linear gradient, and a uniformly scaled radial gradient. On
 API 21 the single native clip is rendered while multi-clip and even-odd
 resources must be unavailable. On API 24+ all interior, exterior, intersection,
 scope, mask-region, ring, and hole pixels are checked.
+
+## Compose renderer
+
+`compose/` is a small Gradle project that loads the same generated drawables
+with `painterResource` and checks the same pixels through Compose's own
+VectorDrawable parser. Run `build.sh` first so `build/generated/res` exists,
+then:
+
+```sh
+cd tools/android-renderer/compose
+./gradlew assembleDebug assembleDebugAndroidTest
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+adb shell am instrument -w \
+  com.svg2vd.renderer.compose.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+The module's minimum is API 23 because current Compose no longer supports 21.
+Two tests are expected to fail on API 24 and above: `nested_clip_scope` and
+the diagnostic `diag_clip_then_plain_group`. They document a Compose parser
+divergence where a `</group>` closes enclosing clip paths; see `RESULTS.md`.
+The Compose module is not part of Cargo, CI, packaging, or the acceptance gate.

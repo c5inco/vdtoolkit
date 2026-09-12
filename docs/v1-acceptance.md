@@ -69,7 +69,9 @@ license, or official VectorDrawables. See
 
 [`tools/android-renderer`](../tools/android-renderer) is a standalone harness
 that converts its SVG fixtures with the current binary and verifies rendered
-VectorDrawable pixels on API 21, API 24, and a modern Android API.
+VectorDrawable pixels on API 21, API 24, and a modern Android API. Its
+`compose/` module repeats the pixel checks through Jetpack Compose's own
+VectorDrawable parser from API 23.
 
 The generated local package is written below `target/release-dist/`. Publishing
 or signing a release is intentionally separate because it changes external

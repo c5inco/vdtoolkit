@@ -14,6 +14,11 @@ follow [Semantic Versioning](https://semver.org/).
   a focal radius, or an elliptical shape are still rejected.
 - `inspect` reports content bounds: the painted area including strokes,
   clamped to the viewport.
+- Optional Compose renderer harness under `tools/android-renderer/compose`
+  that verifies generated drawables, including gradients, through Jetpack
+  Compose's VectorDrawable parser. It records one Compose divergence: a
+  `</group>` closes enclosing clip paths, so a sibling after a nested group
+  renders unclipped in Compose while the platform clips it correctly.
 
 ### Fixed
 

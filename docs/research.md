@@ -95,3 +95,22 @@ ellipse or a focal gradient, which Android cannot draw, so it is rejected with
 `SVGVD003`. The renderer harness includes a skewed linear fixture and a scaled
 radial fixture whose assertions sit where a naive endpoint mapping would paint
 the wrong color.
+
+## Compose renderer divergence
+
+Jetpack Compose parses VectorDrawable XML itself for `painterResource` and
+`ImageVector.vectorResource`; it does not use the platform `VectorDrawable`.
+Verified with Compose BOM 2026.01.01 on API 24, 34, and 36: gradients, the
+hard white mask lowering, even-odd fills, and a single clip render identically
+to the platform. Nested clip scope does not. Compose turns each `<clip-path>`
+into an implicit group and closes every open clip group at any `</group>`, so
+a path that follows a nested group escapes the enclosing clip. A clip followed
+only by sibling paths is unaffected. The platform renderer handles the same
+XML correctly on API 21 through 36, so the converter output is correct
+VectorDrawable and the difference is on the Compose side.
+
+The converter keeps emitting platform-exact structure. If Compose parity for
+nested clip scope becomes a requirement, the lowering would need to re-emit
+the enclosing clip after each nested group or wrap trailing siblings in their
+own group, both of which change output for every affected drawable and should
+be an explicit option rather than a silent change.

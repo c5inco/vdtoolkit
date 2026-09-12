@@ -800,3 +800,32 @@ fn single_stop_gradients_paint_a_solid_color() {
     );
     assert_eq!(asset.analysis.minimum_api, Some(21));
 }
+
+#[test]
+fn content_bounds_ignore_fully_transparent_paint() {
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <path d="M0 0H24V24H0Z" fill="#000" fill-opacity="0"/>
+        <path d="M0 0H24V24H0Z" fill="none" stroke="#000" stroke-width="4" stroke-opacity="0"/>
+        <g opacity="0"><path d="M0 0H24V24H0Z" fill="#000"/></g>
+        <path d="M0 0H24V24H0Z" fill="none" stroke="#000" stroke-width="0"/>
+        <rect x="4" y="6" width="8" height="10" fill="#000" stroke="#000" stroke-width="4" stroke-opacity="0"/>
+    </svg>"##;
+    let analysis = svg2vd::analyze(source).unwrap();
+    let bounds = analysis.metrics.content_bounds.unwrap();
+    // Only the rect's fill paints; its transparent stroke must not widen the bounds.
+    assert_close(bounds.left, 4.0);
+    assert_close(bounds.top, 6.0);
+    assert_close(bounds.right, 12.0);
+    assert_close(bounds.bottom, 16.0);
+
+    let nothing_visible = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <path d="M0 0H24V24H0Z" fill="#000" fill-opacity="0"/>
+    </svg>"##;
+    assert!(
+        svg2vd::analyze(nothing_visible)
+            .unwrap()
+            .metrics
+            .content_bounds
+            .is_none()
+    );
+}

@@ -328,8 +328,17 @@ fn visit_group(
                         "stroke-before-fill paint order cannot be represented by VectorDrawable",
                     );
                 }
-                if fill.is_some() || stroke.is_some() {
+                // Only geometry that paints pixels counts toward content bounds:
+                // a fully transparent fill or stroke, or a zero-width stroke,
+                // is emitted for fidelity but renders nothing.
+                let fill_paints = fill.as_ref().is_some_and(|value| value.1 > 0.0);
+                let stroke_paints = stroke
+                    .as_ref()
+                    .is_some_and(|value| value.1 > 0.0 && value.2 > 0.0);
+                if stroke_paints {
                     include_bounds(&mut metrics.content_bounds, path.abs_stroke_bounding_box());
+                } else if fill_paints {
+                    include_bounds(&mut metrics.content_bounds, path.abs_bounding_box());
                 }
                 let (fill, fill_alpha, fill_rule) = match fill {
                     Some((paint, alpha, rule)) => (Some(paint), alpha, rule),

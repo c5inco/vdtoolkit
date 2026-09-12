@@ -58,7 +58,9 @@ pub struct Metrics {
     /// Bounds of the painted paths that are emitted, including strokes,
     /// clamped to the viewport.
     ///
-    /// Hidden and unpainted geometry is excluded. Clipping is not applied, so
+    /// Hidden, unpainted, and fully transparent geometry is excluded, and a
+    /// transparent stroke does not widen the bounds of a visible fill.
+    /// Clipping is not applied, so
     /// the bounds can be larger than what is visible. `None` when no painted
     /// path lies inside the viewport.
     pub content_bounds: Option<Bounds>,

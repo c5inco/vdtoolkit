@@ -55,10 +55,12 @@ pub struct Metrics {
     pub gradients: usize,
     /// Number of source clip paths.
     pub clip_paths: usize,
-    /// Bounds of painted geometry including strokes, clamped to the viewport.
+    /// Bounds of the painted paths that are emitted, including strokes,
+    /// clamped to the viewport.
     ///
-    /// Clipping is not applied, so the bounds can be larger than what is
-    /// visible. `None` when nothing is painted inside the viewport.
+    /// Hidden and unpainted geometry is excluded. Clipping is not applied, so
+    /// the bounds can be larger than what is visible. `None` when no painted
+    /// path lies inside the viewport.
     pub content_bounds: Option<Bounds>,
     /// Serialized VectorDrawable size before optional optimization.
     pub estimated_xml_bytes: usize,

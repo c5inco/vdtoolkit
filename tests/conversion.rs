@@ -749,3 +749,54 @@ fn cli_directory_runs_report_every_file_and_continue_past_failures() {
     assert!(stdout.contains("1 could not be analyzed"), "{stdout}");
     assert!(stdout.contains("Content bounds:"), "{stdout}");
 }
+
+#[test]
+fn content_bounds_ignore_hidden_and_unpainted_geometry() {
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <path d="M0 0H24V24H0Z" visibility="hidden" fill="#000"/>
+        <path d="M2 2H30V6H2Z" fill="none" stroke="none"/>
+        <rect x="4" y="6" width="8" height="10" fill="#000"/>
+    </svg>"##;
+    let analysis = svg2vd::analyze(source).unwrap();
+    assert_eq!(analysis.metrics.paths, 1);
+    let bounds = analysis.metrics.content_bounds.unwrap();
+    assert_close(bounds.left, 4.0);
+    assert_close(bounds.top, 6.0);
+    assert_close(bounds.right, 12.0);
+    assert_close(bounds.bottom, 16.0);
+
+    let only_hidden = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <path d="M0 0H24V24H0Z" visibility="hidden" fill="#000"/>
+    </svg>"##;
+    assert!(
+        svg2vd::analyze(only_hidden)
+            .unwrap()
+            .metrics
+            .content_bounds
+            .is_none()
+    );
+}
+
+#[test]
+fn single_stop_gradients_paint_a_solid_color() {
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <defs>
+            <linearGradient id="g" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="24" y2="0">
+                <stop offset="0" stop-color="#3DDC84" stop-opacity=".5"/>
+            </linearGradient>
+            <radialGradient id="r"><stop offset="0" stop-color="#123456"/></radialGradient>
+        </defs>
+        <path d="M0 0H12V24H0Z" fill="url(#g)"/>
+        <path d="M12 0H24V24H12Z" fill="url(#r)"/>
+    </svg>"##;
+    let asset = svg2vd::convert(source).unwrap();
+    let xml = asset.to_xml();
+    assert!(xml.contains(r##"android:fillColor="#3DDC84""##));
+    assert!(xml.contains(r#"android:fillAlpha="0.5""#));
+    assert!(xml.contains(r##"android:fillColor="#123456""##));
+    assert!(
+        !xml.contains("aapt"),
+        "single-stop gradients must not become gradients:\n{xml}"
+    );
+    assert_eq!(asset.analysis.minimum_api, Some(21));
+}

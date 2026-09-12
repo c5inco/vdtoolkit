@@ -182,7 +182,7 @@ pub(crate) fn lower(
     metrics.gradients = tree.linear_gradients().len() + tree.radial_gradients().len();
     metrics.clip_paths = tree.clip_paths().len();
     metrics.groups = count_groups(tree.root()).saturating_sub(1);
-    metrics.content_bounds = content_bounds(tree);
+    metrics.content_bounds = None;
 
     let mut children = Vec::new();
     visit_group(
@@ -193,6 +193,9 @@ pub(crate) fn lower(
         diagnostics,
         metrics,
     );
+    metrics.content_bounds = metrics
+        .content_bounds
+        .and_then(|bounds| clamp_bounds(bounds, size.width(), size.height()));
     if compatibility.convertible() {
         Some(VectorDrawable {
             width_dp: size.width(),
@@ -324,6 +327,9 @@ fn visit_group(
                         DiagnosticCode::UnsupportedPaint,
                         "stroke-before-fill paint order cannot be represented by VectorDrawable",
                     );
+                }
+                if fill.is_some() || stroke.is_some() {
+                    include_bounds(&mut metrics.content_bounds, path.abs_stroke_bounding_box());
                 }
                 let (fill, fill_alpha, fill_rule) = match fill {
                     Some((paint, alpha, rule)) => (Some(paint), alpha, rule),
@@ -584,13 +590,15 @@ fn lower_linear_gradient(
 ) -> Option<(Paint, f32)> {
     let transform = transform.pre_concat(gradient.transform());
     let stops = gradient_stops(gradient.stops());
+    if stops.len() < 2 {
+        return solid_from_last_stop(&stops);
+    }
     let dx = gradient.x2() - gradient.x1();
     let dy = gradient.y2() - gradient.y1();
     let length_squared = dx * dx + dy * dy;
     if length_squared <= f32::EPSILON {
         // SVG paints a zero-length linear gradient with its last stop.
-        let last = *stops.last()?;
-        return Some((Paint::Solid(last.color), last.alpha));
+        return solid_from_last_stop(&stops);
     }
     let Some(inverse) = transform.invert() else {
         unsupported(
@@ -633,6 +641,10 @@ fn lower_radial_gradient(
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Option<(Paint, f32)> {
     let transform = transform.pre_concat(gradient.transform());
+    let stops = gradient_stops(gradient.stops());
+    if stops.len() < 2 {
+        return solid_from_last_stop(&stops);
+    }
     let radius = gradient.r().get();
     let focal_offset = (gradient.fx() - gradient.cx()).hypot(gradient.fy() - gradient.cy());
     if focal_offset > 1.0e-4 * radius || gradient.fr().get() > 0.0 {
@@ -662,11 +674,19 @@ fn lower_radial_gradient(
             center_x: center.x,
             center_y: center.y,
             radius: radius * scale,
-            stops: gradient_stops(gradient.stops()),
+            stops,
             tile_mode: tile_mode(gradient.spread_method()),
         }),
         1.0,
     ))
+}
+
+/// Android gradients need at least two colors; a gradient with fewer stops is
+/// painted as the solid color of its last stop, as SVG specifies. `usvg`
+/// already lowers these before they reach us, so this is a guard.
+fn solid_from_last_stop(stops: &[GradientStop]) -> Option<(Paint, f32)> {
+    let last = *stops.last()?;
+    Some((Paint::Solid(last.color), last.alpha))
 }
 
 fn gradient_stops(stops: &[usvg::Stop]) -> Vec<GradientStop> {
@@ -714,17 +734,32 @@ fn require_normalization(compatibility: &mut Compatibility, diagnostics: &mut Ve
     }
 }
 
-/// Bounds of painted geometry, including strokes, clamped to the viewport.
-///
-/// Clipping is not applied, so the result can be larger than what is visible.
-fn content_bounds(tree: &usvg::Tree) -> Option<Bounds> {
-    let size = tree.size();
-    let rect = tree.root().abs_stroke_bounding_box();
+/// Grow `bounds` to include the stroke bounding box of an emitted painted path.
+fn include_bounds(bounds: &mut Option<Bounds>, rect: usvg::tiny_skia_path::Rect) {
+    let next = Bounds {
+        left: rect.left(),
+        top: rect.top(),
+        right: rect.right(),
+        bottom: rect.bottom(),
+    };
+    *bounds = Some(match *bounds {
+        None => next,
+        Some(current) => Bounds {
+            left: current.left.min(next.left),
+            top: current.top.min(next.top),
+            right: current.right.max(next.right),
+            bottom: current.bottom.max(next.bottom),
+        },
+    });
+}
+
+/// Clamp accumulated bounds to the viewport; `None` when nothing remains.
+fn clamp_bounds(bounds: Bounds, width: f32, height: f32) -> Option<Bounds> {
     let round = |value: f32| (value * 10_000.0).round() / 10_000.0;
-    let left = round(rect.left().max(0.0));
-    let top = round(rect.top().max(0.0));
-    let right = round(rect.right().min(size.width()));
-    let bottom = round(rect.bottom().min(size.height()));
+    let left = round(bounds.left.max(0.0));
+    let top = round(bounds.top.max(0.0));
+    let right = round(bounds.right.min(width));
+    let bottom = round(bounds.bottom.min(height));
     (right > left && bottom > top).then_some(Bounds {
         left,
         top,

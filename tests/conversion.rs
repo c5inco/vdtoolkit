@@ -918,19 +918,24 @@ fn gradient_degeneracy_is_judged_after_the_gradient_transform() {
     );
     assert_close(attribute(&xml, "endX") - attribute(&xml, "startX"), 30.0);
 
-    // An axis below the writer's resolution would serialize as a point, so it
-    // is painted as the last stop instead.
+    // A nonzero axis below the writer's resolution is a hard edge between the
+    // stop colors, so it stays a gradient with distinctly serialized ends.
     let sub_resolution = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
-        <defs><linearGradient id="g" gradientUnits="userSpaceOnUse" x1="5" y1="5" x2="5.0000004" y2="5">
+        <defs><linearGradient id="g" gradientUnits="userSpaceOnUse" x1="5" y1="5" x2="5.0000004" y2="5.0000004">
             <stop stop-color="#f00"/><stop offset="1" stop-color="#00f"/></linearGradient></defs>
         <path d="M0 0H24V24H0Z" fill="url(#g)"/>
     </svg>"##;
     let xml = svg2vd::convert(sub_resolution).unwrap().to_xml();
     assert!(
-        !xml.contains("aapt"),
-        "sub-resolution axis must lower to a solid:\n{xml}"
+        xml.contains("aapt"),
+        "sub-resolution axis must stay a gradient:\n{xml}"
     );
-    assert!(xml.contains(r##"android:fillColor="#0000FF""##));
+    assert!(
+        attribute(&xml, "startX") != attribute(&xml, "endX")
+            && attribute(&xml, "startY") != attribute(&xml, "endY"),
+        "axis ends must serialize distinctly:\n{xml}"
+    );
+    assert!((attribute(&xml, "endX") - 5.0).abs() < 0.00001);
 }
 
 #[test]
@@ -980,5 +985,33 @@ fn content_bounds_use_the_serialized_gradient_alpha() {
     </svg>"##;
     let asset = svg2vd::convert(barely).unwrap();
     assert!(asset.to_xml().contains(r##"android:color="#01000000""##));
+    assert_close(asset.analysis.metrics.content_bounds.unwrap().right, 24.0);
+}
+
+#[test]
+fn content_bounds_use_the_serialized_path_alpha_and_stroke_width() {
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <path d="M0 0H24V24H0Z" fill="#000" fill-opacity="0.0000004"/>
+        <path d="M0 0H24V24H0Z" fill="none" stroke="#000" stroke-width="4" stroke-opacity="0.0000004"/>
+        <path d="M0 0H24V24H0Z" fill="none" stroke="#000" stroke-width="0.0000004"/>
+        <rect x="4" y="6" width="8" height="10" fill="#000"/>
+    </svg>"##;
+    let asset = svg2vd::convert(source).unwrap();
+    let xml = asset.to_xml();
+    assert!(xml.contains(r#"android:fillAlpha="0""#), "{xml}");
+    assert!(xml.contains(r#"android:strokeAlpha="0""#), "{xml}");
+    assert!(xml.contains(r#"android:strokeWidth="0""#), "{xml}");
+    let bounds = asset.analysis.metrics.content_bounds.unwrap();
+    assert_close(bounds.left, 4.0);
+    assert_close(bounds.top, 6.0);
+    assert_close(bounds.right, 12.0);
+    assert_close(bounds.bottom, 16.0);
+
+    // The smallest alpha the writer keeps nonzero still counts as painted.
+    let faint = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <path d="M0 0H24V24H0Z" fill="#000" fill-opacity="0.000001"/>
+    </svg>"##;
+    let asset = svg2vd::convert(faint).unwrap();
+    assert!(asset.to_xml().contains(r#"android:fillAlpha="0.000001""#));
     assert_close(asset.analysis.metrics.content_bounds.unwrap().right, 24.0);
 }

@@ -272,7 +272,7 @@ fn path_data(commands: &[PathCommand]) -> String {
     value
 }
 
-fn number(value: f32) -> String {
+pub(crate) fn number(value: f32) -> String {
     let value = if value.abs() < 0.000_000_5 {
         0.0
     } else {

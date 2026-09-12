@@ -360,10 +360,12 @@ fn visit_group(
                 // is emitted for fidelity but renders nothing.
                 let fill_paints = fill
                     .as_ref()
-                    .is_some_and(|value| value.1 > 0.0 && value.0.paints_pixels());
-                let stroke_paints = stroke
-                    .as_ref()
-                    .is_some_and(|value| value.1 > 0.0 && value.2 > 0.0 && value.0.paints_pixels());
+                    .is_some_and(|value| serializes_nonzero(value.1) && value.0.paints_pixels());
+                let stroke_paints = stroke.as_ref().is_some_and(|value| {
+                    serializes_nonzero(value.1)
+                        && serializes_nonzero(value.2)
+                        && value.0.paints_pixels()
+                });
                 if stroke_paints {
                     include_bounds(&mut metrics.content_bounds, path.abs_stroke_bounding_box());
                 } else if fill_paints {
@@ -654,16 +656,24 @@ fn lower_linear_gradient(
     let direction_y = (inverse.kx * dx + inverse.sy * dy) / length_squared;
     let direction_squared = direction_x * direction_x + direction_y * direction_y;
     let start = mapped(transform, Point::from_xy(gradient.x1(), gradient.y1()));
-    let end_x = start.x + direction_x / direction_squared;
-    let end_y = start.y + direction_y / direction_squared;
-    // Degeneracy is judged on the mapped axis in viewport units: a tiny source
-    // axis under a large transform is a real gradient, while an axis shorter
-    // than the XML writer can express would serialize as a single point.
-    if !(end_x - start.x).hypot(end_y - start.y).is_finite()
-        || (end_x - start.x).hypot(end_y - start.y) < MINIMUM_EXTENT
-    {
+    let mut axis_x = direction_x / direction_squared;
+    let mut axis_y = direction_y / direction_squared;
+    let length = axis_x.hypot(axis_y);
+    if !length.is_finite() || length == 0.0 {
+        // The transform is numerically singular for this axis; nothing better
+        // than the last stop can be expressed.
         return solid_from_last_stop(&stops);
     }
+    if length < MINIMUM_AXIS {
+        // A nonzero axis shorter than the writer can express is still a hard
+        // edge between the first and last stop colors. Lengthen it along its
+        // own direction to the shortest distinctly serializable axis rather
+        // than collapse it; the edge moves by less than a millionth of a unit.
+        axis_x *= MINIMUM_AXIS / length;
+        axis_y *= MINIMUM_AXIS / length;
+    }
+    let end_x = start.x + axis_x;
+    let end_y = start.y + axis_y;
     Some((
         Paint::Linear(LinearGradient {
             start_x: start.x,
@@ -680,6 +690,18 @@ fn lower_linear_gradient(
 /// Smallest gradient extent, in viewport units, that the XML writer's six
 /// decimal places can express. Anything below it would serialize as zero.
 pub const MINIMUM_EXTENT: f32 = 0.000_001;
+
+/// Shortest linear-gradient axis whose end points serialize distinctly in
+/// every direction: at this length the larger component is at least one
+/// writer unit even on a diagonal.
+const MINIMUM_AXIS: f32 = 2.0 * MINIMUM_EXTENT;
+
+/// Whether a path-level number survives XML serialization as nonzero. Path
+/// alphas and stroke widths are floats in Android, so the writer's own
+/// formatting is the only quantization that applies.
+fn serializes_nonzero(value: f32) -> bool {
+    crate::xml::number(value) != "0"
+}
 
 /// Re-express a radial gradient in viewport coordinates when Android can draw it.
 ///

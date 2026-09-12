@@ -55,8 +55,26 @@ pub struct Metrics {
     pub gradients: usize,
     /// Number of source clip paths.
     pub clip_paths: usize,
+    /// Bounds of painted geometry including strokes, clamped to the viewport.
+    ///
+    /// Clipping is not applied, so the bounds can be larger than what is
+    /// visible. `None` when nothing is painted inside the viewport.
+    pub content_bounds: Option<Bounds>,
     /// Serialized VectorDrawable size before optional optimization.
     pub estimated_xml_bytes: usize,
+}
+
+/// Axis-aligned bounds in VectorDrawable viewport units.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct Bounds {
+    /// Left edge.
+    pub left: f32,
+    /// Top edge.
+    pub top: f32,
+    /// Right edge.
+    pub right: f32,
+    /// Bottom edge.
+    pub bottom: f32,
 }
 
 /// One compatibility, safety, or normalization finding.

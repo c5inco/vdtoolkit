@@ -36,7 +36,7 @@ pub enum Error {
     Svg(#[from] usvg::Error),
     /// The SVG cannot be converted exactly or with safe normalization.
     #[error("SVG is not exactly representable as VectorDrawable")]
-    Incompatible(Analysis),
+    Incompatible(Box<Analysis>),
     /// CLI input arguments describe an unsupported operation.
     #[error("{0}")]
     InvalidInput(String),

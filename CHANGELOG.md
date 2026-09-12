@@ -6,6 +6,21 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Linear gradients and circular radial gradients on fills and strokes, written
+  as inline `aapt` gradients. Stop opacity and all spread methods are kept, and
+  gradients report API 24 as the minimum. Radial gradients with a focal point,
+  a focal radius, or an elliptical shape are still rejected.
+- `inspect` reports content bounds: the painted area including strokes,
+  clamped to the viewport.
+
+### Changed
+
+- The experimental Rust API now boxes the analysis inside
+  `Error::Incompatible`. Field access and pattern matches are unchanged; code
+  that moves the analysis out needs to dereference the box.
+
 ## [0.1.0] - 2026-09-10
 
 ### Added

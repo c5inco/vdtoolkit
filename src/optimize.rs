@@ -1,4 +1,4 @@
-use crate::vector::{PathCommand, PathData, VectorDrawable, VectorNode};
+use crate::vector::{Paint, PathCommand, PathData, VectorDrawable, VectorNode};
 
 pub fn optimize(drawable: &mut VectorDrawable) {
     optimize_nodes(&mut drawable.children);
@@ -15,6 +15,9 @@ fn optimize_nodes(nodes: &mut [VectorNode]) {
                 path.stroke_alpha = round(path.stroke_alpha);
                 path.stroke_width = round(path.stroke_width);
                 path.stroke_miter = round(path.stroke_miter);
+                for paint in [&mut path.fill, &mut path.stroke].into_iter().flatten() {
+                    optimize_paint(paint);
+                }
             }
         }
     }
@@ -28,6 +31,23 @@ fn optimize_path_data(path_data: &mut PathData) {
             PathCommand::Cubic(a, b, c, d, e, f) => round_all(&mut [a, b, c, d, e, f]),
             PathCommand::Close => {}
         }
+    }
+}
+
+fn optimize_paint(paint: &mut Paint) {
+    match paint {
+        Paint::Solid(_) => {}
+        Paint::Linear(gradient) => round_all(&mut [
+            &mut gradient.start_x,
+            &mut gradient.start_y,
+            &mut gradient.end_x,
+            &mut gradient.end_y,
+        ]),
+        Paint::Radial(gradient) => round_all(&mut [
+            &mut gradient.center_x,
+            &mut gradient.center_y,
+            &mut gradient.radius,
+        ]),
     }
 }
 

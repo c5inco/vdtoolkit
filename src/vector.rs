@@ -1,6 +1,6 @@
 use usvg::tiny_skia_path::{PathSegment, Point, Transform};
 
-use crate::analysis::{Compatibility, Diagnostic, DiagnosticCode, Metrics, Severity};
+use crate::analysis::{Bounds, Compatibility, Diagnostic, DiagnosticCode, Metrics, Severity};
 
 #[derive(Clone, Debug)]
 pub struct VectorDrawable {
@@ -26,10 +26,10 @@ pub struct VectorGroup {
 #[derive(Clone, Debug)]
 pub struct VectorPath {
     pub path_data: PathData,
-    pub fill: Option<Color>,
+    pub fill: Option<Paint>,
     pub fill_alpha: f32,
     pub fill_rule: FillRule,
-    pub stroke: Option<Color>,
+    pub stroke: Option<Paint>,
     pub stroke_alpha: f32,
     pub stroke_width: f32,
     pub stroke_cap: LineCap,
@@ -51,6 +51,55 @@ pub enum PathCommand {
 
 #[derive(Clone, Copy, Debug)]
 pub struct Color(pub u8, pub u8, pub u8);
+
+/// Fill or stroke paint.
+#[derive(Clone, Debug)]
+pub enum Paint {
+    Solid(Color),
+    Linear(LinearGradient),
+    Radial(RadialGradient),
+}
+
+impl Paint {
+    pub fn is_gradient(&self) -> bool {
+        !matches!(self, Self::Solid(_))
+    }
+}
+
+/// Linear gradient in viewport coordinates.
+#[derive(Clone, Debug)]
+pub struct LinearGradient {
+    pub start_x: f32,
+    pub start_y: f32,
+    pub end_x: f32,
+    pub end_y: f32,
+    pub stops: Vec<GradientStop>,
+    pub tile_mode: TileMode,
+}
+
+/// Circular radial gradient in viewport coordinates.
+#[derive(Clone, Debug)]
+pub struct RadialGradient {
+    pub center_x: f32,
+    pub center_y: f32,
+    pub radius: f32,
+    pub stops: Vec<GradientStop>,
+    pub tile_mode: TileMode,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct GradientStop {
+    pub offset: f32,
+    pub color: Color,
+    pub alpha: f32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TileMode {
+    Clamp,
+    Mirror,
+    Repeat,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FillRule {
@@ -74,12 +123,30 @@ pub enum LineJoin {
 
 impl VectorDrawable {
     pub fn minimum_api(&self) -> u32 {
-        if contains_even_odd(&self.children) || count_clip_paths(&self.children) > 1 {
+        if contains_even_odd(&self.children)
+            || count_clip_paths(&self.children) > 1
+            || self.uses_gradients()
+        {
             24
         } else {
             21
         }
     }
+
+    pub fn uses_gradients(&self) -> bool {
+        contains_gradient(&self.children)
+    }
+}
+
+fn contains_gradient(nodes: &[VectorNode]) -> bool {
+    nodes.iter().any(|node| match node {
+        VectorNode::Group(group) => contains_gradient(&group.children),
+        VectorNode::Path(path) => [&path.fill, &path.stroke]
+            .into_iter()
+            .flatten()
+            .any(Paint::is_gradient),
+        VectorNode::ClipPath(_) => false,
+    })
 }
 
 fn contains_even_odd(nodes: &[VectorNode]) -> bool {
@@ -115,15 +182,8 @@ pub(crate) fn lower(
     metrics.gradients = tree.linear_gradients().len() + tree.radial_gradients().len();
     metrics.clip_paths = tree.clip_paths().len();
     metrics.groups = count_groups(tree.root()).saturating_sub(1);
+    metrics.content_bounds = content_bounds(tree);
 
-    if metrics.gradients > 0 {
-        unsupported(
-            compatibility,
-            diagnostics,
-            DiagnosticCode::UnsupportedGradient,
-            "gradients require Android complex-color lowering, which is not yet supported",
-        );
-    }
     let mut children = Vec::new();
     visit_group(
         tree.root(),
@@ -205,10 +265,16 @@ fn visit_group(
                 let data = transformed_path(path);
                 metrics.path_commands += data.0.len();
                 let fill = path.fill().and_then(|fill| {
-                    color(fill.paint(), compatibility, diagnostics).map(|color| {
+                    lower_paint(
+                        fill.paint(),
+                        path.abs_transform(),
+                        compatibility,
+                        diagnostics,
+                    )
+                    .map(|(paint, alpha)| {
                         (
-                            color,
-                            fill.opacity().get() * inherited_alpha,
+                            paint,
+                            fill.opacity().get() * inherited_alpha * alpha,
                             map_fill_rule(fill.rule()),
                         )
                     })
@@ -230,11 +296,17 @@ fn visit_group(
                             "miter-clip stroke joins cannot be represented by VectorDrawable",
                         );
                     }
-                    color(stroke.paint(), compatibility, diagnostics).map(|color| {
+                    lower_paint(
+                        stroke.paint(),
+                        path.abs_transform(),
+                        compatibility,
+                        diagnostics,
+                    )
+                    .map(|(paint, alpha)| {
                         let scale = stroke_scale(path.abs_transform(), compatibility, diagnostics);
                         (
-                            color,
-                            stroke.opacity().get() * inherited_alpha,
+                            paint,
+                            stroke.opacity().get() * inherited_alpha * alpha,
                             stroke.width().get() * scale,
                             map_cap(stroke.linecap()),
                             map_join(stroke.linejoin()),
@@ -253,17 +325,28 @@ fn visit_group(
                         "stroke-before-fill paint order cannot be represented by VectorDrawable",
                     );
                 }
+                let (fill, fill_alpha, fill_rule) = match fill {
+                    Some((paint, alpha, rule)) => (Some(paint), alpha, rule),
+                    None => (None, 1.0, FillRule::NonZero),
+                };
+                let (stroke, stroke_alpha, stroke_width, stroke_cap, stroke_join, stroke_miter) =
+                    match stroke {
+                        Some((paint, alpha, width, cap, join, miter)) => {
+                            (Some(paint), alpha, width, cap, join, miter)
+                        }
+                        None => (None, 1.0, 0.0, LineCap::Butt, LineJoin::Miter, 4.0),
+                    };
                 children.push(VectorNode::Path(VectorPath {
                     path_data: data,
-                    fill: fill.map(|value| value.0),
-                    fill_alpha: fill.map_or(1.0, |value| value.1),
-                    fill_rule: fill.map_or(FillRule::NonZero, |value| value.2),
-                    stroke: stroke.map(|value| value.0),
-                    stroke_alpha: stroke.map_or(1.0, |value| value.1),
-                    stroke_width: stroke.map_or(0.0, |value| value.2),
-                    stroke_cap: stroke.map_or(LineCap::Butt, |value| value.3),
-                    stroke_join: stroke.map_or(LineJoin::Miter, |value| value.4),
-                    stroke_miter: stroke.map_or(4.0, |value| value.5),
+                    fill,
+                    fill_alpha,
+                    fill_rule,
+                    stroke,
+                    stroke_alpha,
+                    stroke_width,
+                    stroke_cap,
+                    stroke_join,
+                    stroke_miter,
                 }));
             }
             usvg::Node::Image(_) | usvg::Node::Text(_) => {
@@ -454,23 +537,200 @@ fn contains_fill_and_stroke(group: &usvg::Group) -> bool {
     })
 }
 
-fn color(
+/// Lower an SVG paint for a path whose geometry is mapped by `transform`.
+///
+/// Returns the paint and an alpha multiplier the paint contributes to the path.
+fn lower_paint(
     paint: &usvg::Paint,
+    transform: Transform,
     compatibility: &mut Compatibility,
     diagnostics: &mut Vec<Diagnostic>,
-) -> Option<Color> {
+) -> Option<(Paint, f32)> {
     match paint {
-        usvg::Paint::Color(color) => Some(Color(color.red, color.green, color.blue)),
-        _ => {
+        usvg::Paint::Color(color) => Some((Paint::Solid(rgb(*color)), 1.0)),
+        usvg::Paint::LinearGradient(gradient) => {
+            lower_linear_gradient(gradient, transform, compatibility, diagnostics)
+        }
+        usvg::Paint::RadialGradient(gradient) => {
+            lower_radial_gradient(gradient, transform, compatibility, diagnostics)
+        }
+        usvg::Paint::Pattern(_) => {
             unsupported(
                 compatibility,
                 diagnostics,
                 DiagnosticCode::UnsupportedPaint,
-                "non-solid paint cannot be represented by the current lowering profile",
+                "pattern paint cannot be represented by VectorDrawable",
             );
             None
         }
     }
+}
+
+fn rgb(color: usvg::Color) -> Color {
+    Color(color.red, color.green, color.blue)
+}
+
+/// Re-express a linear gradient in viewport coordinates.
+///
+/// An affine map keeps a linear gradient linear, but the new end point is not
+/// the mapped `x2, y2`. Under skew or non-uniform scale the gradient direction
+/// follows the inverse transpose, so every line of constant color lands where
+/// the SVG renders it.
+fn lower_linear_gradient(
+    gradient: &usvg::LinearGradient,
+    transform: Transform,
+    compatibility: &mut Compatibility,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Option<(Paint, f32)> {
+    let transform = transform.pre_concat(gradient.transform());
+    let stops = gradient_stops(gradient.stops());
+    let dx = gradient.x2() - gradient.x1();
+    let dy = gradient.y2() - gradient.y1();
+    let length_squared = dx * dx + dy * dy;
+    if length_squared <= f32::EPSILON {
+        // SVG paints a zero-length linear gradient with its last stop.
+        let last = *stops.last()?;
+        return Some((Paint::Solid(last.color), last.alpha));
+    }
+    let Some(inverse) = transform.invert() else {
+        unsupported(
+            compatibility,
+            diagnostics,
+            DiagnosticCode::UnsupportedGradient,
+            "gradient transform is not invertible",
+        );
+        return None;
+    };
+    if !transform.is_identity() {
+        require_normalization(compatibility, diagnostics);
+    }
+    let direction_x = (inverse.sx * dx + inverse.ky * dy) / length_squared;
+    let direction_y = (inverse.kx * dx + inverse.sy * dy) / length_squared;
+    let direction_squared = direction_x * direction_x + direction_y * direction_y;
+    let start = mapped(transform, Point::from_xy(gradient.x1(), gradient.y1()));
+    Some((
+        Paint::Linear(LinearGradient {
+            start_x: start.x,
+            start_y: start.y,
+            end_x: start.x + direction_x / direction_squared,
+            end_y: start.y + direction_y / direction_squared,
+            stops,
+            tile_mode: tile_mode(gradient.spread_method()),
+        }),
+        1.0,
+    ))
+}
+
+/// Re-express a radial gradient in viewport coordinates when Android can draw it.
+///
+/// VectorDrawable radial gradients are circles with a center and radius only,
+/// so a focal point, a focal radius, or a transform that would turn the circle
+/// into an ellipse is rejected.
+fn lower_radial_gradient(
+    gradient: &usvg::RadialGradient,
+    transform: Transform,
+    compatibility: &mut Compatibility,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Option<(Paint, f32)> {
+    let transform = transform.pre_concat(gradient.transform());
+    let radius = gradient.r().get();
+    let focal_offset = (gradient.fx() - gradient.cx()).hypot(gradient.fy() - gradient.cy());
+    if focal_offset > 1.0e-4 * radius || gradient.fr().get() > 0.0 {
+        unsupported(
+            compatibility,
+            diagnostics,
+            DiagnosticCode::UnsupportedGradient,
+            "radial gradients with a focal point cannot be represented by VectorDrawable",
+        );
+        return None;
+    }
+    let Some(scale) = similarity_scale(transform) else {
+        unsupported(
+            compatibility,
+            diagnostics,
+            DiagnosticCode::UnsupportedGradient,
+            "elliptical or skewed radial gradients cannot be represented by VectorDrawable",
+        );
+        return None;
+    };
+    if !transform.is_identity() {
+        require_normalization(compatibility, diagnostics);
+    }
+    let center = mapped(transform, Point::from_xy(gradient.cx(), gradient.cy()));
+    Some((
+        Paint::Radial(RadialGradient {
+            center_x: center.x,
+            center_y: center.y,
+            radius: radius * scale,
+            stops: gradient_stops(gradient.stops()),
+            tile_mode: tile_mode(gradient.spread_method()),
+        }),
+        1.0,
+    ))
+}
+
+fn gradient_stops(stops: &[usvg::Stop]) -> Vec<GradientStop> {
+    stops
+        .iter()
+        .map(|stop| GradientStop {
+            offset: stop.offset().get(),
+            color: rgb(stop.color()),
+            alpha: stop.opacity().get(),
+        })
+        .collect()
+}
+
+fn tile_mode(spread: usvg::SpreadMethod) -> TileMode {
+    match spread {
+        usvg::SpreadMethod::Pad => TileMode::Clamp,
+        usvg::SpreadMethod::Reflect => TileMode::Mirror,
+        usvg::SpreadMethod::Repeat => TileMode::Repeat,
+    }
+}
+
+/// Uniform scale factor of a transform made of rotation, reflection,
+/// translation, and uniform scale. `None` for skew or non-uniform scale.
+fn similarity_scale(transform: Transform) -> Option<f32> {
+    let x = transform.sx.hypot(transform.ky);
+    let y = transform.kx.hypot(transform.sy);
+    let dot = transform.sx * transform.kx + transform.ky * transform.sy;
+    let relative = 1.0e-4;
+    (x > 0.0 && (x - y).abs() <= relative * x.max(y) && dot.abs() <= relative * x * y).then_some(x)
+}
+
+fn require_normalization(compatibility: &mut Compatibility, diagnostics: &mut Vec<Diagnostic>) {
+    compatibility.worsen(Compatibility::ExactWithNormalization);
+    if !diagnostics
+        .iter()
+        .any(|item| item.code.as_str() == DiagnosticCode::NormalizationRequired.as_str())
+    {
+        diagnostics.push(Diagnostic {
+            code: DiagnosticCode::NormalizationRequired,
+            severity: Severity::Info,
+            message: "safe SVG normalization is required before lowering".to_owned(),
+            location: None,
+            suggestion: None,
+        });
+    }
+}
+
+/// Bounds of painted geometry, including strokes, clamped to the viewport.
+///
+/// Clipping is not applied, so the result can be larger than what is visible.
+fn content_bounds(tree: &usvg::Tree) -> Option<Bounds> {
+    let size = tree.size();
+    let rect = tree.root().abs_stroke_bounding_box();
+    let round = |value: f32| (value * 10_000.0).round() / 10_000.0;
+    let left = round(rect.left().max(0.0));
+    let top = round(rect.top().max(0.0));
+    let right = round(rect.right().min(size.width()));
+    let bottom = round(rect.bottom().min(size.height()));
+    (right > left && bottom > top).then_some(Bounds {
+        left,
+        top,
+        right,
+        bottom,
+    })
 }
 
 fn transformed_path(path: &usvg::Path) -> PathData {

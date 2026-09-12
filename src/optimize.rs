@@ -37,19 +37,28 @@ fn optimize_path_data(path_data: &mut PathData) {
 fn optimize_paint(paint: &mut Paint) {
     match paint {
         Paint::Solid(_) => {}
-        Paint::Linear(gradient) => round_all(&mut [
-            &mut gradient.start_x,
-            &mut gradient.start_y,
-            &mut gradient.end_x,
-            &mut gradient.end_y,
-        ]),
-        Paint::Radial(gradient) => round_all(&mut [
-            &mut gradient.center_x,
-            &mut gradient.center_y,
-            &mut gradient.radius,
-        ]),
+        Paint::Linear(gradient) => {
+            // Rounding must not collapse the axis to a point, which would
+            // change how Android paints the gradient.
+            let (start_x, start_y) = (round(gradient.start_x), round(gradient.start_y));
+            let (end_x, end_y) = (round(gradient.end_x), round(gradient.end_y));
+            if (start_x, start_y) != (end_x, end_y) {
+                gradient.start_x = start_x;
+                gradient.start_y = start_y;
+                gradient.end_x = end_x;
+                gradient.end_y = end_y;
+            }
+        }
+        Paint::Radial(gradient) => {
+            round_all(&mut [&mut gradient.center_x, &mut gradient.center_y]);
+            // Android requires a strictly positive radius.
+            gradient.radius = round(gradient.radius).max(MINIMUM_RADIUS);
+        }
     }
 }
+
+/// Smallest radius the three-decimal rounding can express.
+const MINIMUM_RADIUS: f32 = 0.001;
 
 fn round_all(values: &mut [&mut f32]) {
     for value in values {

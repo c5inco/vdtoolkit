@@ -64,6 +64,16 @@ impl Paint {
     pub fn is_gradient(&self) -> bool {
         !matches!(self, Self::Solid(_))
     }
+
+    /// Whether this paint can produce any visible pixel. A gradient whose
+    /// every stop is fully transparent paints nothing.
+    pub fn paints_pixels(&self) -> bool {
+        match self {
+            Self::Solid(_) => true,
+            Self::Linear(gradient) => gradient.stops.iter().any(|stop| stop.alpha > 0.0),
+            Self::Radial(gradient) => gradient.stops.iter().any(|stop| stop.alpha > 0.0),
+        }
+    }
 }
 
 /// Linear gradient in viewport coordinates.
@@ -331,10 +341,12 @@ fn visit_group(
                 // Only geometry that paints pixels counts toward content bounds:
                 // a fully transparent fill or stroke, or a zero-width stroke,
                 // is emitted for fidelity but renders nothing.
-                let fill_paints = fill.as_ref().is_some_and(|value| value.1 > 0.0);
+                let fill_paints = fill
+                    .as_ref()
+                    .is_some_and(|value| value.1 > 0.0 && value.0.paints_pixels());
                 let stroke_paints = stroke
                     .as_ref()
-                    .is_some_and(|value| value.1 > 0.0 && value.2 > 0.0);
+                    .is_some_and(|value| value.1 > 0.0 && value.2 > 0.0 && value.0.paints_pixels());
                 if stroke_paints {
                     include_bounds(&mut metrics.content_bounds, path.abs_stroke_bounding_box());
                 } else if fill_paints {

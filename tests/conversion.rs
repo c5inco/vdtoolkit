@@ -829,3 +829,76 @@ fn content_bounds_ignore_fully_transparent_paint() {
             .is_none()
     );
 }
+
+#[test]
+fn content_bounds_ignore_gradients_whose_stops_are_all_transparent() {
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <defs>
+            <linearGradient id="clear" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="24" y2="0">
+                <stop offset="0" stop-color="#000" stop-opacity="0"/>
+                <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+            </linearGradient>
+            <radialGradient id="faint" gradientUnits="userSpaceOnUse" cx="8" cy="11" r="6">
+                <stop offset="0" stop-color="#000" stop-opacity="0"/>
+                <stop offset="1" stop-color="#000" stop-opacity=".5"/>
+            </radialGradient>
+        </defs>
+        <path d="M0 0H24V24H0Z" fill="url(#clear)"/>
+        <path d="M0 0H24V24H0Z" fill="none" stroke="url(#clear)" stroke-width="4"/>
+        <rect x="4" y="6" width="8" height="10" fill="url(#faint)"/>
+    </svg>"##;
+    let analysis = svg2vd::analyze(source).unwrap();
+    assert_eq!(
+        analysis.metrics.paths, 3,
+        "transparent gradients are still emitted"
+    );
+    let bounds = analysis.metrics.content_bounds.unwrap();
+    assert_close(bounds.left, 4.0);
+    assert_close(bounds.top, 6.0);
+    assert_close(bounds.right, 12.0);
+    assert_close(bounds.bottom, 16.0);
+
+    let only_clear = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <defs><linearGradient id="clear" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="24" y2="0">
+            <stop offset="0" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#fff" stop-opacity="0"/>
+        </linearGradient></defs>
+        <path d="M0 0H24V24H0Z" fill="url(#clear)"/>
+    </svg>"##;
+    assert!(
+        svg2vd::analyze(only_clear)
+            .unwrap()
+            .metrics
+            .content_bounds
+            .is_none()
+    );
+}
+
+#[test]
+fn optimize_keeps_gradient_geometry_valid() {
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <defs>
+            <radialGradient id="tiny" gradientUnits="userSpaceOnUse" cx="12" cy="12" r="0.0004">
+                <stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#000"/>
+            </radialGradient>
+            <linearGradient id="short" gradientUnits="userSpaceOnUse" x1="5" y1="5" x2="5.0004" y2="5">
+                <stop offset="0" stop-color="#f00"/><stop offset="1" stop-color="#00f"/>
+            </linearGradient>
+        </defs>
+        <path d="M0 0H12V24H0Z" fill="url(#tiny)"/>
+        <path d="M12 0H24V24H12Z" fill="url(#short)"/>
+    </svg>"##;
+    let mut asset = svg2vd::convert(source).unwrap();
+    asset.optimize();
+    let xml = asset.to_xml();
+    let radius = attribute(&xml, "gradientRadius");
+    assert!(
+        radius > 0.0,
+        "radius must stay positive after optimize, got {radius}"
+    );
+    assert!(
+        (attribute(&xml, "startX"), attribute(&xml, "startY"))
+            != (attribute(&xml, "endX"), attribute(&xml, "endY")),
+        "linear gradient axis must not collapse to a point:\n{xml}"
+    );
+    roxmltree::Document::parse(&xml).unwrap();
+}

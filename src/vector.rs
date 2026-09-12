@@ -65,15 +65,32 @@ impl Paint {
         !matches!(self, Self::Solid(_))
     }
 
-    /// Whether this paint can produce any visible pixel. A gradient whose
-    /// every stop is fully transparent paints nothing.
+    /// Whether this paint can produce any visible pixel. Gradient stops are
+    /// serialized with an 8-bit alpha, so a gradient paints nothing when every
+    /// stop would round to alpha `00`.
     pub fn paints_pixels(&self) -> bool {
         match self {
             Self::Solid(_) => true,
-            Self::Linear(gradient) => gradient.stops.iter().any(|stop| stop.alpha > 0.0),
-            Self::Radial(gradient) => gradient.stops.iter().any(|stop| stop.alpha > 0.0),
+            Self::Linear(gradient) => gradient.stops.iter().any(GradientStop::is_visible),
+            Self::Radial(gradient) => gradient.stops.iter().any(GradientStop::is_visible),
         }
     }
+}
+
+impl GradientStop {
+    /// The 8-bit alpha this stop is serialized with.
+    pub fn alpha_byte(&self) -> u8 {
+        alpha_byte(self.alpha)
+    }
+
+    fn is_visible(&self) -> bool {
+        self.alpha_byte() > 0
+    }
+}
+
+/// Quantize an alpha to the 8-bit channel used in `#AARRGGBB` colors.
+pub fn alpha_byte(alpha: f32) -> u8 {
+    (alpha.clamp(0.0, 1.0) * 255.0).round() as u8
 }
 
 /// Linear gradient in viewport coordinates.

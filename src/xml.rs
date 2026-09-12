@@ -227,7 +227,7 @@ fn rgb(color: Color) -> String {
 }
 
 fn argb(color: Color, alpha: f32) -> String {
-    let alpha = (alpha.clamp(0.0, 1.0) * 255.0).round() as u8;
+    let alpha = crate::vector::alpha_byte(alpha);
     if alpha == u8::MAX {
         rgb(color)
     } else {

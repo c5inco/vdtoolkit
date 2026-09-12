@@ -947,3 +947,38 @@ fn radial_radius_stays_positive_without_optimization() {
         "unoptimized radius must be positive, got {radius}:\n{xml}"
     );
 }
+
+#[test]
+fn content_bounds_use_the_serialized_gradient_alpha() {
+    // Every stop is positive but below 0.5/255, so each item serializes with
+    // alpha 00 and the gradient renders nothing.
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <defs><linearGradient id="faint" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="24" y2="0">
+            <stop offset="0" stop-color="#000" stop-opacity="0.001"/>
+            <stop offset="1" stop-color="#fff" stop-opacity="0.0019"/>
+        </linearGradient></defs>
+        <path d="M0 0H24V24H0Z" fill="url(#faint)"/>
+        <rect x="4" y="6" width="8" height="10" fill="#000"/>
+    </svg>"##;
+    let asset = svg2vd::convert(source).unwrap();
+    let xml = asset.to_xml();
+    assert!(xml.contains(r##"android:color="#00000000""##), "{xml}");
+    assert!(xml.contains(r##"android:color="#00FFFFFF""##), "{xml}");
+    let bounds = asset.analysis.metrics.content_bounds.unwrap();
+    assert_close(bounds.left, 4.0);
+    assert_close(bounds.top, 6.0);
+    assert_close(bounds.right, 12.0);
+    assert_close(bounds.bottom, 16.0);
+
+    // The first opacity that rounds to alpha 01 counts as painted.
+    let barely = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <defs><linearGradient id="g" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="24" y2="0">
+            <stop offset="0" stop-color="#000" stop-opacity="0.002"/>
+            <stop offset="1" stop-color="#000" stop-opacity="0.002"/>
+        </linearGradient></defs>
+        <path d="M0 0H24V24H0Z" fill="url(#g)"/>
+    </svg>"##;
+    let asset = svg2vd::convert(barely).unwrap();
+    assert!(asset.to_xml().contains(r##"android:color="#01000000""##));
+    assert_close(asset.analysis.metrics.content_bounds.unwrap().right, 24.0);
+}

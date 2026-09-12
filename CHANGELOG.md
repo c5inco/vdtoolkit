@@ -50,5 +50,5 @@ follow [Semantic Versioning](https://semver.org/).
 - Paired Material corpus conformance, Studio Icons stress coverage, release
   packaging, and optional Android pixel-renderer verification.
 
-[Unreleased]: https://github.com/c5inco/svg2vd/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/c5inco/svg2vd/releases/tag/v0.1.0
+[Unreleased]: https://github.com/c5inco/vdtoolkit/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/c5inco/vdtoolkit/releases/tag/v0.1.0

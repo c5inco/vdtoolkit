@@ -1,4 +1,4 @@
-package com.svg2vd.renderer.test;
+package com.vdtoolkit.renderer.test;
 
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
@@ -71,7 +71,7 @@ public final class RendererConformanceTest extends InstrumentationTestCase {
 
     private int resourceId(String name) {
         int id = getInstrumentation().getTargetContext().getResources()
-                .getIdentifier(name, "drawable", "com.svg2vd.renderer");
+                .getIdentifier(name, "drawable", "com.vdtoolkit.renderer");
         assertTrue("missing drawable resource " + name, id != 0);
         return id;
     }

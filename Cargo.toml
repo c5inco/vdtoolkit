@@ -1,13 +1,13 @@
 [package]
-name = "svg2vd"
+name = "vdtoolkit"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
-description = "Standalone SVG to Android VectorDrawable toolchain"
+description = "Standalone toolkit for Android VectorDrawable assets"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/c5inco/svg2vd"
-homepage = "https://github.com/c5inco/svg2vd"
-documentation = "https://docs.rs/svg2vd"
+repository = "https://github.com/c5inco/vdtoolkit"
+homepage = "https://github.com/c5inco/vdtoolkit"
+documentation = "https://docs.rs/vdtoolkit"
 keywords = ["svg", "android", "vectordrawable", "converter", "cli"]
 categories = ["command-line-utilities", "graphics"]
 include = [
@@ -20,6 +20,10 @@ include = [
     "/LICENSE-APACHE",
     "/tests/**",
 ]
+
+[[bin]]
+name = "vdt"
+path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }

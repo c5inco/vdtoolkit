@@ -38,14 +38,14 @@ mkdir -p "$BUILD/generated/res/drawable" "$BUILD/generated/res/drawable-v24" \
 cargo build --locked --manifest-path "$ROOT/Cargo.toml"
 for fixture in "$HARNESS"/fixtures/*.svg; do
   name=$(basename "$fixture" .svg)
-  report=$("$ROOT/target/debug/svg2vd" inspect "$fixture" --format json)
+  report=$("$ROOT/target/debug/vdt" inspect "$fixture" --format json)
   minimum_api=$(python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["minimum_api"])' <<<"$report")
   case "$minimum_api" in
     21) qualifier=drawable ;;
     24) qualifier=drawable-v24 ;;
     *) echo "unexpected minimum API $minimum_api for $fixture" >&2; exit 1 ;;
   esac
-  "$ROOT/target/debug/svg2vd" convert "$fixture" \
+  "$ROOT/target/debug/vdt" convert "$fixture" \
     --output "$BUILD/generated/res/$qualifier/$name.xml"
 done
 
@@ -61,14 +61,14 @@ done < <(find "$BUILD/compiled" -type f -name '*.flat' -print0)
   --manifest "$HARNESS/app/AndroidManifest.xml" -I "$ANDROID_JAR" \
   --min-sdk-version 21 --target-sdk-version 35 "${AAPT_RESOURCES[@]}"
 javac -source 8 -target 8 -Xlint:-options -classpath "$ANDROID_JAR" \
-  -d "$BUILD/app-classes" "$HARNESS/app/src/com/svg2vd/renderer/Marker.java"
+  -d "$BUILD/app-classes" "$HARNESS/app/src/com/vdtoolkit/renderer/Marker.java"
 "$BUILD_TOOLS/d8" --lib "$ANDROID_JAR" --min-api 21 --output "$BUILD/app-dex" \
   $(find "$BUILD/app-classes" -type f -name '*.class' -print)
 zip -q -j "$BUILD/app-unsigned.apk" "$BUILD/app-dex/classes.dex"
 
 javac -source 8 -target 8 -Xlint:-options -classpath "$ANDROID_JAR:$ANDROID_TEST_BASE" \
   -d "$BUILD/test-classes" \
-  "$HARNESS/test/src/com/svg2vd/renderer/test/RendererConformanceTest.java"
+  "$HARNESS/test/src/com/vdtoolkit/renderer/test/RendererConformanceTest.java"
 "$BUILD_TOOLS/d8" --lib "$ANDROID_JAR" --lib "$ANDROID_TEST_BASE" \
   --min-api 21 --output "$BUILD/test-dex" \
   $(find "$BUILD/test-classes" -type f -name '*.class' -print)
@@ -81,8 +81,8 @@ keytool -genkeypair -keystore "$BUILD/debug.keystore" -storepass android \
   -keypass android -alias androiddebugkey -dname 'CN=Android Debug,O=Android,C=US' \
   -keyalg RSA -keysize 2048 -validity 10000 >/dev/null 2>&1
 for apk in app test; do
-  output="$BUILD/svg2vd-renderer.apk"
-  [[ "$apk" == test ]] && output="$BUILD/svg2vd-renderer-test.apk"
+  output="$BUILD/vdtoolkit-renderer.apk"
+  [[ "$apk" == test ]] && output="$BUILD/vdtoolkit-renderer-test.apk"
   "$BUILD_TOOLS/apksigner" sign --ks "$BUILD/debug.keystore" \
     --ks-pass pass:android --key-pass pass:android --min-sdk-version 21 \
     --out "$output" "$BUILD/$apk-unsigned.apk"
@@ -90,4 +90,4 @@ for apk in app test; do
 done
 
 printf 'Built:\n  %s\n  %s\n' \
-  "$BUILD/svg2vd-renderer.apk" "$BUILD/svg2vd-renderer-test.apk"
+  "$BUILD/vdtoolkit-renderer.apk" "$BUILD/vdtoolkit-renderer-test.apk"

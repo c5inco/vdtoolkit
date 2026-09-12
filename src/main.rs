@@ -4,11 +4,11 @@ use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
-use svg2vd::{Analysis, Compatibility, Error, Result};
+use vdtoolkit::{Analysis, Compatibility, Error, Result};
 use walkdir::WalkDir;
 
 #[derive(Parser)]
-#[command(name = "svg2vd", version, about)]
+#[command(name = "vdt", version, about)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -147,7 +147,7 @@ fn convert(args: ConvertArgs, optimize: bool) -> Result<Outcome> {
 }
 
 fn convert_one(args: &ConvertArgs, input: &Path, optimize: bool) -> Result<()> {
-    let mut asset = svg2vd::convert_file(input)?;
+    let mut asset = vdtoolkit::convert_file(input)?;
     if args.strict && asset.analysis.compatibility != Compatibility::Exact {
         return Err(Error::InvalidInput(
             "requires normalization and was rejected by --strict".to_owned(),
@@ -197,7 +197,7 @@ fn report(args: ReportArgs, inspect: bool) -> Result<Outcome> {
     let mut passed = true;
     let mut failed = 0;
     for input in &inputs {
-        let result = svg2vd::analyze_file(input);
+        let result = vdtoolkit::analyze_file(input);
         match &result {
             Ok(analysis) => {
                 passed &= if args.strict {

@@ -66,7 +66,7 @@ def main() -> None:
     if len(icons) != ICON_COUNT or any(not icon.get("description") for icon in icons):
         raise SystemExit("Studio Icons snapshot no longer has 812 named, described icons")
 
-    with tempfile.TemporaryDirectory(prefix="svg2vd-studio-icons-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="vdtoolkit-studio-icons-") as temporary:
         temporary = pathlib.Path(temporary)
         sources = temporary / "svg"
         supported = temporary / "supported"
@@ -93,7 +93,7 @@ def main() -> None:
             )
 
         subprocess.run([CARGO, "build", "--release", "--locked"], cwd=ROOT, check=True)
-        binary = ROOT / "target/release/svg2vd"
+        binary = ROOT / "target/release/vdt"
         checked = subprocess.run(
             [binary, "check", sources, "--format", "json"],
             check=False,

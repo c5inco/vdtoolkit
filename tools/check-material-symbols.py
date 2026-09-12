@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Semantically compare svg2vd output with pinned official Android drawables."""
+"""Semantically compare vdtoolkit output with pinned official Android drawables."""
 
 import argparse
 import concurrent.futures
@@ -32,7 +32,7 @@ def download(item: tuple[str, pathlib.Path]) -> None:
 
 
 def canonical_path(data: str) -> list[tuple[str, tuple[float, ...]]]:
-    """Expand relative and shorthand path commands without using svg2vd code."""
+    """Expand relative and shorthand path commands without using vdtoolkit code."""
     tokens = TOKEN.findall(data.replace(",", " "))
     output: list[tuple[str, tuple[float, ...]]] = []
     index = 0
@@ -638,7 +638,7 @@ def main() -> None:
     suite = parser.parse_args().suite
     verify_oracle()
 
-    with tempfile.TemporaryDirectory(prefix="svg2vd-material-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="vdtoolkit-material-") as temporary:
         temporary = pathlib.Path(temporary)
         sources = temporary / "svg"
         official = temporary / "official"
@@ -664,7 +664,7 @@ def main() -> None:
             count = len(entries)
 
         subprocess.run([CARGO, "build", "--release", "--locked"], cwd=ROOT, check=True)
-        binary = ROOT / "target/release/svg2vd"
+        binary = ROOT / "target/release/vdt"
         subprocess.run([binary, "convert", sources, "-o", generated], check=True)
         subprocess.run([binary, "convert", sources, "-o", second], check=True)
 

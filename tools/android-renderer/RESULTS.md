@@ -22,3 +22,21 @@ a per-channel tolerance of 2; transparent pixels require alpha <= 2. All sample
 coordinates are at least 10 rendered pixels from a geometry edge, so the
 tolerance only accommodates renderer variance rather than accepting edge
 antialiasing ambiguity.
+
+Gradient fixtures added and verified on 2026-09-11. Verified with emulator.wtf,
+plus a local API 36 emulator run:
+
+| Device | API | Result |
+| --- | ---: | --- |
+| Pixel 2 | 21 | 6/6 tests passed |
+| Pixel 2 | 24 | 6/6 tests passed |
+| Pixel 7 | 34 | 6/6 tests passed |
+| sdk_gphone64_arm64 emulator | 36 | 6/6 tests passed |
+
+This run adds the skewed linear gradient and scaled radial gradient fixtures.
+Both report API 24 and are emitted as inline `aapt` gradients, so on API 21 the
+two gradient tests verify only that the drawable-v24 resources are not
+selectable; they draw no pixels there. API 24 is the first level that renders
+them, and the assertions are placed where a naive endpoint mapping of the
+gradient would paint the wrong color: two samples on the skewed linear fixture
+and the off-center samples on the scaled radial fixture.

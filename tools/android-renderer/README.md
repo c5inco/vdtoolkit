@@ -29,8 +29,8 @@ runs `vdt adaptive` on them (see `fixtures/adaptive/SOURCES.md`): `ic_launcher`
 uses the `stars` symbol fitted to the 66dp safe zone over a drawable
 background, with `rocket_launch` as the monochrome layer, and
 `ic_launcher_solid` uses a solid color background. The app manifest references
-`@mipmap/ic_launcher`; below API 26 a copy of the foreground vector stands in
-for legacy mipmaps.
+`@mipmap/ic_launcher`; below API 26 the `--legacy` fallback written by
+`vdt adaptive` is selected.
 
 ## Run
 
@@ -59,7 +59,8 @@ adb shell am instrument -w \
 `AdaptiveIconTest` loads the generated icon as an `AdaptiveIconDrawable`,
 renders each layer at 10 pixels per dp and checks the safe-zone placement, the
 background drawable and the `@color` background, and the monochrome layer on
-API 33+. Below API 26 it checks that the plain fallback is selected instead.
+API 33+. Below API 26 it checks that the `--legacy` fallback is selected and renders
+both layers under the circular mask.
 On API 26+ it then drives the real launcher through `UiAutomation`: it goes
 home, finds the app by label (swiping the app drawer open if needed), and
 asserts that both foreground and background colors are visible inside the

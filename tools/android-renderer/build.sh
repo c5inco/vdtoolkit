@@ -70,18 +70,11 @@ done
   --foreground "$BUILD/adaptive-src/$(basename "$ADAPTIVE_FOREGROUND")" \
   --background "$HARNESS/fixtures/adaptive/background.svg" \
   --monochrome "$BUILD/adaptive-src/$(basename "$ADAPTIVE_MONOCHROME")" \
-  --fit 66 --name ic_launcher --output "$BUILD/generated/res"
+  --fit 66 --name ic_launcher --legacy --output "$BUILD/generated/res"
 "$ROOT/target/debug/vdt" adaptive \
   --foreground "$BUILD/adaptive-src/$(basename "$ADAPTIVE_FOREGROUND")" \
   --background-color '#073042' \
   --fit 66 --name ic_launcher_solid --output "$BUILD/generated/res"
-# Below API 26 the manifest icon falls back to the plain foreground vector,
-# the way a real app would fall back to legacy PNG mipmaps.
-mkdir -p "$BUILD/generated/res/mipmap"
-for name in ic_launcher ic_launcher_round; do
-  cp "$BUILD/generated/res/drawable/ic_launcher_foreground.xml" \
-    "$BUILD/generated/res/mipmap/$name.xml"
-done
 
 while IFS= read -r -d '' resource; do
   "$BUILD_TOOLS/aapt2" compile "$resource" -o "$BUILD/compiled"

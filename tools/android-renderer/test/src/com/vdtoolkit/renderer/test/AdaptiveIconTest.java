@@ -41,8 +41,14 @@ public final class AdaptiveIconTest extends InstrumentationTestCase {
     public void testAdaptiveIconLayersRenderAtSafeZone() {
         Drawable icon = drawable(mipmap("ic_launcher"));
         if (Build.VERSION.SDK_INT < 26) {
-            assertTrue("API <26 must select the plain vector fallback, got " + icon,
+            // --legacy: both layers under a circular clip of the 72dp visible area.
+            assertTrue("API <26 must select the legacy vector, got " + icon,
                     icon instanceof VectorDrawable);
+            Bitmap legacy = render(icon);
+            assertPixel(legacy, 540, 540, FOREGROUND);  // star fill
+            assertPixel(legacy, 540, 220, BACKGROUND);  // inside the mask, above the ring
+            assertTransparent(legacy, 540, 100);        // outside the 36dp mask radius
+            assertTransparent(legacy, 60, 60);          // corner mark is masked away
             return;
         }
         assertTrue("expected AdaptiveIconDrawable, got " + icon,

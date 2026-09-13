@@ -11,16 +11,22 @@ of emitting a drawable that renders differently from the source.
 
 ## Install
 
-```sh
-cargo install vdtoolkit --locked
-```
-
-The package is `vdtoolkit` and the installed command is `vdt`.
+> **Note:** `vdtoolkit` is not published to crates.io yet, so
+> `cargo install vdtoolkit` will not work. Use a prebuilt binary or install
+> from this repository.
 
 Prebuilt binaries for macOS, Linux, and Windows are on the
 [Releases page](https://github.com/c5inco/vdtoolkit/releases).
 
-To build from a clone of this repository instead, you need Rust 1.85 or newer:
+To install with Cargo from GitHub, you need Rust 1.85 or newer:
+
+```sh
+cargo install --git https://github.com/c5inco/vdtoolkit --locked
+```
+
+The package is `vdtoolkit` and the installed command is `vdt`.
+
+To build from a clone of this repository instead:
 
 ```sh
 cargo install --path . --locked
@@ -106,7 +112,14 @@ for the renderer findings behind those levels.
 ## Rust API (experimental)
 
 Rust programs can embed the same analyzer and converter without launching a
-subprocess. API docs are on [docs.rs](https://docs.rs/vdtoolkit).
+subprocess. The crate is not on crates.io yet, so depend on it from Git:
+
+```toml
+[dependencies]
+vdtoolkit = { git = "https://github.com/c5inco/vdtoolkit" }
+```
+
+API docs are not on docs.rs yet; build them locally with `cargo doc --open`.
 
 ```rust
 let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">

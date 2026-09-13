@@ -20,6 +20,7 @@
 mod adaptive;
 mod analysis;
 mod error;
+mod notification;
 mod optimize;
 mod render;
 mod svg;
@@ -37,6 +38,7 @@ pub use analysis::{
     Analysis, Bounds, Compatibility, Diagnostic, DiagnosticCode, ElementLocation, Metrics, Severity,
 };
 pub use error::{Error, Result};
+pub use notification::{Flattening, NOTIFICATION_ICON_LIVE_AREA, NOTIFICATION_ICON_SIZE};
 
 /// A converted SVG and its compatibility analysis.
 #[derive(Clone, Debug)]
@@ -107,22 +109,58 @@ impl Asset {
                 adaptive::ADAPTIVE_ICON_SIZE
             )));
         }
+        self.fit_canvas(adaptive::ADAPTIVE_ICON_SIZE, fit);
+        Ok(())
+    }
+
+    /// Turn this asset into a notification icon: every fill and stroke
+    /// flattened to white, keeping opacity, on a 24dp square canvas whose
+    /// content is scaled uniformly and centered to fit inside a `fit` dp
+    /// square. Returns what the flattening changed.
+    ///
+    /// Android draws a status bar and notification icon from its alpha channel
+    /// alone and tints it with the system color, so color in the source cannot
+    /// survive. Use [`NOTIFICATION_ICON_SIZE`] as the fit for artwork that
+    /// already carries its own padding, such as a Material system icon, and
+    /// [`NOTIFICATION_ICON_LIVE_AREA`] for artwork drawn edge to edge.
+    pub fn to_notification_icon(&mut self, fit: f32) -> Result<Flattening> {
+        if !(fit > 0.0 && fit <= notification::NOTIFICATION_ICON_SIZE) {
+            return Err(Error::InvalidInput(format!(
+                "notification icon fit must be between 0 and {} dp, got {fit}",
+                notification::NOTIFICATION_ICON_SIZE
+            )));
+        }
+        let flattening = notification::whiten(&mut self.drawable);
+        self.fit_canvas(notification::NOTIFICATION_ICON_SIZE, fit);
+        // Flattening a gradient to solid white can lower the minimum API, and
+        // the fit never raises it.
+        self.analysis.minimum_api = self
+            .analysis
+            .minimum_api
+            .map(|_| self.drawable.minimum_api());
+        self.analysis.metrics.estimated_xml_bytes = self.to_xml().len();
+        Ok(flattening)
+    }
+
+    /// Scale the content uniformly into a centered `fit` dp square on a
+    /// `canvas` dp square, updating the metrics that placement changes.
+    fn fit_canvas(&mut self, canvas: f32, fit: f32) {
         let metrics = &mut self.analysis.metrics;
         let extent = metrics.viewport_width.max(metrics.viewport_height);
         let scale = fit / extent;
-        let dx = (adaptive::ADAPTIVE_ICON_SIZE - metrics.viewport_width * scale) / 2.0;
-        let dy = (adaptive::ADAPTIVE_ICON_SIZE - metrics.viewport_height * scale) / 2.0;
-        adaptive::fit_square(&mut self.drawable, adaptive::ADAPTIVE_ICON_SIZE, fit);
-        // The layer is 108dp, so a large-dimensions warning about the source
-        // no longer describes the output.
+        let dx = (canvas - metrics.viewport_width * scale) / 2.0;
+        let dy = (canvas - metrics.viewport_height * scale) / 2.0;
+        adaptive::fit_square(&mut self.drawable, canvas, fit);
+        // The canvas replaces the source size, so a large-dimensions warning
+        // about the source no longer describes the output.
         self.analysis.diagnostics.retain(|diagnostic| {
             diagnostic.code.as_str() != DiagnosticCode::LargeDimensions.as_str()
         });
         let metrics = &mut self.analysis.metrics;
-        metrics.width = adaptive::ADAPTIVE_ICON_SIZE;
-        metrics.height = adaptive::ADAPTIVE_ICON_SIZE;
-        metrics.viewport_width = adaptive::ADAPTIVE_ICON_SIZE;
-        metrics.viewport_height = adaptive::ADAPTIVE_ICON_SIZE;
+        metrics.width = canvas;
+        metrics.height = canvas;
+        metrics.viewport_width = canvas;
+        metrics.viewport_height = canvas;
         if let Some(bounds) = &mut metrics.content_bounds {
             bounds.left = bounds.left * scale + dx;
             bounds.top = bounds.top * scale + dy;
@@ -130,7 +168,6 @@ impl Asset {
             bounds.bottom = bounds.bottom * scale + dy;
         }
         self.analysis.metrics.estimated_xml_bytes = self.to_xml().len();
-        Ok(())
     }
 
     /// Content bounds of a fitted adaptive layer that reach outside the
@@ -155,6 +192,27 @@ impl Asset {
         let size = adaptive::ADAPTIVE_ICON_SIZE as u32;
         render::render(&self.drawable, size, size)
             .is_some_and(|pixmap| pixmap.pixels().iter().all(|pixel| pixel.alpha() > 0))
+    }
+
+    /// Fraction of the drawable's pixels that any paint reaches, from 0 for
+    /// empty artwork to 1 for artwork that covers every pixel.
+    ///
+    /// The drawable is rendered at one pixel per dp with clipping, fill rules,
+    /// and alpha applied. A notification icon close to 1 is likely a solid
+    /// plate rather than a silhouette, which the system tints into a filled
+    /// square.
+    pub fn painted_coverage(&self) -> f32 {
+        let width = self.drawable.width_dp.round().max(1.0) as u32;
+        let height = self.drawable.height_dp.round().max(1.0) as u32;
+        let Some(pixmap) = render::render(&self.drawable, width, height) else {
+            return 0.0;
+        };
+        let pixels = pixmap.pixels();
+        if pixels.is_empty() {
+            return 0.0;
+        }
+        let painted = pixels.iter().filter(|pixel| pixel.alpha() > 0).count();
+        painted as f32 / pixels.len() as f32
     }
 
     /// A 108dp adaptive icon layer filled with one solid `#RRGGBB` or

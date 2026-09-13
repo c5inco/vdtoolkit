@@ -8,6 +8,16 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `notification` command that converts SVGs to white 24dp notification icon
+  drawables: every fill and stroke is flattened to white with its opacity kept,
+  since Android tints the alpha channel alone, and the artwork is scaled
+  uniformly into a centered `--fit` square on the 24dp canvas. A gradient with
+  uniform stop opacity collapses to solid white, which drops the minimum API
+  back to 21; a fading gradient is kept with white stops. Stderr names what was
+  flattened, and warns about artwork that covers almost the whole canvas or
+  paints nothing. The Rust API gains `Asset::to_notification_icon`,
+  `Asset::painted_coverage`, `Flattening`, `NOTIFICATION_ICON_SIZE`, and
+  `NOTIFICATION_ICON_LIVE_AREA`.
 - `SVGVD016` warning for drawables larger than Android's recommended 200×200dp
   vector icon size. It does not change compatibility; `convert` and `optimize`
   print it to stderr, and `check` and `inspect` list it with other diagnostics.

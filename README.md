@@ -40,6 +40,7 @@ vdt convert icons/ -o res/drawable/    # directories work; tree is preserved
 vdt check icon.svg                     # is it convertible? (no output written)
 vdt inspect icon.svg --format json     # diagnostics, min API, metrics
 vdt optimize icon.svg -o ic_icon.xml   # convert with smaller numbers, same rendering
+vdt adaptive --foreground fg.svg --background-color '#3DDC84' -o app/src/main/res
 ```
 
 | Command | What it does |
@@ -48,8 +49,9 @@ vdt optimize icon.svg -o ic_icon.xml   # convert with smaller numbers, same rend
 | `check` | Report compatibility only. |
 | `inspect` | Report compatibility, diagnostics, minimum Android API, content bounds, and metrics. |
 | `optimize` | Convert, then shorten numbers where it cannot change rendering. |
+| `adaptive` | Generate an adaptive launcher icon and its layer drawables into a `res/` directory. |
 
-Every command accepts a file or a directory. In a directory, a file that fails
+Every command except `adaptive` accepts a file or a directory. In a directory, a file that fails
 is named on stderr and the remaining files are still processed. `--format json`
 produces a stable report with diagnostic codes for use in CI, and lists a
 `path` and `error` for any file that could not be read or parsed. `--strict`
@@ -60,6 +62,34 @@ accepts only input that needs no normalization at all.
 | 0 | Every input converted, or is convertible. |
 | 1 | At least one file was malformed, unreadable, or failed to convert. |
 | 2 | `check`/`inspect` only: at least one input is incompatible. |
+
+### Adaptive icons
+
+`adaptive` converts each layer SVG into a 108dp VectorDrawable and writes the
+`<adaptive-icon>` resource that ties them together:
+
+```sh
+vdt adaptive --foreground logo.svg --background bg.svg --monochrome logo.svg \
+    --fit 66 --name ic_launcher -o app/src/main/res
+```
+
+| Option | Meaning |
+| --- | --- |
+| `--foreground <svg>` | Foreground layer. Required. |
+| `--background <svg>` or `--background-color <#RRGGBB>` | Background layer, as a drawable or a color resource. Exactly one is required. |
+| `--monochrome <svg>` | Optional monochrome layer for themed icons on Android 13 and newer. |
+| `--fit <dp>` | Square that the foreground and monochrome artwork is scaled to fit, centered on the 108dp layer. Defaults to 108; use 66 to keep a logo inside the safe zone that no launcher mask hides. |
+| `--name <name>` | Resource name, `ic_launcher` by default. Layers use it as a prefix. |
+
+The files written are `mipmap-anydpi-v26/<name>.xml`,
+`mipmap-anydpi-v26/<name>_round.xml`, `drawable/<name>_foreground.xml`, either
+`drawable/<name>_background.xml` or `values/<name>_background.xml`, and
+`drawable/<name>_monochrome.xml` when a monochrome layer is given. Artwork is
+scaled uniformly and centered, so rendering is unchanged apart from placement;
+a background SVG always fills the whole layer. Every layer is converted before
+anything is written, and a layer that fails leaves the directory untouched.
+Add `android:icon="@mipmap/<name>"` and `android:roundIcon="@mipmap/<name>_round"`
+to the `<application>` element of the manifest.
 
 ## Example
 

@@ -13,6 +13,12 @@ follow [Semantic Versioning](https://semver.org/).
   print it to stderr, and `check` and `inspect` list it with other diagnostics.
 - `Asset::fit_within` scales `android:width` and `android:height` down to a
   maximum size in dp while keeping the viewport.
+- `adaptive` command that generates an Android adaptive launcher icon from
+  layer SVGs: 108dp foreground, background, and optional monochrome drawables,
+  a solid background as a color resource, and the `mipmap-anydpi-v26` icon
+  resources. `--fit` scales artwork uniformly into a centered square such as
+  the 66dp safe zone. The Rust API gains `Asset::fit_adaptive_layer`,
+  `adaptive_icon_xml`, and `color_resource_xml`.
 - Linear gradients and circular radial gradients on fills and strokes, written
   as inline `aapt` gradients. Stop opacity and all spread methods are kept, and
   gradients report API 24 as the minimum. Radial gradients with a focal point,

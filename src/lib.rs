@@ -17,6 +17,7 @@
 //! # Ok::<(), vdtoolkit::Error>(())
 //! ```
 
+mod adaptive;
 mod analysis;
 mod error;
 mod optimize;
@@ -26,6 +27,9 @@ mod xml;
 
 use std::path::Path;
 
+pub use adaptive::{
+    ADAPTIVE_ICON_SAFE_ZONE, ADAPTIVE_ICON_SIZE, adaptive_icon_xml, color_resource_xml,
+};
 pub use analysis::{
     Analysis, Bounds, Compatibility, Diagnostic, DiagnosticCode, ElementLocation, Metrics, Severity,
 };
@@ -83,6 +87,41 @@ impl Asset {
             ));
         self.analysis.metrics.estimated_xml_bytes = self.to_xml().len();
         true
+    }
+
+    /// Turn this asset into an adaptive icon layer: a 108dp square drawable
+    /// whose content is scaled uniformly and centered so the source viewport
+    /// fits inside a `fit` dp square.
+    ///
+    /// Use [`ADAPTIVE_ICON_SIZE`] to fill the whole layer and
+    /// [`ADAPTIVE_ICON_SAFE_ZONE`] to keep artwork inside the area no launcher
+    /// mask hides. Rendering is unchanged apart from placement, so the
+    /// compatibility and minimum API are preserved.
+    pub fn fit_adaptive_layer(&mut self, fit: f32) -> Result<()> {
+        if !(fit > 0.0 && fit <= adaptive::ADAPTIVE_ICON_SIZE) {
+            return Err(Error::InvalidInput(format!(
+                "adaptive layer fit must be between 0 and {} dp, got {fit}",
+                adaptive::ADAPTIVE_ICON_SIZE
+            )));
+        }
+        let metrics = &mut self.analysis.metrics;
+        let extent = metrics.viewport_width.max(metrics.viewport_height);
+        let scale = fit / extent;
+        let dx = (adaptive::ADAPTIVE_ICON_SIZE - metrics.viewport_width * scale) / 2.0;
+        let dy = (adaptive::ADAPTIVE_ICON_SIZE - metrics.viewport_height * scale) / 2.0;
+        adaptive::fit_square(&mut self.drawable, adaptive::ADAPTIVE_ICON_SIZE, fit);
+        metrics.width = adaptive::ADAPTIVE_ICON_SIZE;
+        metrics.height = adaptive::ADAPTIVE_ICON_SIZE;
+        metrics.viewport_width = adaptive::ADAPTIVE_ICON_SIZE;
+        metrics.viewport_height = adaptive::ADAPTIVE_ICON_SIZE;
+        if let Some(bounds) = &mut metrics.content_bounds {
+            bounds.left = bounds.left * scale + dx;
+            bounds.top = bounds.top * scale + dy;
+            bounds.right = bounds.right * scale + dx;
+            bounds.bottom = bounds.bottom * scale + dy;
+        }
+        self.analysis.metrics.estimated_xml_bytes = self.to_xml().len();
+        Ok(())
     }
 }
 

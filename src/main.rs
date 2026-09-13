@@ -2,7 +2,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 use vdtoolkit::{Analysis, Compatibility, Error, Result, Severity};
 use walkdir::WalkDir;
@@ -24,6 +24,8 @@ enum Command {
     Inspect(ReportArgs),
     /// Convert and reduce safe numeric precision for Android.
     Optimize(ConvertArgs),
+    /// Generate an adaptive launcher icon and its layer drawables.
+    Adaptive(AdaptiveArgs),
 }
 
 #[derive(Args)]
@@ -33,6 +35,42 @@ struct ConvertArgs {
     /// Output XML file or directory. Required for directory input.
     #[arg(short, long)]
     output: Option<PathBuf>,
+    /// Reject SVGs that require safe normalization.
+    #[arg(long)]
+    strict: bool,
+}
+
+#[derive(Args)]
+#[command(group(
+    ArgGroup::new("background_layer")
+        .required(true)
+        .args(["background", "background_color"])
+))]
+struct AdaptiveArgs {
+    /// Foreground layer SVG.
+    #[arg(long)]
+    foreground: PathBuf,
+    /// Background layer SVG, scaled to fill the whole 108dp layer.
+    #[arg(long)]
+    background: Option<PathBuf>,
+    /// Solid background color as #RRGGBB or #AARRGGBB, written as a color
+    /// resource instead of a drawable.
+    #[arg(long, value_name = "COLOR")]
+    background_color: Option<String>,
+    /// Monochrome layer SVG for themed icons on Android 13 and newer.
+    #[arg(long)]
+    monochrome: Option<PathBuf>,
+    /// Resource name of the icon and prefix of its layers.
+    #[arg(long, default_value = "ic_launcher")]
+    name: String,
+    /// Size in dp of the centered square that the foreground and monochrome
+    /// artwork is scaled to fit. 108 fills the layer; 66 is the safe zone that
+    /// no launcher mask hides.
+    #[arg(long, default_value_t = vdtoolkit::ADAPTIVE_ICON_SIZE)]
+    fit: f32,
+    /// Android `res/` directory to write into.
+    #[arg(short, long, value_name = "RES_DIR")]
+    output: PathBuf,
     /// Reject SVGs that require safe normalization.
     #[arg(long)]
     strict: bool,
@@ -104,8 +142,10 @@ fn normalized_args() -> Vec<OsString> {
         .get(1)
         .and_then(|value| value.to_str())
         .is_some_and(|first| {
-            !matches!(first, "convert" | "check" | "inspect" | "optimize")
-                && !first.starts_with('-')
+            !matches!(
+                first,
+                "convert" | "check" | "inspect" | "optimize" | "adaptive"
+            ) && !first.starts_with('-')
         })
     {
         args.insert(1, OsString::from("convert"));
@@ -119,7 +159,159 @@ fn run(cli: Cli) -> Result<Outcome> {
         Command::Optimize(args) => convert(args, true),
         Command::Check(args) => report(args, false),
         Command::Inspect(args) => report(args, true),
+        Command::Adaptive(args) => adaptive(args),
     }
+}
+
+fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
+    validate_resource_name(&args.name)?;
+    if !(args.fit > 0.0 && args.fit <= vdtoolkit::ADAPTIVE_ICON_SIZE) {
+        return Err(Error::InvalidInput(format!(
+            "--fit must be between 0 and {} dp, got {}",
+            vdtoolkit::ADAPTIVE_ICON_SIZE,
+            args.fit
+        )));
+    }
+    let color = args
+        .background_color
+        .as_deref()
+        .map(normalize_color)
+        .transpose()?;
+    let drawable_dir = args.output.join("drawable");
+    let mipmap_dir = args.output.join("mipmap-anydpi-v26");
+
+    let foreground_name = format!("{}_foreground", args.name);
+    let background_name = format!("{}_background", args.name);
+    let monochrome_name = format!("{}_monochrome", args.name);
+
+    // Every layer is converted before anything is written, so a failing
+    // layer leaves the resource directory untouched.
+    let Some(foreground) = adaptive_layer(&args.foreground, args.fit, args.strict) else {
+        return Ok(Outcome::Failed);
+    };
+    let mut files = vec![(
+        drawable_dir.join(&foreground_name).with_extension("xml"),
+        foreground,
+    )];
+    let background_reference = match (&args.background, color) {
+        (Some(background), _) => {
+            let Some(layer) =
+                adaptive_layer(background, vdtoolkit::ADAPTIVE_ICON_SIZE, args.strict)
+            else {
+                return Ok(Outcome::Failed);
+            };
+            files.push((
+                drawable_dir.join(&background_name).with_extension("xml"),
+                layer,
+            ));
+            format!("@drawable/{background_name}")
+        }
+        (None, Some(color)) => {
+            files.push((
+                args.output
+                    .join("values")
+                    .join(&background_name)
+                    .with_extension("xml"),
+                vdtoolkit::color_resource_xml(&background_name, &color),
+            ));
+            format!("@color/{background_name}")
+        }
+        (None, None) => unreachable!("clap requires a background layer"),
+    };
+    let monochrome_reference = match &args.monochrome {
+        Some(monochrome) => {
+            let Some(layer) = adaptive_layer(monochrome, args.fit, args.strict) else {
+                return Ok(Outcome::Failed);
+            };
+            files.push((
+                drawable_dir.join(&monochrome_name).with_extension("xml"),
+                layer,
+            ));
+            Some(format!("@drawable/{monochrome_name}"))
+        }
+        None => None,
+    };
+    let icon = vdtoolkit::adaptive_icon_xml(
+        &background_reference,
+        &format!("@drawable/{foreground_name}"),
+        monochrome_reference.as_deref(),
+    );
+    files.push((
+        mipmap_dir.join(&args.name).with_extension("xml"),
+        icon.clone(),
+    ));
+    files.push((
+        mipmap_dir
+            .join(format!("{}_round", args.name))
+            .with_extension("xml"),
+        icon,
+    ));
+
+    for (path, contents) in &files {
+        write_file(path, contents)?;
+        println!("{}", path.display());
+    }
+    Ok(Outcome::Passed)
+}
+
+/// Convert one layer, or report the failure with its path and return `None`.
+fn adaptive_layer(input: &Path, fit: f32, strict: bool) -> Option<String> {
+    let layer = || -> Result<String> {
+        let mut asset = vdtoolkit::convert_file(input)?;
+        if strict && asset.analysis.compatibility != Compatibility::Exact {
+            return Err(Error::InvalidInput(
+                "requires normalization and was rejected by --strict".to_owned(),
+            ));
+        }
+        asset.fit_adaptive_layer(fit)?;
+        Ok(asset.to_xml())
+    };
+    match layer() {
+        Ok(xml) => Some(xml),
+        Err(error) => {
+            print_error(Some(input), &error);
+            None
+        }
+    }
+}
+
+fn validate_resource_name(name: &str) -> Result<()> {
+    let mut chars = name.chars();
+    let valid = chars
+        .next()
+        .is_some_and(|first| first.is_ascii_lowercase() || first == '_')
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
+    if valid {
+        Ok(())
+    } else {
+        Err(Error::InvalidInput(format!(
+            "resource name must match [a-z_][a-z0-9_]*, got {name:?}"
+        )))
+    }
+}
+
+fn normalize_color(color: &str) -> Result<String> {
+    let digits = color.strip_prefix('#').unwrap_or(color);
+    if matches!(digits.len(), 6 | 8) && digits.chars().all(|c| c.is_ascii_hexdigit()) {
+        Ok(format!("#{}", digits.to_ascii_uppercase()))
+    } else {
+        Err(Error::InvalidInput(format!(
+            "background color must be #RRGGBB or #AARRGGBB, got {color:?}"
+        )))
+    }
+}
+
+fn write_file(path: &Path, contents: &str) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|source| Error::Write {
+            path: parent.to_owned(),
+            source,
+        })?;
+    }
+    std::fs::write(path, contents).map_err(|source| Error::Write {
+        path: path.to_owned(),
+        source,
+    })
 }
 
 fn convert(args: ConvertArgs, optimize: bool) -> Result<Outcome> {
@@ -185,16 +377,7 @@ fn convert_one(args: &ConvertArgs, input: &Path, optimize: bool) -> Result<()> {
     }
     let output = output_path(&args.input, input, args.output.as_deref());
     if let Some(output) = output {
-        if let Some(parent) = output.parent() {
-            std::fs::create_dir_all(parent).map_err(|source| Error::Write {
-                path: parent.to_owned(),
-                source,
-            })?;
-        }
-        std::fs::write(&output, xml).map_err(|source| Error::Write {
-            path: output,
-            source,
-        })?;
+        write_file(&output, &xml)?;
     } else {
         print!("{xml}");
     }

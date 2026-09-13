@@ -1047,6 +1047,71 @@ fn large_drawables_warn_without_changing_compatibility() {
 }
 
 #[test]
+fn fits_adaptive_layers_by_uniform_scale_and_centering() {
+    let source =
+        br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="12" viewBox="0 0 24 12">
+        <defs><radialGradient id="g" cx="12" cy="6" r="6" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#FFF"/><stop offset="1" stop-color="#000"/>
+        </radialGradient></defs>
+        <path d="M0 0H24V12H0Z" fill="url(#g)" stroke="#123456" stroke-width="2"/>
+    </svg>"##;
+
+    let mut asset = vdtoolkit::convert(source).unwrap();
+    let api = asset.analysis.minimum_api;
+    asset
+        .fit_adaptive_layer(vdtoolkit::ADAPTIVE_ICON_SAFE_ZONE)
+        .unwrap();
+    let xml = asset.to_xml();
+
+    // 24 wide fits into 66: scale 2.75, offset (21, 37.5).
+    assert!(xml.contains("android:width=\"108dp\""));
+    assert!(xml.contains("android:viewportHeight=\"108\""));
+    assert!(xml.contains("android:pathData=\"M21,37.5 L87,37.5 L87,70.5 L21,70.5 Z\""));
+    assert!(xml.contains("android:strokeWidth=\"5.5\""));
+    assert!(xml.contains("android:centerX=\"54\""));
+    assert!(xml.contains("android:centerY=\"54\""));
+    assert!(xml.contains("android:gradientRadius=\"16.5\""));
+    assert_eq!(asset.analysis.minimum_api, api);
+    let metrics = &asset.analysis.metrics;
+    assert_eq!(metrics.viewport_width, 108.0);
+    // Bounds are clamped to the source viewport before being moved.
+    let bounds = metrics.content_bounds.unwrap();
+    assert_eq!((bounds.left, bounds.top), (21.0, 37.5));
+    assert_eq!((bounds.right, bounds.bottom), (87.0, 70.5));
+    assert_eq!(metrics.estimated_xml_bytes, xml.len());
+
+    assert!(matches!(
+        asset.fit_adaptive_layer(0.0),
+        Err(Error::InvalidInput(_))
+    ));
+    assert!(matches!(
+        asset.fit_adaptive_layer(109.0),
+        Err(Error::InvalidInput(_))
+    ));
+}
+
+#[test]
+fn writes_adaptive_icon_resources() {
+    assert_eq!(
+        vdtoolkit::adaptive_icon_xml("@color/bg", "@drawable/fg", Some("@drawable/mono")),
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n\
+         <adaptive-icon xmlns:android=\"http://schemas.android.com/apk/res/android\">\n\
+         \x20   <background android:drawable=\"@color/bg\"/>\n\
+         \x20   <foreground android:drawable=\"@drawable/fg\"/>\n\
+         \x20   <monochrome android:drawable=\"@drawable/mono\"/>\n\
+         </adaptive-icon>\n"
+    );
+    assert!(
+        !vdtoolkit::adaptive_icon_xml("@color/bg", "@drawable/fg", None).contains("monochrome")
+    );
+    assert_eq!(
+        vdtoolkit::color_resource_xml("ic_launcher_background", "#3DDC84"),
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<resources>\n\
+         \x20   <color name=\"ic_launcher_background\">#3DDC84</color>\n</resources>\n"
+    );
+}
+
+#[test]
 fn fit_within_scales_size_but_keeps_the_viewport() {
     let mut asset = vdtoolkit::convert(LARGE).unwrap();
     assert!(!asset.fit_within(500.0));
@@ -1097,4 +1162,133 @@ fn convert_prints_large_dimension_warnings_to_stderr() {
     assert!(stderr.contains("SVGVD016"));
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("android:width=\"480dp\""));
+}
+
+#[test]
+fn cli_adaptive_writes_layers_icon_and_color_resource() {
+    let temp = tempfile::tempdir().unwrap();
+    let foreground = temp.path().join("fg.svg");
+    let background = temp.path().join("bg.svg");
+    fs::write(
+        &foreground,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M12 2L2 22h20z" fill="#3DDC84"/></svg>"##,
+    )
+    .unwrap();
+    fs::write(
+        &background,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108"><rect width="108" height="108" fill="#FFFFFF"/></svg>"##,
+    )
+    .unwrap();
+    let res = temp.path().join("res");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_vdt"))
+        .args(["adaptive", "--foreground"])
+        .arg(&foreground)
+        .arg("--background")
+        .arg(&background)
+        .arg("--monochrome")
+        .arg(&foreground)
+        .args(["--fit", "66", "-o"])
+        .arg(&res)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(stdout.lines().count(), 5);
+
+    let foreground_xml =
+        fs::read_to_string(res.join("drawable/ic_launcher_foreground.xml")).unwrap();
+    assert!(foreground_xml.contains("android:width=\"108dp\""));
+    assert!(foreground_xml.contains("android:pathData=\"M54,26.5 L26.5,81.5 L81.5,81.5 Z\""));
+    let background_xml =
+        fs::read_to_string(res.join("drawable/ic_launcher_background.xml")).unwrap();
+    assert!(background_xml.contains("android:pathData=\"M0,0 L108,0 L108,108 L0,108 Z\""));
+    assert_eq!(
+        fs::read_to_string(res.join("drawable/ic_launcher_monochrome.xml")).unwrap(),
+        foreground_xml
+    );
+    let icon = fs::read_to_string(res.join("mipmap-anydpi-v26/ic_launcher.xml")).unwrap();
+    assert!(icon.contains("<background android:drawable=\"@drawable/ic_launcher_background\"/>"));
+    assert!(icon.contains("<foreground android:drawable=\"@drawable/ic_launcher_foreground\"/>"));
+    assert!(icon.contains("<monochrome android:drawable=\"@drawable/ic_launcher_monochrome\"/>"));
+    assert_eq!(
+        fs::read_to_string(res.join("mipmap-anydpi-v26/ic_launcher_round.xml")).unwrap(),
+        icon
+    );
+
+    // A solid background becomes a color resource, and --name renames everything.
+    let output = Command::new(env!("CARGO_BIN_EXE_vdt"))
+        .args(["adaptive", "--foreground"])
+        .arg(&foreground)
+        .args(["--background-color", "3ddc84", "--name", "ic_app", "-o"])
+        .arg(&res)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        fs::read_to_string(res.join("values/ic_app_background.xml")).unwrap(),
+        vdtoolkit::color_resource_xml("ic_app_background", "#3DDC84")
+    );
+    let icon = fs::read_to_string(res.join("mipmap-anydpi-v26/ic_app.xml")).unwrap();
+    assert!(icon.contains("<background android:drawable=\"@color/ic_app_background\"/>"));
+    assert!(icon.contains("<foreground android:drawable=\"@drawable/ic_app_foreground\"/>"));
+    assert!(!icon.contains("monochrome"));
+    assert!(res.join("drawable/ic_app_foreground.xml").is_file());
+    assert!(!res.join("drawable/ic_app_background.xml").exists());
+}
+
+#[test]
+fn cli_adaptive_rejects_bad_input_without_writing() {
+    let temp = tempfile::tempdir().unwrap();
+    let foreground = temp.path().join("fg.svg");
+    let text = temp.path().join("text.svg");
+    fs::write(
+        &foreground,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M12 2L2 22h20z"/></svg>"##,
+    )
+    .unwrap();
+    fs::write(
+        &text,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><text>x</text></svg>"##,
+    )
+    .unwrap();
+    let res = temp.path().join("res");
+    let run = |extra: &[&str], layer: &std::path::Path| {
+        Command::new(env!("CARGO_BIN_EXE_vdt"))
+            .args(["adaptive", "--foreground"])
+            .arg(layer)
+            .args(extra)
+            .arg("-o")
+            .arg(&res)
+            .output()
+            .unwrap()
+    };
+
+    let cases: [(&[&str], &std::path::Path, &str); 6] = [
+        (&[], &foreground, "--background"),
+        (&["--background-color", "#fff"], &foreground, "#RRGGBB"),
+        (
+            &["--background-color", "#ffffff", "--name", "Icon"],
+            &foreground,
+            "resource name",
+        ),
+        (
+            &["--background-color", "#ffffff", "--fit", "0"],
+            &foreground,
+            "--fit",
+        ),
+        (&["--background-color", "#ffffff"], &text, "SVGVD006"),
+        (
+            &["--background", text.to_str().unwrap()],
+            &foreground,
+            "not exactly representable",
+        ),
+    ];
+    for (extra, layer, message) in cases {
+        let output = run(extra, layer);
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(!output.status.success(), "{extra:?}");
+        assert!(stderr.contains(message), "{extra:?}: {stderr}");
+    }
+    assert!(!res.exists());
 }

@@ -17,9 +17,11 @@ follow [Semantic Versioning](https://semver.org/).
   layer SVGs: 108dp foreground, background, and optional monochrome drawables,
   a solid background as a color resource, and the `mipmap-anydpi-v26` icon
   resources. `--fit` scales artwork uniformly into a centered square such as
-  the 66dp safe zone, with a warning when foreground content leaves it, and
+  the 66dp safe zone, with warnings when foreground content leaves it or a
+  background does not fill the layer, and
   `--legacy` writes a masked 48dp fallback icon for devices below API 26.
   The Rust API gains `Asset::fit_adaptive_layer`, `outside_adaptive_safe_zone`,
+  `fills_adaptive_layer`,
   `solid_adaptive_layer`, `legacy_launcher_icon`, `adaptive_icon_xml`, and
   `color_resource_xml`.
 - The Material corpus suites in `tools/check-material-symbols.py` also

@@ -190,7 +190,9 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
 
     // Every layer is converted before anything is written, so a failing
     // layer leaves the resource directory untouched.
-    let Some(foreground) = adaptive_layer(&args.foreground, args.fit, args.strict, true) else {
+    let Some(foreground) =
+        adaptive_layer(&args.foreground, args.fit, args.strict, LayerRole::Artwork)
+    else {
         return Ok(Outcome::Failed);
     };
     let mut files = vec![(
@@ -199,9 +201,12 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
     )];
     let (background, background_reference) = match (&args.background, color) {
         (Some(path), _) => {
-            let Some(layer) =
-                adaptive_layer(path, vdtoolkit::ADAPTIVE_ICON_SIZE, args.strict, false)
-            else {
+            let Some(layer) = adaptive_layer(
+                path,
+                vdtoolkit::ADAPTIVE_ICON_SIZE,
+                args.strict,
+                LayerRole::Background,
+            ) else {
                 return Ok(Outcome::Failed);
             };
             files.push((
@@ -227,7 +232,8 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
     };
     let monochrome_reference = match &args.monochrome {
         Some(monochrome) => {
-            let Some(layer) = adaptive_layer(monochrome, args.fit, args.strict, true) else {
+            let Some(layer) = adaptive_layer(monochrome, args.fit, args.strict, LayerRole::Artwork)
+            else {
                 return Ok(Outcome::Failed);
             };
             files.push((
@@ -273,10 +279,19 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
     Ok(Outcome::Passed)
 }
 
+/// What a layer is for, which decides the placement warning it gets.
+#[derive(Clone, Copy)]
+enum LayerRole {
+    /// Foreground or monochrome artwork, which should stay in the safe zone.
+    Artwork,
+    /// A background, which should fill the whole layer.
+    Background,
+}
+
 /// Convert and fit one layer, or report the failure with its path and return
-/// `None`. Foreground and monochrome layers warn when content leaves the safe
-/// zone; a background is meant to fill the layer.
-fn adaptive_layer(input: &Path, fit: f32, strict: bool, check_safe_zone: bool) -> Option<Asset> {
+/// `None`. Warns when artwork leaves the safe zone or a background does not
+/// fill the layer.
+fn adaptive_layer(input: &Path, fit: f32, strict: bool, role: LayerRole) -> Option<Asset> {
     let layer = || -> Result<Asset> {
         let mut asset = vdtoolkit::convert_file(input)?;
         if strict && asset.analysis.compatibility != Compatibility::Exact {
@@ -289,19 +304,33 @@ fn adaptive_layer(input: &Path, fit: f32, strict: bool, check_safe_zone: bool) -
     };
     match layer() {
         Ok(asset) => {
-            if check_safe_zone {
-                if let Some(bounds) = asset.outside_adaptive_safe_zone() {
+            match role {
+                LayerRole::Artwork => {
+                    if let Some(bounds) = asset.outside_adaptive_safe_zone() {
+                        eprintln!(
+                            "warning: {}: content spans {}, outside the {}dp safe zone; \
+                             launcher masks may hide it (see --fit)",
+                            input.display(),
+                            span(bounds),
+                            vdtoolkit::ADAPTIVE_ICON_SAFE_ZONE
+                        );
+                    }
+                }
+                LayerRole::Background if !asset.fills_adaptive_layer() => {
+                    let detail = match asset.analysis.metrics.content_bounds {
+                        Some(bounds) => {
+                            format!("content spans {} and does not fill", span(bounds))
+                        }
+                        None => "has no painted content, so it does not fill".to_owned(),
+                    };
                     eprintln!(
-                        "warning: {}: content spans {}..{} × {}..{}dp, outside the {}dp safe zone; \
-                         launcher masks may hide it (see --fit)",
+                        "warning: {}: background {detail} the {}dp layer; \
+                         uncovered areas show through launcher masks and parallax",
                         input.display(),
-                        vdtoolkit_number(bounds.left),
-                        vdtoolkit_number(bounds.right),
-                        vdtoolkit_number(bounds.top),
-                        vdtoolkit_number(bounds.bottom),
-                        vdtoolkit::ADAPTIVE_ICON_SAFE_ZONE
+                        vdtoolkit::ADAPTIVE_ICON_SIZE
                     );
                 }
+                LayerRole::Background => {}
             }
             Some(asset)
         }
@@ -310,6 +339,17 @@ fn adaptive_layer(input: &Path, fit: f32, strict: bool, check_safe_zone: bool) -
             None
         }
     }
+}
+
+/// Bounds as `left..right × top..bottom` in dp.
+fn span(bounds: vdtoolkit::Bounds) -> String {
+    format!(
+        "{}..{} × {}..{}dp",
+        vdtoolkit_number(bounds.left),
+        vdtoolkit_number(bounds.right),
+        vdtoolkit_number(bounds.top),
+        vdtoolkit_number(bounds.bottom)
+    )
 }
 
 /// Short decimal for dp values in warnings.

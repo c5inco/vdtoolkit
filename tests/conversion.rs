@@ -1109,6 +1109,147 @@ fn detects_content_outside_the_safe_zone() {
 }
 
 #[test]
+fn detects_backgrounds_that_do_not_fill_the_layer() {
+    let fitted = |svg: &str| {
+        let mut asset = vdtoolkit::convert(svg.as_bytes()).unwrap();
+        asset
+            .fit_adaptive_layer(vdtoolkit::ADAPTIVE_ICON_SIZE)
+            .unwrap();
+        asset
+    };
+    let svg = |size: &str, content: &str| {
+        format!(r#"<svg xmlns="http://www.w3.org/2000/svg" {size}>{content}</svg>"#)
+    };
+
+    // Full bleed fills the layer at any square size, including overscan.
+    assert!(
+        fitted(&svg(
+            r#"width="24" height="24""#,
+            r##"<rect width="24" height="24" fill="#3DDC84"/>"##
+        ))
+        .fills_adaptive_layer()
+    );
+    assert!(
+        fitted(&svg(
+            r#"width="48" height="48""#,
+            r##"<rect x="-10" y="-10" width="68" height="68" fill="#3DDC84"/>"##
+        ))
+        .fills_adaptive_layer()
+    );
+
+    // Full bleed 16:9 artwork is letterboxed into a band.
+    let wide = fitted(&svg(
+        r#"width="160" height="90""#,
+        r##"<rect width="160" height="90" fill="#3DDC84"/>"##,
+    ));
+    assert!(!wide.fills_adaptive_layer());
+    let bounds = wide.analysis.metrics.content_bounds.unwrap();
+    for (actual, expected) in [
+        (bounds.left, 0.0),
+        (bounds.right, 108.0),
+        (bounds.top, 23.625),
+        (bounds.bottom, 84.375),
+    ] {
+        assert!((actual - expected).abs() < 1e-3, "{bounds:?}");
+    }
+
+    // Inset content, and a background that paints nothing.
+    assert!(
+        !fitted(&svg(
+            r#"width="108" height="108""#,
+            r##"<rect x="4" width="104" height="108" fill="#3DDC84"/>"##
+        ))
+        .fills_adaptive_layer()
+    );
+    assert!(
+        !fitted(&svg(
+            r#"width="108" height="108""#,
+            r#"<rect width="108" height="108" fill="none"/>"#
+        ))
+        .fills_adaptive_layer()
+    );
+}
+
+#[test]
+fn fits_full_bleed_gradient_backgrounds() {
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48">
+        <defs><linearGradient id="g" x1="0" y1="0" x2="24" y2="12"
+                gradientUnits="userSpaceOnUse" spreadMethod="reflect">
+            <stop offset="0" stop-color="#1267D6"/>
+            <stop offset=".5" stop-color="#E37A19" stop-opacity=".6"/>
+            <stop offset="1" stop-color="#159A55"/>
+        </linearGradient></defs>
+        <rect width="48" height="48" fill="url(#g)"/>
+    </svg>"##;
+
+    let mut asset = vdtoolkit::convert(source).unwrap();
+    asset
+        .fit_adaptive_layer(vdtoolkit::ADAPTIVE_ICON_SIZE)
+        .unwrap();
+    assert!(asset.fills_adaptive_layer());
+    assert_eq!(asset.analysis.minimum_api, Some(24));
+    let xml = asset.to_xml();
+
+    // Scale 2.25 with no offset: the axis (0,0)-(24,12) becomes (0,0)-(54,27).
+    assert!(xml.contains("android:pathData=\"M0,0 L108,0 L108,108 L0,108 Z\""));
+    assert!(xml.contains("android:tileMode=\"mirror\""));
+    let attribute = |name: &str| -> f32 {
+        let key = format!("android:{name}=\"");
+        let start = xml.find(&key).unwrap_or_else(|| panic!("{name}\n{xml}")) + key.len();
+        xml[start..start + xml[start..].find('"').unwrap()]
+            .parse()
+            .unwrap()
+    };
+    for (name, expected) in [
+        ("startX", 0.0),
+        ("startY", 0.0),
+        ("endX", 54.0),
+        ("endY", 27.0),
+    ] {
+        assert!((attribute(name) - expected).abs() < 1e-4, "{name}\n{xml}");
+    }
+    assert!(xml.contains("<item android:offset=\"0.5\" android:color=\"#99E37A19\"/>"));
+}
+
+#[test]
+fn cli_adaptive_warns_when_background_does_not_fill_the_layer() {
+    let temp = tempfile::tempdir().unwrap();
+    let foreground = temp.path().join("fg.svg");
+    let background = temp.path().join("wide.svg");
+    fs::write(
+        &foreground,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M12 2L2 22h20z"/></svg>"##,
+    )
+    .unwrap();
+    fs::write(
+        &background,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="160" height="90"><rect width="160" height="90" fill="#3DDC84"/></svg>"##,
+    )
+    .unwrap();
+    let res = temp.path().join("res");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_vdt"))
+        .args(["adaptive", "--foreground"])
+        .arg(&foreground)
+        .arg("--background")
+        .arg(&background)
+        .args(["--fit", "66", "-o"])
+        .arg(&res)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert_eq!(stderr.lines().count(), 1, "{stderr}");
+    assert!(
+        stderr.contains(
+            "background content spans 0..108 × 23.6..84.4dp and does not fill the 108dp layer"
+        ),
+        "{stderr}"
+    );
+    assert!(res.join("drawable/ic_launcher_background.xml").is_file());
+}
+
+#[test]
 fn composes_a_masked_legacy_icon() {
     let logo = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M2 2H22V22H2Z" fill="#102030"/></svg>"##;
     let mut foreground = vdtoolkit::convert(logo).unwrap();

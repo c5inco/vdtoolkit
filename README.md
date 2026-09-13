@@ -89,7 +89,9 @@ The files written are `mipmap-anydpi-v26/<name>.xml`,
 scaled uniformly and centered, so rendering is unchanged apart from placement;
 a background SVG always fills the whole layer. A warning names any foreground
 or monochrome layer whose content leaves the 66dp safe zone, since launcher
-masks may hide it. Every layer is converted before anything is written, and a
+masks may hide it, and any background whose content does not reach every edge
+of the layer. Non-square background artwork is scaled to fit, not cropped, so
+it leaves transparent bands and triggers that warning. Every layer is converted before anything is written, and a
 layer that fails leaves the directory untouched.
 Add `android:icon="@mipmap/<name>"` and `android:roundIcon="@mipmap/<name>_round"`
 to the `<application>` element of the manifest.

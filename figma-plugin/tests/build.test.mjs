@@ -5,6 +5,7 @@ import vm from "node:vm";
 
 const manifest = JSON.parse(await readFile(new URL("../manifest.json", import.meta.url)));
 const code = await readFile(new URL("../dist/code.js", import.meta.url), "utf8");
+const icon = { diagnostics: [], metrics: { width: 24, height: 24, viewport_width: 24, viewport_height: 24 } };
 const ui = await readFile(new URL("../dist/ui.html", import.meta.url), "utf8");
 
 test("manifest declares a network-free Dev Mode codegen plugin", () => {
@@ -13,11 +14,16 @@ test("manifest declares a network-free Dev Mode codegen plugin", () => {
   assert.deepEqual(manifest.networkAccess.allowedDomains, ["none"]);
   assert.equal(manifest.main, "dist/code.js");
   assert.equal(manifest.ui, "dist/ui.html");
-  assert.equal(manifest.codegenLanguages[0].value, "android-vectordrawable");
+  assert.deepEqual(
+    manifest.codegenLanguages.map((language) => language.value),
+    ["android-vectordrawable"],
+  );
 });
 
-test("plugin bundles are self-contained and preserve the FRAME guard", () => {
-  assert.match(code, /\.type\s*!==\s*"FRAME"/);
+test("plugin bundles are self-contained and preserve the node-type guard", () => {
+  for (const type of ["FRAME", "COMPONENT", "INSTANCE"]) {
+    assert.match(code, new RegExp(`\\.type\\s*===\\s*"${type}"`));
+  }
   assert.match(code, /showUI\([^)]*,\s*\{\s*visible:\s*false\s*\}/);
   assert.match(code, /postMessage/);
   assert.match(ui, /^<!doctype html>/);
@@ -26,7 +32,7 @@ test("plugin bundles are self-contained and preserve the FRAME guard", () => {
   assert.doesNotMatch(ui, /<script[^>]+src=/);
 });
 
-test("sandbox ignores non-frames and correlates concurrent iframe responses", async () => {
+test("sandbox ignores unsupported nodes and correlates concurrent iframe responses", async () => {
   let generate;
   const posted = [];
   const figma = {
@@ -45,33 +51,35 @@ test("sandbox ignores non-frames and correlates concurrent iframe responses", as
   vm.runInNewContext(code, { figma, __html__: "", setTimeout, clearTimeout });
 
   assert.equal((await generate({ node: { type: "RECTANGLE" } })).length, 0);
+  assert.equal((await generate({ node: { type: "COMPONENT_SET" } })).length, 0);
 
   const first = generate({
     node: { type: "FRAME", exportAsync: async () => new Uint8Array([1]) },
   });
   const second = generate({
-    node: { type: "FRAME", exportAsync: async () => new Uint8Array([2]) },
+    node: { type: "COMPONENT", exportAsync: async () => new Uint8Array([2]) },
   });
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(posted.length, 2);
+  assert.equal("maxSizeDp" in posted[0], false);
   assert.notEqual(posted[0].id, posted[1].id);
 
   figma.ui.onmessage({
     type: "converted",
     id: posted[1].id,
-    result: { ok: true, analysis: {}, xml: "<vector second/>" },
+    result: { ok: true, analysis: icon, xml: "<vector second/>" },
   });
   figma.ui.onmessage({
     type: "converted",
     id: posted[0].id,
-    result: { ok: true, analysis: {}, xml: "<vector first/>" },
+    result: { ok: true, analysis: icon, xml: "<vector first/>" },
   });
 
   assert.equal((await first)[0].code, "<vector first/>");
   assert.equal((await second)[0].code, "<vector second/>");
 
   const unsupported = generate({
-    node: { type: "FRAME", exportAsync: async () => new Uint8Array([3]) },
+    node: { type: "INSTANCE", exportAsync: async () => new Uint8Array([3]) },
   });
   await new Promise((resolve) => setImmediate(resolve));
   figma.ui.onmessage({
@@ -83,10 +91,69 @@ test("sandbox ignores non-frames and correlates concurrent iframe responses", as
         kind: "unsupported",
         message: "unsupported",
         analysis: {
-          diagnostics: [{ code: "SVGVD003", severity: "error", message: "gradient paint" }],
+          diagnostics: [
+            { code: "SVGVD011", severity: "info", message: "safe SVG normalization is required" },
+            { code: "SVGVD003", severity: "error", message: "gradient paint" },
+            {
+              code: "SVGVD007",
+              severity: "error",
+              message: "embedded raster or SVG images are unsupported",
+              location: { element: "image", line: 4, column: 2 },
+              suggestion: "Replace the image with vector path geometry.",
+            },
+            { code: "SVGVD003", severity: "error", message: "gradient paint" },
+          ],
         },
       },
     },
   });
-  assert.match((await unsupported)[0].code, /\[SVGVD003\] gradient paint/);
+  const [diagnostics] = await unsupported;
+  assert.equal(diagnostics.title, "Can't convert to Vector Drawable");
+  assert.equal(
+    diagnostics.code,
+    [
+      "• Gradient paint (SVGVD003)",
+      "",
+      "• Embedded raster or SVG images are unsupported",
+      "  (SVGVD007)",
+      "  → Replace the image with vector path geometry.",
+    ].join("\n"),
+  );
+  assert.ok(diagnostics.code.split("\n").every((line) => line.length <= 52));
+});
+
+test("large drawables keep their size and surface warnings", async () => {
+  let generate;
+  const posted = [];
+  const figma = {
+    showUI() {},
+    ui: { onmessage: undefined, postMessage: (message) => posted.push(message) },
+    codegen: { on: (_event, handler) => (generate = handler) },
+  };
+  vm.runInNewContext(code, { figma, __html__: "", setTimeout, clearTimeout });
+
+  const pending = generate({
+    node: { type: "FRAME", exportAsync: async () => new Uint8Array([1]) },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  figma.ui.onmessage({
+    type: "converted",
+    id: posted[0].id,
+    result: {
+      ok: true,
+      xml: "<vector/>",
+      analysis: {
+        metrics: { width: 480, height: 320, viewport_width: 480, viewport_height: 320 },
+        diagnostics: [
+          { code: "SVGVD011", severity: "info", message: "safe SVG normalization is required" },
+          { code: "SVGVD016", severity: "warning", message: "480×320dp is larger than 200×200dp" },
+        ],
+      },
+    },
+  });
+  const [drawable, warnings] = await pending;
+  assert.equal(drawable.title, "Android Vector Drawable");
+  assert.equal(drawable.code, "<vector/>");
+  assert.equal(warnings.title, "Warnings");
+  assert.equal(warnings.code, "• 480×320dp is larger than 200×200dp (SVGVD016)");
 });

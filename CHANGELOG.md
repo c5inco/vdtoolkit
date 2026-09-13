@@ -8,6 +8,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `SVGVD016` warning for drawables larger than Android's recommended 200×200dp
+  vector icon size. It does not change compatibility; `convert` and `optimize`
+  print it to stderr, and `check` and `inspect` list it with other diagnostics.
+- `Asset::fit_within` scales `android:width` and `android:height` down to a
+  maximum size in dp while keeping the viewport.
 - Linear gradients and circular radial gradients on fills and strokes, written
   as inline `aapt` gradients. Stop opacity and all spread methods are kept, and
   gradients report API 24 as the minimum. Radial gradients with a focal point,

@@ -50,6 +50,40 @@ impl Asset {
         optimize::optimize(&mut self.drawable);
         self.analysis.metrics.estimated_xml_bytes = self.to_xml().len();
     }
+
+    /// Scale `android:width` and `android:height` down so neither exceeds
+    /// `max_dp`, keeping the viewport. Returns whether the size changed.
+    ///
+    /// The larger side lands exactly on the cap and the other rounds to a whole
+    /// dp, so the aspect ratio can shift by at most half a dp.
+    pub fn fit_within(&mut self, max_dp: f32) -> bool {
+        let drawable = &mut self.drawable;
+        let (width, height) = (drawable.width_dp, drawable.height_dp);
+        if max_dp.is_nan() || max_dp <= 0.0 || width.max(height) <= max_dp {
+            return false;
+        }
+        let scaled = |side: f32| (side * max_dp / width.max(height)).round().max(1.0);
+        if width >= height {
+            drawable.width_dp = max_dp;
+            drawable.height_dp = scaled(height);
+        } else {
+            drawable.width_dp = scaled(width);
+            drawable.height_dp = max_dp;
+        }
+        self.analysis.metrics.width = drawable.width_dp;
+        self.analysis.metrics.height = drawable.height_dp;
+        self.analysis.diagnostics.retain(|diagnostic| {
+            diagnostic.code.as_str() != DiagnosticCode::LargeDimensions.as_str()
+        });
+        self.analysis
+            .diagnostics
+            .extend(vector::large_dimensions_warning(
+                drawable.width_dp,
+                drawable.height_dp,
+            ));
+        self.analysis.metrics.estimated_xml_bytes = self.to_xml().len();
+        true
+    }
 }
 
 /// Analyze an SVG file without converting it.

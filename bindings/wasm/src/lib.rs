@@ -94,16 +94,17 @@ pub fn analyze_svg(source: &[u8]) -> JsValue {
     serialize(&analyze_result(source))
 }
 
-/// Convert SVG bytes to VectorDrawable XML, optionally optimizing path data.
+/// Convert SVG bytes to VectorDrawable XML, optionally optimizing path data and
+/// scaling the drawable down so neither side exceeds `max_size_dp`.
 #[wasm_bindgen(js_name = convertSvg, skip_typescript)]
-pub fn convert_svg(source: &[u8], optimize: bool) -> JsValue {
-    serialize(&convert_result(source, optimize))
+pub fn convert_svg(source: &[u8], optimize: bool, max_size_dp: Option<f32>) -> JsValue {
+    serialize(&convert_result(source, optimize, max_size_dp))
 }
 
 #[wasm_bindgen(typescript_custom_section)]
 const TYPESCRIPT_FUNCTIONS: &'static str = r#"
 export function analyzeSvg(source: Uint8Array): AnalyzeResult;
-export function convertSvg(source: Uint8Array, optimize: boolean): ConvertResult;
+export function convertSvg(source: Uint8Array, optimize: boolean, maxSizeDp?: number): ConvertResult;
 "#;
 
 fn analyze_result(source: &[u8]) -> OperationResult {
@@ -117,11 +118,14 @@ fn analyze_result(source: &[u8]) -> OperationResult {
     }
 }
 
-fn convert_result(source: &[u8], optimize: bool) -> OperationResult {
+fn convert_result(source: &[u8], optimize: bool, max_size_dp: Option<f32>) -> OperationResult {
     match vdtoolkit::convert(source) {
         Ok(mut asset) => {
             if optimize {
                 asset.optimize();
+            }
+            if let Some(max_dp) = max_size_dp {
+                asset.fit_within(max_dp);
             }
             OperationResult::Success {
                 ok: true,
@@ -174,6 +178,8 @@ mod tests {
     const MALFORMED: &[u8] = br#"<svg><path></svg>"#;
     const DECIMALS: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M1.234567 2.345678L20.987654 21.876543" fill="#123456"/></svg>"##;
 
+    const LARGE: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" width="480" height="320"><path d="M0 0H480V320Z" fill="#123456"/></svg>"##;
+
     fn json(result: &OperationResult) -> serde_json::Value {
         serde_json::to_value(result).unwrap()
     }
@@ -185,7 +191,7 @@ mod tests {
             let native_asset = vdtoolkit::convert(source).unwrap();
 
             let analyzed = json(&analyze_result(source));
-            let converted = json(&convert_result(source, false));
+            let converted = json(&convert_result(source, false, None));
 
             assert_eq!(
                 analyzed["analysis"],
@@ -202,14 +208,14 @@ mod tests {
     #[test]
     fn unsupported_and_malformed_errors_preserve_native_information() {
         let unsupported_analysis = vdtoolkit::analyze(UNSUPPORTED).unwrap();
-        let unsupported = json(&convert_result(UNSUPPORTED, false));
+        let unsupported = json(&convert_result(UNSUPPORTED, false, None));
         assert_eq!(unsupported["error"]["kind"], "unsupported");
         assert_eq!(
             unsupported["error"]["analysis"],
             serde_json::to_value(unsupported_analysis).unwrap()
         );
 
-        let malformed = json(&convert_result(MALFORMED, false));
+        let malformed = json(&convert_result(MALFORMED, false, None));
         assert_eq!(malformed["error"]["kind"], "xml");
         assert!(malformed["error"].get("analysis").is_none());
     }
@@ -218,7 +224,7 @@ mod tests {
     fn optimization_and_determinism_match_the_native_api() {
         let mut native = vdtoolkit::convert(DECIMALS).unwrap();
         native.optimize();
-        let optimized = json(&convert_result(DECIMALS, true));
+        let optimized = json(&convert_result(DECIMALS, true, None));
         assert_eq!(optimized["xml"], native.to_xml());
         assert_eq!(
             optimized["analysis"],
@@ -226,8 +232,25 @@ mod tests {
         );
 
         assert_eq!(
-            json(&convert_result(EXACT, false)),
-            json(&convert_result(EXACT, false))
+            json(&convert_result(EXACT, false, None)),
+            json(&convert_result(EXACT, false, None))
         );
+    }
+
+    #[test]
+    fn size_cap_matches_the_native_api() {
+        let uncapped = json(&convert_result(LARGE, false, None));
+        assert_eq!(uncapped["analysis"]["diagnostics"][0]["code"], "SVGVD016");
+        assert_eq!(uncapped["analysis"]["diagnostics"][0]["severity"], "warning");
+
+        let mut native = vdtoolkit::convert(LARGE).unwrap();
+        assert!(native.fit_within(200.0));
+        let capped = json(&convert_result(LARGE, false, Some(200.0)));
+        assert_eq!(capped["xml"], native.to_xml());
+        assert_eq!(
+            capped["analysis"],
+            serde_json::to_value(&native.analysis).unwrap()
+        );
+        assert_eq!(capped["analysis"]["diagnostics"], serde_json::json!([]));
     }
 }

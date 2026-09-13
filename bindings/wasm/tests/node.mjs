@@ -13,6 +13,7 @@ const normalized = bytes('<svg xmlns="http://www.w3.org/2000/svg" width="24" hei
 const unsupported = bytes('<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><text>hello</text></svg>');
 const malformed = bytes("<svg><path></svg>");
 const decimals = bytes('<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M1.234567 2.345678L20.987654 21.876543" fill="#123456"/></svg>');
+const large = bytes('<svg xmlns="http://www.w3.org/2000/svg" width="480" height="320"><path d="M0 0H480V320Z" fill="#123456"/></svg>');
 
 test("the generated module returns exact and normalized analysis", () => {
   assert.equal(analyzeSvg(exact).analysis.compatibility, "exact");
@@ -42,4 +43,19 @@ test("optimization is effective and output is deterministic", () => {
   assert.match(optimized.xml, /M1\.235,2\.346/);
   assert.equal(optimized.analysis.metrics.estimated_xml_bytes, optimized.xml.length);
   assert.deepEqual(convertSvg(exact, false), convertSvg(exact, false));
+});
+
+test("large drawables warn and can be fit within a size cap", () => {
+  const uncapped = convertSvg(large, false);
+  assert.deepEqual(
+    uncapped.analysis.diagnostics.map(({ code, severity }) => [code, severity]),
+    [["SVGVD016", "warning"]],
+  );
+  assert.match(uncapped.xml, /android:width="480dp"/);
+
+  const capped = convertSvg(large, false, 200);
+  assert.match(capped.xml, /android:width="200dp"/);
+  assert.match(capped.xml, /android:height="133dp"/);
+  assert.match(capped.xml, /android:viewportWidth="480"/);
+  assert.deepEqual(capped.analysis.diagnostics, []);
 });

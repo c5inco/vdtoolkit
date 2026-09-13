@@ -151,6 +151,8 @@ pub enum DiagnosticCode {
     UnsupportedClipPath,
     #[serde(rename = "SVGVD015")]
     UnsupportedDimensions,
+    #[serde(rename = "SVGVD016")]
+    LargeDimensions,
 }
 
 impl DiagnosticCode {
@@ -172,6 +174,7 @@ impl DiagnosticCode {
             Self::UnsupportedPaint => "SVGVD013",
             Self::UnsupportedClipPath => "SVGVD014",
             Self::UnsupportedDimensions => "SVGVD015",
+            Self::LargeDimensions => "SVGVD016",
         }
     }
 }

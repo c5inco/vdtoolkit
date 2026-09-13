@@ -4,7 +4,7 @@ use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
-use vdtoolkit::{Analysis, Compatibility, Error, Result};
+use vdtoolkit::{Analysis, Compatibility, Error, Result, Severity};
 use walkdir::WalkDir;
 
 #[derive(Parser)]
@@ -152,6 +152,16 @@ fn convert_one(args: &ConvertArgs, input: &Path, optimize: bool) -> Result<()> {
         return Err(Error::InvalidInput(
             "requires normalization and was rejected by --strict".to_owned(),
         ));
+    }
+    for diagnostic in &asset.analysis.diagnostics {
+        if matches!(diagnostic.severity, Severity::Warning) {
+            eprintln!(
+                "warning: {}: {}  {}",
+                input.display(),
+                diagnostic.code.as_str(),
+                diagnostic.message
+            );
+        }
     }
     let generated_bytes = asset.to_xml().len();
     if optimize {

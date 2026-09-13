@@ -1,7 +1,7 @@
 use std::fs;
 use std::process::Command;
 
-use vdtoolkit::{Compatibility, DiagnosticCode, Error};
+use vdtoolkit::{Compatibility, DiagnosticCode, Error, Severity};
 
 #[test]
 fn converts_viewbox_geometry_colors_and_fill_rule() {
@@ -1014,4 +1014,87 @@ fn content_bounds_use_the_serialized_path_alpha_and_stroke_width() {
     let asset = vdtoolkit::convert(faint).unwrap();
     assert!(asset.to_xml().contains(r#"android:fillAlpha="0.000001""#));
     assert_close(asset.analysis.metrics.content_bounds.unwrap().right, 24.0);
+}
+
+const LARGE: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" width="480" height="320">
+    <path d="M0 0H480V320Z" fill="#123456"/>
+</svg>"##;
+
+#[test]
+fn large_drawables_warn_without_changing_compatibility() {
+    let asset = vdtoolkit::convert(LARGE).unwrap();
+    assert_eq!(asset.analysis.compatibility, Compatibility::Exact);
+    let [warning] = asset.analysis.diagnostics.as_slice() else {
+        panic!("expected one diagnostic: {:?}", asset.analysis.diagnostics);
+    };
+    assert_eq!(
+        warning.code.as_str(),
+        DiagnosticCode::LargeDimensions.as_str()
+    );
+    assert!(matches!(warning.severity, Severity::Warning));
+    assert!(warning.message.contains("480×320dp"));
+
+    let at_limit = br##"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200">
+        <path d="M0 0H200V200Z" fill="#123456"/>
+    </svg>"##;
+    assert!(
+        vdtoolkit::convert(at_limit)
+            .unwrap()
+            .analysis
+            .diagnostics
+            .is_empty()
+    );
+}
+
+#[test]
+fn fit_within_scales_size_but_keeps_the_viewport() {
+    let mut asset = vdtoolkit::convert(LARGE).unwrap();
+    assert!(!asset.fit_within(500.0));
+    assert!(asset.fit_within(200.0));
+    let xml = asset.to_xml();
+    assert!(xml.contains("android:width=\"200dp\""));
+    assert!(xml.contains("android:height=\"133dp\""));
+    assert!(xml.contains("android:viewportWidth=\"480\""));
+    assert!(xml.contains("android:viewportHeight=\"320\""));
+    assert_eq!(asset.analysis.metrics.width, 200.0);
+    assert_eq!(asset.analysis.metrics.height, 133.0);
+    assert_eq!(asset.analysis.metrics.estimated_xml_bytes, xml.len());
+    assert!(asset.analysis.diagnostics.is_empty());
+
+    let tall = br##"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="600">
+        <path d="M0 0H100V600Z" fill="#123456"/>
+    </svg>"##;
+    let mut asset = vdtoolkit::convert(tall).unwrap();
+    assert!(asset.fit_within(300.0));
+    let xml = asset.to_xml();
+    assert!(xml.contains("android:width=\"50dp\""));
+    assert!(xml.contains("android:height=\"300dp\""));
+    assert!(
+        asset
+            .analysis
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code.as_str() == "SVGVD016")
+    );
+}
+
+#[test]
+fn convert_prints_large_dimension_warnings_to_stderr() {
+    let dir = std::env::temp_dir().join(format!("vdtoolkit-large-{}", std::process::id()));
+    fs::create_dir_all(&dir).unwrap();
+    let input = dir.join("large.svg");
+    fs::write(&input, LARGE).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_vdt"))
+        .args(["convert", input.to_str().unwrap()])
+        .output()
+        .unwrap();
+    fs::remove_dir_all(&dir).unwrap();
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("warning: "));
+    assert!(stderr.contains("SVGVD016"));
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("android:width=\"480dp\""));
 }

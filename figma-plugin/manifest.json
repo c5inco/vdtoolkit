@@ -1,5 +1,5 @@
 {
-  "name": "vdtoolkit Dev Mode Codegen",
+  "name": "Vector Drawable Toolkit",
   "id": "REPLACE_WITH_YOUR_FIGMA_PLUGIN_ID",
   "api": "1.0.0",
   "main": "dist/code.js",
@@ -8,7 +8,7 @@
   "capabilities": ["codegen"],
   "codegenLanguages": [
     {
-      "label": "Android VectorDrawable",
+      "label": "Android Vector Drawable",
       "value": "android-vectordrawable"
     }
   ],

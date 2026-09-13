@@ -223,6 +223,7 @@ pub(crate) fn lower(
     metrics.content_bounds = metrics
         .content_bounds
         .and_then(|bounds| clamp_bounds(bounds, size.width(), size.height()));
+    diagnostics.extend(large_dimensions_warning(size.width(), size.height()));
     if compatibility.convertible() {
         Some(VectorDrawable {
             width_dp: size.width(),
@@ -808,6 +809,28 @@ fn require_normalization(compatibility: &mut Compatibility, diagnostics: &mut Ve
             suggestion: None,
         });
     }
+}
+
+/// Largest `android:width` or `android:height` Android lint accepts for a
+/// vector icon before warning that drawing it is slow.
+pub(crate) const RECOMMENDED_MAX_DP: f32 = 200.0;
+
+/// Non-blocking warning for drawables larger than [`RECOMMENDED_MAX_DP`].
+pub(crate) fn large_dimensions_warning(width_dp: f32, height_dp: f32) -> Option<Diagnostic> {
+    (width_dp > RECOMMENDED_MAX_DP || height_dp > RECOMMENDED_MAX_DP).then(|| Diagnostic {
+        code: DiagnosticCode::LargeDimensions,
+        severity: Severity::Warning,
+        message: format!(
+            "{}×{}dp is larger than Android's recommended 200×200dp for vector icons, which slows drawing",
+            crate::xml::number(width_dp),
+            crate::xml::number(height_dp)
+        ),
+        location: None,
+        suggestion: Some(
+            "Reduce android:width and android:height and keep the viewport, or use a raster image for large artwork."
+                .to_owned(),
+        ),
+    })
 }
 
 /// Grow `bounds` to include the stroke bounding box of an emitted painted path.

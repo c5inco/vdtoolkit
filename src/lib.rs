@@ -113,6 +113,12 @@ impl Asset {
         let dx = (adaptive::ADAPTIVE_ICON_SIZE - metrics.viewport_width * scale) / 2.0;
         let dy = (adaptive::ADAPTIVE_ICON_SIZE - metrics.viewport_height * scale) / 2.0;
         adaptive::fit_square(&mut self.drawable, adaptive::ADAPTIVE_ICON_SIZE, fit);
+        // The layer is 108dp, so a large-dimensions warning about the source
+        // no longer describes the output.
+        self.analysis.diagnostics.retain(|diagnostic| {
+            diagnostic.code.as_str() != DiagnosticCode::LargeDimensions.as_str()
+        });
+        let metrics = &mut self.analysis.metrics;
         metrics.width = adaptive::ADAPTIVE_ICON_SIZE;
         metrics.height = adaptive::ADAPTIVE_ICON_SIZE;
         metrics.viewport_width = adaptive::ADAPTIVE_ICON_SIZE;

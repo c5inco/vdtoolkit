@@ -1091,6 +1091,17 @@ fn fits_adaptive_layers_by_uniform_scale_and_centering() {
 }
 
 #[test]
+fn fitting_an_adaptive_layer_drops_the_large_dimensions_warning() {
+    let mut asset = vdtoolkit::convert(LARGE).unwrap();
+    assert_eq!(asset.analysis.diagnostics.len(), 1);
+    asset
+        .fit_adaptive_layer(vdtoolkit::ADAPTIVE_ICON_SIZE)
+        .unwrap();
+    assert!(asset.analysis.diagnostics.is_empty());
+    assert_eq!(asset.analysis.metrics.width, 108.0);
+}
+
+#[test]
 fn detects_content_outside_the_safe_zone() {
     let logo = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M2 2H22V22H2Z" fill="#000"/></svg>"##;
     let mut full = vdtoolkit::convert(logo).unwrap();

@@ -24,7 +24,30 @@ Android dependencies:
 - `build/vdtoolkit-renderer.apk`: generated drawable resources
 - `build/vdtoolkit-renderer-test.apk`: framework instrumentation pixel tests
 
-Run them with an instrumentation provider or connected device. For example:
+The script also fetches two Material Symbols from the pinned corpus commit and
+runs `vdt adaptive` on them (see `fixtures/adaptive/SOURCES.md`): `ic_launcher`
+uses the `stars` symbol fitted to the 66dp safe zone over a drawable
+background, with `rocket_launch` as the monochrome layer, and
+`ic_launcher_solid` uses a solid color background. The app manifest references
+`@mipmap/ic_launcher`; below API 26 the `--legacy` fallback written by
+`vdt adaptive` is selected.
+
+## Run
+
+`run.sh` runs both APKs and collects results under `build/run/`. With
+`EW_API_TOKEN` set and `ew-cli` installed it runs on
+[emulator.wtf](https://emulator.wtf) across `EW_DEVICES` (default: Pixel 7 on
+API 21, 24, 26, 33, and 36, as `;`-separated `ew-cli --device` specs). Otherwise it
+uses the adb device named by `ANDROID_SERIAL`, or the only connected one.
+`RUNNER=ew` or `RUNNER=adb` forces a runner.
+
+```sh
+tools/android-renderer/run.sh
+EW_DEVICES='model=Pixel7,version=26;model=Tablet10,version=33' tools/android-renderer/run.sh
+ANDROID_SERIAL=emulator-5554 RUNNER=adb tools/android-renderer/run.sh
+```
+
+Or by hand:
 
 ```sh
 adb install -r build/vdtoolkit-renderer.apk
@@ -32,6 +55,21 @@ adb install -r build/vdtoolkit-renderer-test.apk
 adb shell am instrument -w \
   com.vdtoolkit.renderer.test/android.test.InstrumentationTestRunner
 ```
+
+`AdaptiveIconTest` loads the generated icon as an `AdaptiveIconDrawable`,
+renders each layer at 10 pixels per dp and checks the safe-zone placement, the
+background drawable and the `@color` background, and the monochrome layer on
+API 33+. Below API 26 it checks that the `--legacy` fallback is selected and renders
+both layers under the circular mask. `ic_launcher_gradient` uses a mirrored
+gradient background, which needs API 24; its test checks that API 21 to 23
+select the density PNG, API 24 and 25 the `mipmap-anydpi-v24` vector, and API
+26+ the adaptive icon, and that each shows the same gradient colors.
+On API 26+ it then drives the real launcher through `UiAutomation`: it goes
+home, finds the app by label (swiping the app drawer open if needed), and
+asserts that both foreground and background colors are visible inside the
+icon's bounds. Screenshots of the home screen, the app drawer, and the cropped
+icon are saved to the app's external files directory and pulled into
+`build/run/screenshots/` (via `--directories-to-pull` on emulator.wtf).
 
 The tests render at 10 pixels per viewport unit. Assertions are at least one
 viewport unit from an edge and allow a maximum channel error of 2 only for

@@ -17,15 +17,22 @@
 //! # Ok::<(), vdtoolkit::Error>(())
 //! ```
 
+mod adaptive;
 mod analysis;
 mod error;
 mod optimize;
+mod render;
 mod svg;
 mod vector;
 mod xml;
 
 use std::path::Path;
 
+pub use adaptive::{
+    ADAPTIVE_ICON_SAFE_ZONE, ADAPTIVE_ICON_SIZE, ADAPTIVE_ICON_VISIBLE_DIAMETER,
+    LEGACY_ICON_DENSITIES, LEGACY_ICON_KEYLINE, LEGACY_ICON_SIZE, adaptive_icon_xml,
+    color_resource_xml,
+};
 pub use analysis::{
     Analysis, Bounds, Compatibility, Diagnostic, DiagnosticCode, ElementLocation, Metrics, Severity,
 };
@@ -83,6 +90,197 @@ impl Asset {
             ));
         self.analysis.metrics.estimated_xml_bytes = self.to_xml().len();
         true
+    }
+
+    /// Turn this asset into an adaptive icon layer: a 108dp square drawable
+    /// whose content is scaled uniformly and centered so the source viewport
+    /// fits inside a `fit` dp square.
+    ///
+    /// Use [`ADAPTIVE_ICON_SIZE`] to fill the whole layer and
+    /// [`ADAPTIVE_ICON_SAFE_ZONE`] to keep artwork inside the area no launcher
+    /// mask hides. Rendering is unchanged apart from placement, so the
+    /// compatibility and minimum API are preserved.
+    pub fn fit_adaptive_layer(&mut self, fit: f32) -> Result<()> {
+        if !(fit > 0.0 && fit <= adaptive::ADAPTIVE_ICON_SIZE) {
+            return Err(Error::InvalidInput(format!(
+                "adaptive layer fit must be between 0 and {} dp, got {fit}",
+                adaptive::ADAPTIVE_ICON_SIZE
+            )));
+        }
+        let metrics = &mut self.analysis.metrics;
+        let extent = metrics.viewport_width.max(metrics.viewport_height);
+        let scale = fit / extent;
+        let dx = (adaptive::ADAPTIVE_ICON_SIZE - metrics.viewport_width * scale) / 2.0;
+        let dy = (adaptive::ADAPTIVE_ICON_SIZE - metrics.viewport_height * scale) / 2.0;
+        adaptive::fit_square(&mut self.drawable, adaptive::ADAPTIVE_ICON_SIZE, fit);
+        // The layer is 108dp, so a large-dimensions warning about the source
+        // no longer describes the output.
+        self.analysis.diagnostics.retain(|diagnostic| {
+            diagnostic.code.as_str() != DiagnosticCode::LargeDimensions.as_str()
+        });
+        let metrics = &mut self.analysis.metrics;
+        metrics.width = adaptive::ADAPTIVE_ICON_SIZE;
+        metrics.height = adaptive::ADAPTIVE_ICON_SIZE;
+        metrics.viewport_width = adaptive::ADAPTIVE_ICON_SIZE;
+        metrics.viewport_height = adaptive::ADAPTIVE_ICON_SIZE;
+        if let Some(bounds) = &mut metrics.content_bounds {
+            bounds.left = bounds.left * scale + dx;
+            bounds.top = bounds.top * scale + dy;
+            bounds.right = bounds.right * scale + dx;
+            bounds.bottom = bounds.bottom * scale + dy;
+        }
+        self.analysis.metrics.estimated_xml_bytes = self.to_xml().len();
+        Ok(())
+    }
+
+    /// Content bounds of a fitted adaptive layer that reach outside the
+    /// centered 66dp safe zone, which launcher masks may hide. `None` when
+    /// the content stays inside or there is no painted content.
+    pub fn outside_adaptive_safe_zone(&self) -> Option<Bounds> {
+        let bounds = self.analysis.metrics.content_bounds?;
+        let inset = (adaptive::ADAPTIVE_ICON_SIZE - adaptive::ADAPTIVE_ICON_SAFE_ZONE) / 2.0;
+        let (low, high) = (inset - 1e-3, adaptive::ADAPTIVE_ICON_SIZE - inset + 1e-3);
+        let outside =
+            bounds.left < low || bounds.top < low || bounds.right > high || bounds.bottom > high;
+        outside.then_some(bounds)
+    }
+
+    /// Whether a fitted adaptive layer paints every pixel of the 108dp layer.
+    ///
+    /// The layer is rendered at one pixel per dp with clipping, fill rules,
+    /// and alpha applied, so letterboxed non-square artwork, inset clips,
+    /// holes, and transparent paint all count as not filling. Uncovered areas
+    /// in a background show through launcher masks and parallax.
+    pub fn fills_adaptive_layer(&self) -> bool {
+        let size = adaptive::ADAPTIVE_ICON_SIZE as u32;
+        render::render(&self.drawable, size, size)
+            .is_some_and(|pixmap| pixmap.pixels().iter().all(|pixel| pixel.alpha() > 0))
+    }
+
+    /// A 108dp adaptive icon layer filled with one solid `#RRGGBB` or
+    /// `#AARRGGBB` color, for composing a legacy icon over a color background.
+    pub fn solid_adaptive_layer(color: &str) -> Result<Asset> {
+        let (rgb, alpha) = adaptive::parse_color(color).ok_or_else(|| {
+            Error::InvalidInput(format!("color must be #RRGGBB or #AARRGGBB, got {color:?}"))
+        })?;
+        Ok(Self::synthesized(adaptive::solid_layer(rgb, alpha), &[]))
+    }
+
+    /// A legacy launcher icon for devices below API 26: the fitted
+    /// `background` and `foreground` layers composed under a circular clip,
+    /// with the 72dp area launchers show mapped onto the 44dp circle keyline
+    /// of a 48dp icon. Fit both layers with [`Asset::fit_adaptive_layer`]
+    /// first.
+    ///
+    /// The result needs API 24 when a layer uses gradients, even-odd fills, or
+    /// clip paths of its own. [`Asset::to_png`] renders it for earlier devices.
+    pub fn legacy_launcher_icon(background: &Asset, foreground: &Asset) -> Asset {
+        let (scale, offset) = adaptive::legacy_mapping();
+        let mut asset = Self::synthesized(
+            adaptive::legacy_icon(&background.drawable, &foreground.drawable),
+            &[background, foreground],
+        );
+        if let Some(bounds) = &mut asset.analysis.metrics.content_bounds {
+            let map = |value: f32| (value * scale + offset).clamp(0.0, adaptive::LEGACY_ICON_SIZE);
+            *bounds = Bounds {
+                left: map(bounds.left),
+                top: map(bounds.top),
+                right: map(bounds.right),
+                bottom: map(bounds.bottom),
+            };
+        }
+        asset
+    }
+
+    /// Render the drawable at `width` × `height` pixels and return
+    /// unpremultiplied RGBA8 pixels, row by row from the top left.
+    ///
+    /// Geometry, fill rules, strokes, gradients, alpha, and clip scope follow
+    /// VectorDrawable semantics, with anti-aliasing.
+    pub fn render_rgba(&self, width: u32, height: u32) -> Result<Vec<u8>> {
+        let pixmap = self.render(width, height)?;
+        Ok(pixmap
+            .pixels()
+            .iter()
+            .flat_map(|pixel| {
+                let color = pixel.demultiply();
+                [color.red(), color.green(), color.blue(), color.alpha()]
+            })
+            .collect())
+    }
+
+    /// Render the drawable at `width` × `height` pixels as a PNG, as
+    /// [`Asset::render_rgba`] does.
+    pub fn to_png(&self, width: u32, height: u32) -> Result<Vec<u8>> {
+        self.render(width, height)?
+            .encode_png()
+            .map_err(|error| Error::InvalidInput(format!("cannot encode PNG: {error}")))
+    }
+
+    fn render(&self, width: u32, height: u32) -> Result<tiny_skia::Pixmap> {
+        render::render(&self.drawable, width, height)
+            .ok_or_else(|| Error::InvalidInput(format!("cannot render at {width} × {height} px")))
+    }
+
+    fn synthesized(drawable: vector::VectorDrawable, layers: &[&Asset]) -> Asset {
+        let mut metrics = Metrics {
+            width: drawable.width_dp,
+            height: drawable.height_dp,
+            viewport_width: drawable.viewport_width,
+            viewport_height: drawable.viewport_height,
+            ..Metrics::default()
+        };
+        let mut compatibility = Compatibility::Exact;
+        for layer in layers {
+            let source = &layer.analysis.metrics;
+            metrics.paths += source.paths;
+            metrics.path_commands += source.path_commands;
+            metrics.groups += source.groups;
+            metrics.gradients += source.gradients;
+            metrics.clip_paths += source.clip_paths;
+            if let Some(bounds) = source.content_bounds {
+                metrics.content_bounds = Some(match metrics.content_bounds {
+                    None => bounds,
+                    Some(union) => Bounds {
+                        left: union.left.min(bounds.left),
+                        top: union.top.min(bounds.top),
+                        right: union.right.max(bounds.right),
+                        bottom: union.bottom.max(bounds.bottom),
+                    },
+                });
+            }
+            compatibility.worsen(layer.analysis.compatibility);
+        }
+        if layers.is_empty() {
+            metrics.paths = 1;
+            metrics.path_commands = 5;
+            metrics.content_bounds = Some(Bounds {
+                left: 0.0,
+                top: 0.0,
+                right: drawable.viewport_width,
+                bottom: drawable.viewport_height,
+            });
+        } else {
+            metrics.clip_paths += 1;
+            metrics.path_commands += 6;
+        }
+        metrics.groups += drawable
+            .children
+            .iter()
+            .filter(|node| matches!(node, vector::VectorNode::Group(_)))
+            .count();
+        let minimum_api = Some(drawable.minimum_api());
+        let mut asset = Asset {
+            drawable,
+            analysis: Analysis {
+                compatibility,
+                minimum_api,
+                diagnostics: Vec::new(),
+                metrics,
+            },
+        };
+        asset.analysis.metrics.estimated_xml_bytes = asset.to_xml().len();
+        asset
     }
 }
 

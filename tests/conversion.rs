@@ -1047,6 +1047,516 @@ fn large_drawables_warn_without_changing_compatibility() {
 }
 
 #[test]
+fn fits_adaptive_layers_by_uniform_scale_and_centering() {
+    let source =
+        br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="12" viewBox="0 0 24 12">
+        <defs><radialGradient id="g" cx="12" cy="6" r="6" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#FFF"/><stop offset="1" stop-color="#000"/>
+        </radialGradient></defs>
+        <path d="M0 0H24V12H0Z" fill="url(#g)" stroke="#123456" stroke-width="2"/>
+    </svg>"##;
+
+    let mut asset = vdtoolkit::convert(source).unwrap();
+    let api = asset.analysis.minimum_api;
+    asset
+        .fit_adaptive_layer(vdtoolkit::ADAPTIVE_ICON_SAFE_ZONE)
+        .unwrap();
+    let xml = asset.to_xml();
+
+    // 24 wide fits into 66: scale 2.75, offset (21, 37.5).
+    assert!(xml.contains("android:width=\"108dp\""));
+    assert!(xml.contains("android:viewportHeight=\"108\""));
+    assert!(xml.contains("android:pathData=\"M21,37.5 L87,37.5 L87,70.5 L21,70.5 Z\""));
+    assert!(xml.contains("android:strokeWidth=\"5.5\""));
+    assert!(xml.contains("android:centerX=\"54\""));
+    assert!(xml.contains("android:centerY=\"54\""));
+    assert!(xml.contains("android:gradientRadius=\"16.5\""));
+    assert_eq!(asset.analysis.minimum_api, api);
+    let metrics = &asset.analysis.metrics;
+    assert_eq!(metrics.viewport_width, 108.0);
+    // Bounds are clamped to the source viewport before being moved.
+    let bounds = metrics.content_bounds.unwrap();
+    assert_eq!((bounds.left, bounds.top), (21.0, 37.5));
+    assert_eq!((bounds.right, bounds.bottom), (87.0, 70.5));
+    assert_eq!(metrics.estimated_xml_bytes, xml.len());
+
+    assert!(matches!(
+        asset.fit_adaptive_layer(0.0),
+        Err(Error::InvalidInput(_))
+    ));
+    assert!(matches!(
+        asset.fit_adaptive_layer(109.0),
+        Err(Error::InvalidInput(_))
+    ));
+}
+
+#[test]
+fn fitting_an_adaptive_layer_drops_the_large_dimensions_warning() {
+    let mut asset = vdtoolkit::convert(LARGE).unwrap();
+    assert_eq!(asset.analysis.diagnostics.len(), 1);
+    asset
+        .fit_adaptive_layer(vdtoolkit::ADAPTIVE_ICON_SIZE)
+        .unwrap();
+    assert!(asset.analysis.diagnostics.is_empty());
+    assert_eq!(asset.analysis.metrics.width, 108.0);
+}
+
+#[test]
+fn detects_content_outside_the_safe_zone() {
+    let logo = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M2 2H22V22H2Z" fill="#000"/></svg>"##;
+    let mut full = vdtoolkit::convert(logo).unwrap();
+    full.fit_adaptive_layer(vdtoolkit::ADAPTIVE_ICON_SIZE)
+        .unwrap();
+    let bounds = full.outside_adaptive_safe_zone().unwrap();
+    assert_eq!((bounds.left, bounds.right), (9.0, 99.0));
+    let mut safe = vdtoolkit::convert(logo).unwrap();
+    safe.fit_adaptive_layer(vdtoolkit::ADAPTIVE_ICON_SAFE_ZONE)
+        .unwrap();
+    assert!(safe.outside_adaptive_safe_zone().is_none());
+    // Content at exactly the safe zone edge is inside it.
+    let mut edge = vdtoolkit::convert(logo).unwrap();
+    edge.fit_adaptive_layer(72.0).unwrap();
+    assert!(edge.outside_adaptive_safe_zone().is_none());
+}
+
+#[test]
+fn detects_backgrounds_that_do_not_fill_the_layer() {
+    let fitted = |svg: &str| {
+        let mut asset = vdtoolkit::convert(svg.as_bytes()).unwrap();
+        asset
+            .fit_adaptive_layer(vdtoolkit::ADAPTIVE_ICON_SIZE)
+            .unwrap();
+        asset
+    };
+    let svg = |size: &str, content: &str| {
+        format!(r#"<svg xmlns="http://www.w3.org/2000/svg" {size}>{content}</svg>"#)
+    };
+
+    // Full bleed fills the layer at any square size, including overscan.
+    assert!(
+        fitted(&svg(
+            r#"width="24" height="24""#,
+            r##"<rect width="24" height="24" fill="#3DDC84"/>"##
+        ))
+        .fills_adaptive_layer()
+    );
+    assert!(
+        fitted(&svg(
+            r#"width="48" height="48""#,
+            r##"<rect x="-10" y="-10" width="68" height="68" fill="#3DDC84"/>"##
+        ))
+        .fills_adaptive_layer()
+    );
+
+    // Full bleed 16:9 artwork is letterboxed into a band.
+    let wide = fitted(&svg(
+        r#"width="160" height="90""#,
+        r##"<rect width="160" height="90" fill="#3DDC84"/>"##,
+    ));
+    assert!(!wide.fills_adaptive_layer());
+    let bounds = wide.analysis.metrics.content_bounds.unwrap();
+    for (actual, expected) in [
+        (bounds.left, 0.0),
+        (bounds.right, 108.0),
+        (bounds.top, 23.625),
+        (bounds.bottom, 84.375),
+    ] {
+        assert!((actual - expected).abs() < 1e-3, "{bounds:?}");
+    }
+
+    // Full-bleed paint under an inset clip, and a hole, are not filling
+    // either, even though their bounding boxes reach every edge.
+    assert!(
+        !fitted(&svg(
+            r#"width="108" height="108""#,
+            r##"<defs><clipPath id="c"><rect x="4" y="4" width="100" height="100"/></clipPath></defs>
+                <rect width="108" height="108" fill="#3DDC84" clip-path="url(#c)"/>"##
+        ))
+        .fills_adaptive_layer()
+    );
+    assert!(
+        !fitted(&svg(
+            r#"width="108" height="108""#,
+            r##"<path d="M0 0H108V108H0Z M40 40H68V68H40Z" fill="#3DDC84" fill-rule="evenodd"/>"##
+        ))
+        .fills_adaptive_layer()
+    );
+    // Semi-transparent paint still covers; only unpainted pixels count.
+    assert!(
+        fitted(&svg(
+            r#"width="108" height="108""#,
+            r##"<rect width="108" height="108" fill="#3DDC84" fill-opacity=".4"/>"##
+        ))
+        .fills_adaptive_layer()
+    );
+
+    // Inset content, and a background that paints nothing.
+    assert!(
+        !fitted(&svg(
+            r#"width="108" height="108""#,
+            r##"<rect x="4" width="104" height="108" fill="#3DDC84"/>"##
+        ))
+        .fills_adaptive_layer()
+    );
+    assert!(
+        !fitted(&svg(
+            r#"width="108" height="108""#,
+            r#"<rect width="108" height="108" fill="none"/>"#
+        ))
+        .fills_adaptive_layer()
+    );
+}
+
+#[test]
+fn fits_full_bleed_gradient_backgrounds() {
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48">
+        <defs><linearGradient id="g" x1="0" y1="0" x2="24" y2="12"
+                gradientUnits="userSpaceOnUse" spreadMethod="reflect">
+            <stop offset="0" stop-color="#1267D6"/>
+            <stop offset=".5" stop-color="#E37A19" stop-opacity=".6"/>
+            <stop offset="1" stop-color="#159A55"/>
+        </linearGradient></defs>
+        <rect width="48" height="48" fill="url(#g)"/>
+    </svg>"##;
+
+    let mut asset = vdtoolkit::convert(source).unwrap();
+    asset
+        .fit_adaptive_layer(vdtoolkit::ADAPTIVE_ICON_SIZE)
+        .unwrap();
+    assert!(asset.fills_adaptive_layer());
+    assert_eq!(asset.analysis.minimum_api, Some(24));
+    let xml = asset.to_xml();
+
+    // Scale 2.25 with no offset: the axis (0,0)-(24,12) becomes (0,0)-(54,27).
+    assert!(xml.contains("android:pathData=\"M0,0 L108,0 L108,108 L0,108 Z\""));
+    assert!(xml.contains("android:tileMode=\"mirror\""));
+    let attribute = |name: &str| -> f32 {
+        let key = format!("android:{name}=\"");
+        let start = xml.find(&key).unwrap_or_else(|| panic!("{name}\n{xml}")) + key.len();
+        xml[start..start + xml[start..].find('"').unwrap()]
+            .parse()
+            .unwrap()
+    };
+    for (name, expected) in [
+        ("startX", 0.0),
+        ("startY", 0.0),
+        ("endX", 54.0),
+        ("endY", 27.0),
+    ] {
+        assert!((attribute(name) - expected).abs() < 1e-4, "{name}\n{xml}");
+    }
+    assert!(xml.contains("<item android:offset=\"0.5\" android:color=\"#99E37A19\"/>"));
+}
+
+#[test]
+fn cli_adaptive_warns_when_background_does_not_fill_the_layer() {
+    let temp = tempfile::tempdir().unwrap();
+    let foreground = temp.path().join("fg.svg");
+    let background = temp.path().join("wide.svg");
+    fs::write(
+        &foreground,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M12 2L2 22h20z"/></svg>"##,
+    )
+    .unwrap();
+    fs::write(
+        &background,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="160" height="90"><rect width="160" height="90" fill="#3DDC84"/></svg>"##,
+    )
+    .unwrap();
+    let res = temp.path().join("res");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_vdt"))
+        .args(["adaptive", "--foreground"])
+        .arg(&foreground)
+        .arg("--background")
+        .arg(&background)
+        .args(["--fit", "66", "-o"])
+        .arg(&res)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert_eq!(stderr.lines().count(), 1, "{stderr}");
+    assert!(
+        stderr.contains(
+            "background content spans 0..108 × 23.6..84.4dp and does not fill the 108dp layer"
+        ),
+        "{stderr}"
+    );
+    assert!(res.join("drawable/ic_launcher_background.xml").is_file());
+}
+
+#[test]
+fn composes_a_masked_legacy_icon() {
+    let logo = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M2 2H22V22H2Z" fill="#102030"/></svg>"##;
+    let mut foreground = vdtoolkit::convert(logo).unwrap();
+    foreground.fit_adaptive_layer(66.0).unwrap();
+    let background = vdtoolkit::Asset::solid_adaptive_layer("#803DDC84").unwrap();
+    assert!(
+        background
+            .to_xml()
+            .contains("android:fillAlpha=\"0.501961\"")
+    );
+    assert!(matches!(
+        vdtoolkit::Asset::solid_adaptive_layer("#fff"),
+        Err(Error::InvalidInput(_))
+    ));
+
+    let legacy = vdtoolkit::Asset::legacy_launcher_icon(&background, &foreground);
+    let xml = legacy.to_xml();
+    // The 72dp visible circle lands on the 44dp keyline centered in 48dp.
+    assert!(xml.contains("android:width=\"48dp\""));
+    assert!(xml.contains("android:viewportWidth=\"48\""));
+    assert!(xml.contains("<clip-path\n        android:pathData=\"M24,2 C"));
+    // Layers without clips of their own are not wrapped in groups.
+    assert!(!xml.contains("<group>"));
+    assert_eq!(legacy.analysis.minimum_api, Some(21));
+    assert_eq!(legacy.analysis.compatibility, Compatibility::Exact);
+    let metrics = &legacy.analysis.metrics;
+    assert_eq!((metrics.paths, metrics.clip_paths), (2, 1));
+    assert_eq!(metrics.estimated_xml_bytes, xml.len());
+    // The foreground spans layer 26.5..81.5, which maps to 7.2..40.8.
+    let bounds = metrics.content_bounds.unwrap();
+    assert_eq!((bounds.left, bounds.right), (0.0, 48.0));
+
+    let rgba = legacy.render_rgba(48, 48).unwrap();
+    let pixel = |x: usize, y: usize| {
+        let index = (y * 48 + x) * 4;
+        [
+            rgba[index],
+            rgba[index + 1],
+            rgba[index + 2],
+            rgba[index + 3],
+        ]
+    };
+    assert_eq!(pixel(24, 24), [0x10, 0x20, 0x30, 255]);
+    // Above the foreground, inside the mask: the half-transparent background.
+    let [red, green, blue, alpha] = pixel(24, 4);
+    assert!(alpha.abs_diff(128) <= 1, "{:?}", pixel(24, 4));
+    assert!(red.abs_diff(0x3D) <= 2 && green.abs_diff(0xDC) <= 2 && blue.abs_diff(0x84) <= 2);
+    // Outside the mask.
+    assert_eq!(pixel(24, 0)[3], 0);
+    assert_eq!(pixel(1, 1)[3], 0);
+
+    // A gradient background lifts the legacy icon to API 24.
+    let gradient = br##"<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108">
+        <defs><linearGradient id="g" x1="0" y1="0" x2="108" y2="0" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#000"/><stop offset="1" stop-color="#FFF"/>
+        </linearGradient></defs>
+        <rect width="108" height="108" fill="url(#g)"/>
+    </svg>"##;
+    let mut background = vdtoolkit::convert(gradient).unwrap();
+    background.fit_adaptive_layer(108.0).unwrap();
+    let legacy = vdtoolkit::Asset::legacy_launcher_icon(&background, &foreground);
+    assert_eq!(legacy.analysis.minimum_api, Some(24));
+}
+
+/// Mirrored blue to orange gradient every 54 units, full bleed on the layer.
+const MIRRORED_GRADIENT_BACKGROUND: &[u8] =
+    br##"<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108">
+    <defs><linearGradient id="g" x1="0" y1="0" x2="54" y2="0"
+            gradientUnits="userSpaceOnUse" spreadMethod="reflect">
+        <stop offset="0" stop-color="#1267D6"/><stop offset="1" stop-color="#E37A19"/>
+    </linearGradient></defs>
+    <rect width="108" height="108" fill="url(#g)"/>
+</svg>"##;
+
+/// Expected color of the mirrored gradient at layer x.
+fn mirrored_gradient_at(x: f32) -> [f32; 3] {
+    let t = if x <= 54.0 { x / 54.0 } else { 2.0 - x / 54.0 }.clamp(0.0, 1.0);
+    let mix = |a: f32, b: f32| a + (b - a) * t;
+    [
+        mix(0x12 as f32, 0xE3 as f32),
+        mix(0x67 as f32, 0x7A as f32),
+        mix(0xD6 as f32, 0x19 as f32),
+    ]
+}
+
+#[test]
+fn renders_legacy_gradients_like_the_vector() {
+    let logo = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M2 2H22V22H2Z" fill="#102030"/></svg>"##;
+    let mut foreground = vdtoolkit::convert(logo).unwrap();
+    foreground.fit_adaptive_layer(66.0).unwrap();
+    let mut background = vdtoolkit::convert(MIRRORED_GRADIENT_BACKGROUND).unwrap();
+    background.fit_adaptive_layer(108.0).unwrap();
+    let legacy = vdtoolkit::Asset::legacy_launcher_icon(&background, &foreground);
+    assert_eq!(legacy.analysis.minimum_api, Some(24));
+
+    let size = 192;
+    let rgba = legacy.render_rgba(size, size).unwrap();
+    let (scale, offset) = (44.0 / 72.0, -9.0);
+    let sample = |layer_x: f32, layer_y: f32| {
+        let per_unit = size as f32 / 48.0;
+        let x = ((layer_x * scale + offset) * per_unit) as usize;
+        let y = ((layer_y * scale + offset) * per_unit) as usize;
+        let index = (y * size as usize + x) * 4;
+        // Layer coordinate of the pixel center actually sampled.
+        let center_x = ((x as f32 + 0.5) / per_unit - offset) / scale;
+        (&rgba[index..index + 4], center_x)
+    };
+    // Above the foreground and inside the mask, on both sides of the mirror
+    // axis and at the axis itself.
+    for layer_x in [40.0, 54.0, 68.0] {
+        let (pixel, center_x) = sample(layer_x, 26.0);
+        let expected = mirrored_gradient_at(center_x);
+        assert_eq!(pixel[3], 255, "x {layer_x}");
+        for channel in 0..3 {
+            assert!(
+                (pixel[channel] as f32 - expected[channel]).abs() <= 3.0,
+                "x {layer_x}: {pixel:?} vs {expected:?}"
+            );
+        }
+    }
+    // Reflect, not clamp: equal distances from the axis match.
+    let (left, _) = sample(40.0, 26.0);
+    let (right, _) = sample(68.0 + 0.5 * 72.0 / 44.0 / 4.0, 26.0);
+    assert!(
+        left.iter().zip(right).all(|(a, b)| a.abs_diff(*b) <= 2),
+        "{left:?} {right:?}"
+    );
+
+    let png = legacy.to_png(size, size).unwrap();
+    assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
+    assert_eq!(&png[16..24], &[0, 0, 0, 192, 0, 0, 0, 192]);
+    assert_eq!(png, legacy.to_png(size, size).unwrap());
+    assert!(matches!(legacy.to_png(0, 48), Err(Error::InvalidInput(_))));
+}
+
+#[test]
+fn cli_legacy_removes_the_other_layout_when_art_changes() {
+    let temp = tempfile::tempdir().unwrap();
+    let foreground = temp.path().join("fg.svg");
+    let gradient = temp.path().join("gradient.svg");
+    fs::write(
+        &foreground,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M2 2H22V22H2Z" fill="#102030"/></svg>"##,
+    )
+    .unwrap();
+    fs::write(&gradient, MIRRORED_GRADIENT_BACKGROUND).unwrap();
+    let res = temp.path().join("res");
+    let run = |background: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_vdt"))
+            .args(["adaptive", "--foreground"])
+            .arg(&foreground)
+            .args(background)
+            .args(["--fit", "66", "--legacy", "-o"])
+            .arg(&res)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        String::from_utf8(output.stderr).unwrap()
+    };
+    let split = [
+        "mipmap-anydpi-v24/ic_launcher.xml",
+        "mipmap-anydpi-v24/ic_launcher_round.xml",
+        "mipmap-mdpi/ic_launcher.png",
+        "mipmap-xxxhdpi/ic_launcher_round.png",
+    ];
+    let plain = ["mipmap/ic_launcher.xml", "mipmap/ic_launcher_round.xml"];
+
+    // API 24 art, then API 21 art with the same name: the qualified files
+    // that Android 24 and 25 would still prefer are removed.
+    let stderr = run(&["--background", gradient.to_str().unwrap()]);
+    assert!(!stderr.contains("removed"), "{stderr}");
+    let stderr = run(&["--background-color", "#3DDC84"]);
+    assert_eq!(
+        stderr.matches("removed stale legacy icon").count(),
+        12,
+        "{stderr}"
+    );
+    for relative in split {
+        assert!(!res.join(relative).exists(), "{relative} should be gone");
+    }
+    for relative in plain {
+        assert!(res.join(relative).is_file(), "{relative}");
+    }
+
+    // And back again.
+    let stderr = run(&["--background", gradient.to_str().unwrap()]);
+    assert_eq!(
+        stderr.matches("removed stale legacy icon").count(),
+        2,
+        "{stderr}"
+    );
+    for relative in plain {
+        assert!(!res.join(relative).exists(), "{relative} should be gone");
+    }
+    for relative in split {
+        assert!(res.join(relative).is_file(), "{relative}");
+    }
+}
+
+#[test]
+fn cli_legacy_splits_vector_and_pngs_when_art_needs_api_24() {
+    let temp = tempfile::tempdir().unwrap();
+    let foreground = temp.path().join("fg.svg");
+    let background = temp.path().join("gradient.svg");
+    fs::write(
+        &foreground,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M2 2H22V22H2Z" fill="#102030"/></svg>"##,
+    )
+    .unwrap();
+    fs::write(&background, MIRRORED_GRADIENT_BACKGROUND).unwrap();
+    let run = |res: &std::path::Path| {
+        let output = Command::new(env!("CARGO_BIN_EXE_vdt"))
+            .args(["adaptive", "--foreground"])
+            .arg(&foreground)
+            .arg("--background")
+            .arg(&background)
+            .args(["--fit", "66", "--legacy", "-o"])
+            .arg(res)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        assert!(output.stderr.is_empty(), "{output:?}");
+        String::from_utf8(output.stdout).unwrap()
+    };
+    let (first, second) = (temp.path().join("a"), temp.path().join("b"));
+    let listed = run(&first);
+    run(&second);
+
+    assert!(!first.join("mipmap").exists());
+    let vector = fs::read_to_string(first.join("mipmap-anydpi-v24/ic_launcher.xml")).unwrap();
+    assert!(vector.contains("<gradient"));
+    assert_eq!(
+        fs::read_to_string(first.join("mipmap-anydpi-v24/ic_launcher_round.xml")).unwrap(),
+        vector
+    );
+    for (density, pixels) in vdtoolkit::LEGACY_ICON_DENSITIES {
+        for name in ["ic_launcher", "ic_launcher_round"] {
+            let relative = format!("mipmap-{density}/{name}.png");
+            assert!(listed.contains(&relative), "{listed}");
+            let png = fs::read(first.join(&relative)).unwrap();
+            let size = pixels.to_be_bytes();
+            assert_eq!(&png[16..20], &size, "{relative}");
+            assert_eq!(&png[20..24], &size, "{relative}");
+            assert_eq!(png, fs::read(second.join(&relative)).unwrap(), "{relative}");
+        }
+    }
+}
+
+#[test]
+fn writes_adaptive_icon_resources() {
+    assert_eq!(
+        vdtoolkit::adaptive_icon_xml("@color/bg", "@drawable/fg", Some("@drawable/mono")),
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n\
+         <adaptive-icon xmlns:android=\"http://schemas.android.com/apk/res/android\">\n\
+         \x20   <background android:drawable=\"@color/bg\"/>\n\
+         \x20   <foreground android:drawable=\"@drawable/fg\"/>\n\
+         \x20   <monochrome android:drawable=\"@drawable/mono\"/>\n\
+         </adaptive-icon>\n"
+    );
+    assert!(
+        !vdtoolkit::adaptive_icon_xml("@color/bg", "@drawable/fg", None).contains("monochrome")
+    );
+    assert_eq!(
+        vdtoolkit::color_resource_xml("ic_launcher_background", "#3DDC84"),
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<resources>\n\
+         \x20   <color name=\"ic_launcher_background\">#3DDC84</color>\n</resources>\n"
+    );
+}
+
+#[test]
 fn fit_within_scales_size_but_keeps_the_viewport() {
     let mut asset = vdtoolkit::convert(LARGE).unwrap();
     assert!(!asset.fit_within(500.0));
@@ -1097,4 +1607,168 @@ fn convert_prints_large_dimension_warnings_to_stderr() {
     assert!(stderr.contains("SVGVD016"));
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("android:width=\"480dp\""));
+}
+
+#[test]
+fn cli_adaptive_writes_layers_icon_and_color_resource() {
+    let temp = tempfile::tempdir().unwrap();
+    let foreground = temp.path().join("fg.svg");
+    let background = temp.path().join("bg.svg");
+    fs::write(
+        &foreground,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M12 2L2 22h20z" fill="#3DDC84"/></svg>"##,
+    )
+    .unwrap();
+    fs::write(
+        &background,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108"><rect width="108" height="108" fill="#FFFFFF"/></svg>"##,
+    )
+    .unwrap();
+    let res = temp.path().join("res");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_vdt"))
+        .args(["adaptive", "--foreground"])
+        .arg(&foreground)
+        .arg("--background")
+        .arg(&background)
+        .arg("--monochrome")
+        .arg(&foreground)
+        .args(["--fit", "66", "-o"])
+        .arg(&res)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(stdout.lines().count(), 5);
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.is_empty(),
+        "fit 66 keeps the logo in the safe zone: {stderr}"
+    );
+
+    let foreground_xml =
+        fs::read_to_string(res.join("drawable/ic_launcher_foreground.xml")).unwrap();
+    assert!(foreground_xml.contains("android:width=\"108dp\""));
+    assert!(foreground_xml.contains("android:pathData=\"M54,26.5 L26.5,81.5 L81.5,81.5 Z\""));
+    let background_xml =
+        fs::read_to_string(res.join("drawable/ic_launcher_background.xml")).unwrap();
+    assert!(background_xml.contains("android:pathData=\"M0,0 L108,0 L108,108 L0,108 Z\""));
+    assert_eq!(
+        fs::read_to_string(res.join("drawable/ic_launcher_monochrome.xml")).unwrap(),
+        foreground_xml
+    );
+    let icon = fs::read_to_string(res.join("mipmap-anydpi-v26/ic_launcher.xml")).unwrap();
+    assert!(icon.contains("<background android:drawable=\"@drawable/ic_launcher_background\"/>"));
+    assert!(icon.contains("<foreground android:drawable=\"@drawable/ic_launcher_foreground\"/>"));
+    assert!(icon.contains("<monochrome android:drawable=\"@drawable/ic_launcher_monochrome\"/>"));
+    assert_eq!(
+        fs::read_to_string(res.join("mipmap-anydpi-v26/ic_launcher_round.xml")).unwrap(),
+        icon
+    );
+
+    // A solid background becomes a color resource, and --name renames everything.
+    let output = Command::new(env!("CARGO_BIN_EXE_vdt"))
+        .args(["adaptive", "--foreground"])
+        .arg(&foreground)
+        .args(["--background-color", "3ddc84", "--name", "ic_app", "-o"])
+        .arg(&res)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        fs::read_to_string(res.join("values/ic_app_background.xml")).unwrap(),
+        vdtoolkit::color_resource_xml("ic_app_background", "#3DDC84")
+    );
+    let icon = fs::read_to_string(res.join("mipmap-anydpi-v26/ic_app.xml")).unwrap();
+    assert!(icon.contains("<background android:drawable=\"@color/ic_app_background\"/>"));
+    assert!(icon.contains("<foreground android:drawable=\"@drawable/ic_app_foreground\"/>"));
+    assert!(!icon.contains("monochrome"));
+    assert!(res.join("drawable/ic_app_foreground.xml").is_file());
+    assert!(!res.join("drawable/ic_app_background.xml").exists());
+    assert!(!res.join("mipmap").exists());
+
+    // The default fit leaves a plain logo outside the safe zone; --legacy
+    // adds the masked fallback icon.
+    let output = Command::new(env!("CARGO_BIN_EXE_vdt"))
+        .args(["adaptive", "--foreground"])
+        .arg(&foreground)
+        .args([
+            "--background-color",
+            "#3DDC84",
+            "--name",
+            "ic_old",
+            "--legacy",
+            "-o",
+        ])
+        .arg(&res)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("warning:"), "{stderr}");
+    assert!(stderr.contains("outside the 66dp safe zone"), "{stderr}");
+    let legacy = fs::read_to_string(res.join("mipmap/ic_old.xml")).unwrap();
+    assert!(legacy.contains("android:width=\"48dp\""));
+    assert!(legacy.contains("<clip-path"));
+    assert!(legacy.contains("android:fillColor=\"#3DDC84\""));
+    assert_eq!(
+        fs::read_to_string(res.join("mipmap/ic_old_round.xml")).unwrap(),
+        legacy
+    );
+}
+
+#[test]
+fn cli_adaptive_rejects_bad_input_without_writing() {
+    let temp = tempfile::tempdir().unwrap();
+    let foreground = temp.path().join("fg.svg");
+    let text = temp.path().join("text.svg");
+    fs::write(
+        &foreground,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M12 2L2 22h20z"/></svg>"##,
+    )
+    .unwrap();
+    fs::write(
+        &text,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><text>x</text></svg>"##,
+    )
+    .unwrap();
+    let res = temp.path().join("res");
+    let run = |extra: &[&str], layer: &std::path::Path| {
+        Command::new(env!("CARGO_BIN_EXE_vdt"))
+            .args(["adaptive", "--foreground"])
+            .arg(layer)
+            .args(extra)
+            .arg("-o")
+            .arg(&res)
+            .output()
+            .unwrap()
+    };
+
+    let cases: [(&[&str], &std::path::Path, &str); 6] = [
+        (&[], &foreground, "--background"),
+        (&["--background-color", "#fff"], &foreground, "#RRGGBB"),
+        (
+            &["--background-color", "#ffffff", "--name", "Icon"],
+            &foreground,
+            "resource name",
+        ),
+        (
+            &["--background-color", "#ffffff", "--fit", "0"],
+            &foreground,
+            "--fit",
+        ),
+        (&["--background-color", "#ffffff"], &text, "SVGVD006"),
+        (
+            &["--background", text.to_str().unwrap()],
+            &foreground,
+            "not exactly representable",
+        ),
+    ];
+    for (extra, layer, message) in cases {
+        let output = run(extra, layer);
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(!output.status.success(), "{extra:?}");
+        assert!(stderr.contains(message), "{extra:?}: {stderr}");
+    }
+    assert!(!res.exists());
 }

@@ -2,9 +2,9 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
-use vdtoolkit::{Analysis, Compatibility, Error, Result, Severity};
+use vdtoolkit::{Analysis, Asset, Compatibility, Error, Result, Severity};
 use walkdir::WalkDir;
 
 #[derive(Parser)]
@@ -24,6 +24,8 @@ enum Command {
     Inspect(ReportArgs),
     /// Convert and reduce safe numeric precision for Android.
     Optimize(ConvertArgs),
+    /// Generate an adaptive launcher icon and its layer drawables.
+    Adaptive(AdaptiveArgs),
 }
 
 #[derive(Args)]
@@ -33,6 +35,48 @@ struct ConvertArgs {
     /// Output XML file or directory. Required for directory input.
     #[arg(short, long)]
     output: Option<PathBuf>,
+    /// Reject SVGs that require safe normalization.
+    #[arg(long)]
+    strict: bool,
+}
+
+#[derive(Args)]
+#[command(group(
+    ArgGroup::new("background_layer")
+        .required(true)
+        .args(["background", "background_color"])
+))]
+struct AdaptiveArgs {
+    /// Foreground layer SVG.
+    #[arg(long)]
+    foreground: PathBuf,
+    /// Background layer SVG, scaled to fill the whole 108dp layer.
+    #[arg(long)]
+    background: Option<PathBuf>,
+    /// Solid background color as #RRGGBB or #AARRGGBB, written as a color
+    /// resource instead of a drawable.
+    #[arg(long, value_name = "COLOR")]
+    background_color: Option<String>,
+    /// Monochrome layer SVG for themed icons on Android 13 and newer.
+    #[arg(long)]
+    monochrome: Option<PathBuf>,
+    /// Resource name of the icon and prefix of its layers.
+    #[arg(long, default_value = "ic_launcher")]
+    name: String,
+    /// Size in dp of the centered square that the foreground and monochrome
+    /// artwork is scaled to fit. 108 fills the layer. Android recommends 48 to
+    /// 66 for a logo; 66 is the safe zone that no launcher mask hides.
+    #[arg(long, default_value_t = vdtoolkit::ADAPTIVE_ICON_SIZE)]
+    fit: f32,
+    /// Also write a legacy icon for devices below API 26: the background and
+    /// foreground under a circular mask. It is a vector in `mipmap/`, or, when
+    /// the art needs API 24, a vector in `mipmap-anydpi-v24/` plus PNGs in
+    /// `mipmap-mdpi/` through `mipmap-xxxhdpi/`.
+    #[arg(long)]
+    legacy: bool,
+    /// Android `res/` directory to write into.
+    #[arg(short, long, value_name = "RES_DIR")]
+    output: PathBuf,
     /// Reject SVGs that require safe normalization.
     #[arg(long)]
     strict: bool,
@@ -104,8 +148,10 @@ fn normalized_args() -> Vec<OsString> {
         .get(1)
         .and_then(|value| value.to_str())
         .is_some_and(|first| {
-            !matches!(first, "convert" | "check" | "inspect" | "optimize")
-                && !first.starts_with('-')
+            !matches!(
+                first,
+                "convert" | "check" | "inspect" | "optimize" | "adaptive"
+            ) && !first.starts_with('-')
         })
     {
         args.insert(1, OsString::from("convert"));
@@ -119,7 +165,302 @@ fn run(cli: Cli) -> Result<Outcome> {
         Command::Optimize(args) => convert(args, true),
         Command::Check(args) => report(args, false),
         Command::Inspect(args) => report(args, true),
+        Command::Adaptive(args) => adaptive(args),
     }
+}
+
+fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
+    validate_resource_name(&args.name)?;
+    if !(args.fit > 0.0 && args.fit <= vdtoolkit::ADAPTIVE_ICON_SIZE) {
+        return Err(Error::InvalidInput(format!(
+            "--fit must be between 0 and {} dp, got {}",
+            vdtoolkit::ADAPTIVE_ICON_SIZE,
+            args.fit
+        )));
+    }
+    let color = args
+        .background_color
+        .as_deref()
+        .map(normalize_color)
+        .transpose()?;
+    let drawable_dir = args.output.join("drawable");
+    let mipmap_dir = args.output.join("mipmap-anydpi-v26");
+
+    let foreground_name = format!("{}_foreground", args.name);
+    let background_name = format!("{}_background", args.name);
+    let monochrome_name = format!("{}_monochrome", args.name);
+
+    // Every layer is converted before anything is written, so a failing
+    // layer leaves the resource directory untouched.
+    let Some(foreground) =
+        adaptive_layer(&args.foreground, args.fit, args.strict, LayerRole::Artwork)
+    else {
+        return Ok(Outcome::Failed);
+    };
+    let mut files = vec![(
+        drawable_dir.join(&foreground_name).with_extension("xml"),
+        foreground.to_xml(),
+    )];
+    let (background, background_reference) = match (&args.background, color) {
+        (Some(path), _) => {
+            let Some(layer) = adaptive_layer(
+                path,
+                vdtoolkit::ADAPTIVE_ICON_SIZE,
+                args.strict,
+                LayerRole::Background,
+            ) else {
+                return Ok(Outcome::Failed);
+            };
+            files.push((
+                drawable_dir.join(&background_name).with_extension("xml"),
+                layer.to_xml(),
+            ));
+            (layer, format!("@drawable/{background_name}"))
+        }
+        (None, Some(color)) => {
+            files.push((
+                args.output
+                    .join("values")
+                    .join(&background_name)
+                    .with_extension("xml"),
+                vdtoolkit::color_resource_xml(&background_name, &color),
+            ));
+            (
+                vdtoolkit::Asset::solid_adaptive_layer(&color)?,
+                format!("@color/{background_name}"),
+            )
+        }
+        (None, None) => unreachable!("clap requires a background layer"),
+    };
+    let monochrome_reference = match &args.monochrome {
+        Some(monochrome) => {
+            let Some(layer) = adaptive_layer(monochrome, args.fit, args.strict, LayerRole::Artwork)
+            else {
+                return Ok(Outcome::Failed);
+            };
+            files.push((
+                drawable_dir.join(&monochrome_name).with_extension("xml"),
+                layer.to_xml(),
+            ));
+            Some(format!("@drawable/{monochrome_name}"))
+        }
+        None => None,
+    };
+    let icon = vdtoolkit::adaptive_icon_xml(
+        &background_reference,
+        &format!("@drawable/{foreground_name}"),
+        monochrome_reference.as_deref(),
+    );
+    let round_name = format!("{}_round", args.name);
+    files.push((
+        mipmap_dir.join(&args.name).with_extension("xml"),
+        icon.clone(),
+    ));
+    files.push((mipmap_dir.join(&round_name).with_extension("xml"), icon));
+    let mut images: Vec<(PathBuf, Vec<u8>)> = Vec::new();
+    // The two legacy layouts are exclusive, and a qualified resource left
+    // behind by an earlier run would outrank the new one on API 24 and 25, so
+    // whichever layout is not written this time is removed.
+    let mut stale: Vec<PathBuf> = Vec::new();
+    if args.legacy {
+        let legacy = vdtoolkit::Asset::legacy_launcher_icon(&background, &foreground);
+        let xml = legacy.to_xml();
+        let names = [args.name.as_str(), round_name.as_str()];
+        let plain: Vec<PathBuf> = names
+            .iter()
+            .map(|name| args.output.join("mipmap").join(name).with_extension("xml"))
+            .collect();
+        let mut split: Vec<PathBuf> = names
+            .iter()
+            .map(|name| {
+                args.output
+                    .join("mipmap-anydpi-v24")
+                    .join(name)
+                    .with_extension("xml")
+            })
+            .collect();
+        for (density, _) in vdtoolkit::LEGACY_ICON_DENSITIES {
+            for name in names {
+                split.push(
+                    args.output
+                        .join(format!("mipmap-{density}"))
+                        .join(name)
+                        .with_extension("png"),
+                );
+            }
+        }
+        if legacy.analysis.minimum_api == Some(21) {
+            for path in plain {
+                files.push((path, xml.clone()));
+            }
+            stale = split;
+        } else {
+            // Gradients, even-odd fills, or a second clip need API 24. The exact
+            // vector serves API 24 and 25 from an anydpi folder, which outranks
+            // density folders, and PNGs rendered from it serve API 21 to 23.
+            for path in &split[..2] {
+                files.push((path.clone(), xml.clone()));
+            }
+            for ((density, pixels), pair) in vdtoolkit::LEGACY_ICON_DENSITIES
+                .iter()
+                .zip(split[2..].chunks(2))
+            {
+                debug_assert!(pair[0].to_string_lossy().contains(density));
+                let png = legacy.to_png(*pixels, *pixels)?;
+                images.push((pair[0].clone(), png.clone()));
+                images.push((pair[1].clone(), png));
+            }
+            stale = plain;
+        }
+    }
+
+    for (path, contents) in &files {
+        write_file(path, contents)?;
+        println!("{}", path.display());
+    }
+    for (path, contents) in &images {
+        write_file(path, contents)?;
+        println!("{}", path.display());
+    }
+    for path in stale.iter().filter(|path| path.is_file()) {
+        std::fs::remove_file(path).map_err(|source| Error::Write {
+            path: path.clone(),
+            source,
+        })?;
+        eprintln!("removed stale legacy icon {}", path.display());
+    }
+    Ok(Outcome::Passed)
+}
+
+/// What a layer is for, which decides the placement warning it gets.
+#[derive(Clone, Copy)]
+enum LayerRole {
+    /// Foreground or monochrome artwork, which should stay in the safe zone.
+    Artwork,
+    /// A background, which should fill the whole layer.
+    Background,
+}
+
+/// Convert and fit one layer, or report the failure with its path and return
+/// `None`. Warns when artwork leaves the safe zone or a background does not
+/// fill the layer.
+fn adaptive_layer(input: &Path, fit: f32, strict: bool, role: LayerRole) -> Option<Asset> {
+    let layer = || -> Result<Asset> {
+        let mut asset = vdtoolkit::convert_file(input)?;
+        if strict && asset.analysis.compatibility != Compatibility::Exact {
+            return Err(Error::InvalidInput(
+                "requires normalization and was rejected by --strict".to_owned(),
+            ));
+        }
+        asset.fit_adaptive_layer(fit)?;
+        Ok(asset)
+    };
+    match layer() {
+        Ok(asset) => {
+            match role {
+                LayerRole::Artwork => {
+                    if let Some(bounds) = asset.outside_adaptive_safe_zone() {
+                        eprintln!(
+                            "warning: {}: content spans {}, outside the {}dp safe zone; \
+                             launcher masks may hide it (see --fit)",
+                            input.display(),
+                            span(bounds),
+                            vdtoolkit::ADAPTIVE_ICON_SAFE_ZONE
+                        );
+                    }
+                }
+                LayerRole::Background if !asset.fills_adaptive_layer() => {
+                    let detail = match short_of_layer(&asset) {
+                        Some(bounds) => {
+                            format!("content spans {} and does not fill", span(bounds))
+                        }
+                        None if asset.analysis.metrics.content_bounds.is_none() => {
+                            "has no painted content, so it does not fill".to_owned()
+                        }
+                        None => "leaves unpainted pixels, from clipping, holes, or \
+                                 transparent paint, in"
+                            .to_owned(),
+                    };
+                    eprintln!(
+                        "warning: {}: background {detail} the {}dp layer; \
+                         uncovered areas show through launcher masks and parallax",
+                        input.display(),
+                        vdtoolkit::ADAPTIVE_ICON_SIZE
+                    );
+                }
+                LayerRole::Background => {}
+            }
+            Some(asset)
+        }
+        Err(error) => {
+            print_error(Some(input), &error);
+            None
+        }
+    }
+}
+
+/// Content bounds when they stop short of some edge of the 108dp layer.
+fn short_of_layer(asset: &Asset) -> Option<vdtoolkit::Bounds> {
+    let far = vdtoolkit::ADAPTIVE_ICON_SIZE - 1e-3;
+    asset.analysis.metrics.content_bounds.filter(|bounds| {
+        bounds.left > 1e-3 || bounds.top > 1e-3 || bounds.right < far || bounds.bottom < far
+    })
+}
+
+/// Bounds as `left..right × top..bottom` in dp.
+fn span(bounds: vdtoolkit::Bounds) -> String {
+    format!(
+        "{}..{} × {}..{}dp",
+        vdtoolkit_number(bounds.left),
+        vdtoolkit_number(bounds.right),
+        vdtoolkit_number(bounds.top),
+        vdtoolkit_number(bounds.bottom)
+    )
+}
+
+/// Short decimal for dp values in warnings.
+fn vdtoolkit_number(value: f32) -> String {
+    let text = format!("{value:.1}");
+    text.strip_suffix(".0").map(str::to_owned).unwrap_or(text)
+}
+
+fn validate_resource_name(name: &str) -> Result<()> {
+    let mut chars = name.chars();
+    let valid = chars
+        .next()
+        .is_some_and(|first| first.is_ascii_lowercase() || first == '_')
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
+    if valid {
+        Ok(())
+    } else {
+        Err(Error::InvalidInput(format!(
+            "resource name must match [a-z_][a-z0-9_]*, got {name:?}"
+        )))
+    }
+}
+
+fn normalize_color(color: &str) -> Result<String> {
+    let digits = color.strip_prefix('#').unwrap_or(color);
+    if matches!(digits.len(), 6 | 8) && digits.chars().all(|c| c.is_ascii_hexdigit()) {
+        Ok(format!("#{}", digits.to_ascii_uppercase()))
+    } else {
+        Err(Error::InvalidInput(format!(
+            "background color must be #RRGGBB or #AARRGGBB, got {color:?}"
+        )))
+    }
+}
+
+fn write_file(path: &Path, contents: impl AsRef<[u8]>) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|source| Error::Write {
+            path: parent.to_owned(),
+            source,
+        })?;
+    }
+    std::fs::write(path, contents).map_err(|source| Error::Write {
+        path: path.to_owned(),
+        source,
+    })
 }
 
 fn convert(args: ConvertArgs, optimize: bool) -> Result<Outcome> {
@@ -185,16 +526,7 @@ fn convert_one(args: &ConvertArgs, input: &Path, optimize: bool) -> Result<()> {
     }
     let output = output_path(&args.input, input, args.output.as_deref());
     if let Some(output) = output {
-        if let Some(parent) = output.parent() {
-            std::fs::create_dir_all(parent).map_err(|source| Error::Write {
-                path: parent.to_owned(),
-                source,
-            })?;
-        }
-        std::fs::write(&output, xml).map_err(|source| Error::Write {
-            path: output,
-            source,
-        })?;
+        write_file(&output, &xml)?;
     } else {
         print!("{xml}");
     }

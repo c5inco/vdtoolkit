@@ -8,3 +8,4 @@
 /figma-plugin/dist
 /figma-plugin/node_modules
 /figma-plugin/vendor
+__pycache__/

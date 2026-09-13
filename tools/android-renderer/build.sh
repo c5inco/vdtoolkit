@@ -10,20 +10,31 @@ if [[ -f "$HOME/.cargo/env" ]]; then
   # shellcheck disable=SC1091
   source "$HOME/.cargo/env"
 fi
+if ! command -v cargo >/dev/null && command -v rustup >/dev/null; then
+  PATH="$(dirname "$(rustup which cargo)"):$PATH"
+fi
 
+# Newest directory whose name matches a glob, ignoring aliases such as `latest`.
 latest_dir() {
-  for dir in "$1"/*/; do
+  for dir in "$1"/$2/; do
     basename "$dir"
   done | sort -V | tail -1
 }
 
-PLATFORM_VERSION="${PLATFORM_VERSION:-$(latest_dir "$SDK/platforms")}"
-BUILD_TOOLS_VERSION="${BUILD_TOOLS_VERSION:-$(latest_dir "$SDK/build-tools")}"
+PLATFORM_VERSION="${PLATFORM_VERSION:-$(latest_dir "$SDK/platforms" 'android-*')}"
+BUILD_TOOLS_VERSION="${BUILD_TOOLS_VERSION:-$(latest_dir "$SDK/build-tools" '[0-9]*')}"
+
+# Material Symbols used as adaptive icon layers, fetched from the pinned
+# conformance corpus commit; see fixtures/adaptive/SOURCES.md.
+MATERIAL_COMMIT=0cbb08816df07faaae3dca060d4ebb10b66c214f
+MATERIAL_RAW="https://raw.githubusercontent.com/google/material-design-icons/$MATERIAL_COMMIT"
+ADAPTIVE_FOREGROUND=symbols/web/stars/materialsymbolsoutlined/stars_24px.svg
+ADAPTIVE_MONOCHROME=symbols/web/rocket_launch/materialsymbolsoutlined/rocket_launch_24px.svg
 ANDROID_JAR="$SDK/platforms/$PLATFORM_VERSION/android.jar"
 ANDROID_TEST_BASE="$SDK/platforms/$PLATFORM_VERSION/optional/android.test.base.jar"
 BUILD_TOOLS="$SDK/build-tools/$BUILD_TOOLS_VERSION"
 
-for tool in cargo javac keytool zip; do
+for tool in cargo javac keytool zip curl; do
   command -v "$tool" >/dev/null || { echo "missing required tool: $tool" >&2; exit 1; }
 done
 for file in "$ANDROID_JAR" "$ANDROID_TEST_BASE" "$BUILD_TOOLS/aapt2" "$BUILD_TOOLS/d8" "$BUILD_TOOLS/apksigner"; do
@@ -49,26 +60,47 @@ for fixture in "$HARNESS"/fixtures/*.svg; do
     --output "$BUILD/generated/res/$qualifier/$name.xml"
 done
 
+# Adaptive launcher icon: Material Symbols layers fitted to the 66dp safe zone
+# over a drawable background, plus a variant with a solid color background.
+mkdir -p "$BUILD/adaptive-src"
+for layer in "$ADAPTIVE_FOREGROUND" "$ADAPTIVE_MONOCHROME"; do
+  curl -sSfL "$MATERIAL_RAW/$layer" -o "$BUILD/adaptive-src/$(basename "$layer")"
+done
+"$ROOT/target/debug/vdt" adaptive \
+  --foreground "$BUILD/adaptive-src/$(basename "$ADAPTIVE_FOREGROUND")" \
+  --background "$HARNESS/fixtures/adaptive/background.svg" \
+  --monochrome "$BUILD/adaptive-src/$(basename "$ADAPTIVE_MONOCHROME")" \
+  --fit 66 --name ic_launcher --legacy --output "$BUILD/generated/res"
+"$ROOT/target/debug/vdt" adaptive \
+  --foreground "$BUILD/adaptive-src/$(basename "$ADAPTIVE_FOREGROUND")" \
+  --background-color '#073042' \
+  --fit 66 --name ic_launcher_solid --output "$BUILD/generated/res"
+# A mirrored gradient background needs API 24, so --legacy writes an
+# anydpi-v24 vector plus PNGs for API 21 to 23.
+"$ROOT/target/debug/vdt" adaptive \
+  --foreground "$BUILD/adaptive-src/$(basename "$ADAPTIVE_FOREGROUND")" \
+  --background "$HARNESS/fixtures/adaptive/gradient_background.svg" \
+  --fit 66 --name ic_launcher_gradient --legacy --output "$BUILD/generated/res"
+
 while IFS= read -r -d '' resource; do
   "$BUILD_TOOLS/aapt2" compile "$resource" -o "$BUILD/compiled"
-done < <(find "$BUILD/generated/res" -type f -name '*.xml' -print0)
+done < <(find "$BUILD/generated/res" -type f \( -name '*.xml' -o -name '*.png' \) -print0)
 
 AAPT_RESOURCES=()
 while IFS= read -r -d '' flat; do
-  AAPT_RESOURCES+=(-R "$flat")
+  AAPT_RESOURCES+=("$flat")
 done < <(find "$BUILD/compiled" -type f -name '*.flat' -print0)
 "$BUILD_TOOLS/aapt2" link -o "$BUILD/app-unsigned.apk" \
   --manifest "$HARNESS/app/AndroidManifest.xml" -I "$ANDROID_JAR" \
   --min-sdk-version 21 --target-sdk-version 35 "${AAPT_RESOURCES[@]}"
 javac -source 8 -target 8 -Xlint:-options -classpath "$ANDROID_JAR" \
-  -d "$BUILD/app-classes" "$HARNESS/app/src/com/vdtoolkit/renderer/Marker.java"
+  -d "$BUILD/app-classes" $(find "$HARNESS/app/src" -type f -name '*.java' -print)
 "$BUILD_TOOLS/d8" --lib "$ANDROID_JAR" --min-api 21 --output "$BUILD/app-dex" \
   $(find "$BUILD/app-classes" -type f -name '*.class' -print)
 zip -q -j "$BUILD/app-unsigned.apk" "$BUILD/app-dex/classes.dex"
 
 javac -source 8 -target 8 -Xlint:-options -classpath "$ANDROID_JAR:$ANDROID_TEST_BASE" \
-  -d "$BUILD/test-classes" \
-  "$HARNESS/test/src/com/vdtoolkit/renderer/test/RendererConformanceTest.java"
+  -d "$BUILD/test-classes" $(find "$HARNESS/test/src" -type f -name '*.java' -print)
 "$BUILD_TOOLS/d8" --lib "$ANDROID_JAR" --lib "$ANDROID_TEST_BASE" \
   --min-api 21 --output "$BUILD/test-dex" \
   $(find "$BUILD/test-classes" -type f -name '*.class' -print)

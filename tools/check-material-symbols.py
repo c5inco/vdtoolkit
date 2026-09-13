@@ -19,6 +19,12 @@ CARGO = shutil.which("cargo") or str(pathlib.Path.home() / ".cargo/bin/cargo")
 ANDROID = "{http://schemas.android.com/apk/res/android}"
 TOKEN = re.compile(r"[AaCcHhLlMmQqSsTtVvZz]|[-+]?(?:\d*\.\d+|\d+\.?)(?:[eE][-+]?\d+)?")
 ARITY = {"M": 2, "L": 2, "H": 1, "V": 1, "Q": 4, "T": 2, "C": 6, "S": 4, "A": 7}
+# Adaptive icon layer geometry, as in Android Studio's Image Asset wizard with
+# a Material Symbol as the foreground: a 108dp layer with the symbol scaled to
+# the 66dp safe zone.
+ADAPTIVE_SIZE = 108.0
+ADAPTIVE_FIT = 66.0
+ADAPTIVE_BACKGROUND = "#3DDC84"
 
 
 def android_path(svg_path: str) -> str:
@@ -31,7 +37,9 @@ def download(item: tuple[str, pathlib.Path]) -> None:
         destination.write_bytes(response.read())
 
 
-def canonical_path(data: str) -> list[tuple[str, tuple[float, ...]]]:
+def canonical_path(
+    data: str, simplify: bool = True
+) -> list[tuple[str, tuple[float, ...]]]:
     """Expand relative and shorthand path commands without using vdtoolkit code."""
     tokens = TOKEN.findall(data.replace(",", " "))
     output: list[tuple[str, tuple[float, ...]]] = []
@@ -120,7 +128,7 @@ def canonical_path(data: str) -> list[tuple[str, tuple[float, ...]]]:
         if upper not in ("C", "S"):
             cubic_control = None
         previous = upper
-    return simplify_path(output)
+    return simplify_path(output) if simplify else output
 
 
 def simplify_path(
@@ -253,6 +261,134 @@ def assert_same_geometry(
                 f"{generated.name}: path {path_index} differs by "
                 f"{difference:.8f} normalized filled area"
             )
+
+
+def transform_path(
+    commands: list[tuple[str, tuple[float, ...]]], scale: float, dx: float, dy: float
+) -> list[tuple[str, tuple[float, ...]]]:
+    """Apply a uniform scale and translation to absolute path coordinates."""
+    result = []
+    for command, values in commands:
+        if command == "A":
+            radii = (values[0] * scale, values[1] * scale)
+            values = radii + values[2:5] + (values[5] * scale + dx, values[6] * scale + dy)
+        else:
+            values = tuple(
+                value * scale + (dx if index % 2 == 0 else dy)
+                for index, value in enumerate(values)
+            )
+        result.append((command, values))
+    return result
+
+
+def assert_adaptive_layer(
+    layer: pathlib.Path, plain: pathlib.Path
+) -> None:
+    """The foreground layer must be the plain drawable fitted to the safe zone."""
+    root = ET.parse(layer).getroot()
+    for attribute, expected in (
+        ("width", "108dp"),
+        ("height", "108dp"),
+        ("viewportWidth", "108"),
+        ("viewportHeight", "108"),
+    ):
+        actual = root.attrib.get(ANDROID + attribute)
+        if actual != expected:
+            raise AssertionError(f"{layer.name}: {attribute} {actual!r} != {expected!r}")
+    plain_root = ET.parse(plain).getroot()
+    width, height, _ = vector_geometry(plain)
+    scale = ADAPTIVE_FIT / max(width, height)
+    dx = (ADAPTIVE_SIZE - width * scale) / 2
+    dy = (ADAPTIVE_SIZE - height * scale) / 2
+    layer_paths = [node for node in root.iter("path")]
+    plain_paths = [node for node in plain_root.iter("path")]
+    if len(layer_paths) != len(plain_paths):
+        raise AssertionError(
+            f"{layer.name}: path count {len(layer_paths)} != {len(plain_paths)}"
+        )
+    for index, (actual, expected) in enumerate(zip(layer_paths, plain_paths)):
+        # Only geometry and stroke width may change; every other attribute,
+        # and therefore the minimum API, must be untouched.
+        scaled = {ANDROID + "pathData", ANDROID + "strokeWidth"}
+        actual_style = {k: v for k, v in actual.attrib.items() if k not in scaled}
+        expected_style = {k: v for k, v in expected.attrib.items() if k not in scaled}
+        if actual_style != expected_style:
+            raise AssertionError(f"{layer.name}: path {index} attributes changed")
+        # Compare raw commands: the simplifier's absolute tolerance would
+        # treat the two scales differently.
+        fitted = transform_path(
+            canonical_path(expected.attrib[ANDROID + "pathData"], simplify=False),
+            scale,
+            dx,
+            dy,
+        )
+        if not paths_numerically_equal(
+            canonical_path(actual.attrib[ANDROID + "pathData"], simplify=False), fitted
+        ):
+            raise AssertionError(f"{layer.name}: path {index} is not the fitted geometry")
+        if ANDROID + "strokeWidth" in expected.attrib and not math.isclose(
+            float(actual.attrib[ANDROID + "strokeWidth"]),
+            float(expected.attrib[ANDROID + "strokeWidth"]) * scale,
+            rel_tol=1e-6,
+            abs_tol=1e-5,
+        ):
+            raise AssertionError(f"{layer.name}: path {index} stroke width is not scaled")
+
+
+def check_adaptive_icons(
+    binary: pathlib.Path, sources: pathlib.Path, generated: pathlib.Path, temporary: pathlib.Path
+) -> int:
+    """Generate an adaptive icon from every symbol; check layers and determinism."""
+    first = temporary / "adaptive"
+    second = temporary / "adaptive-again"
+    count = 0
+    for svg in sorted(sources.glob("*.svg")):
+        name = "ic_" + re.sub(r"[^a-z0-9_]", "_", svg.stem.lower())
+        for output in (first, second):
+            subprocess.run(
+                [
+                    binary,
+                    "adaptive",
+                    "--foreground",
+                    svg,
+                    "--background-color",
+                    ADAPTIVE_BACKGROUND,
+                    "--fit",
+                    str(ADAPTIVE_FIT),
+                    "--name",
+                    name,
+                    "--output",
+                    output,
+                ],
+                check=True,
+                stdout=subprocess.DEVNULL,
+            )
+        written = [
+            f"drawable/{name}_foreground.xml",
+            f"values/{name}_background.xml",
+            f"mipmap-anydpi-v26/{name}.xml",
+            f"mipmap-anydpi-v26/{name}_round.xml",
+        ]
+        for relative in written:
+            if (first / relative).read_bytes() != (second / relative).read_bytes():
+                raise AssertionError(f"{relative}: adaptive output is not deterministic")
+        icon = ET.parse(first / written[2]).getroot()
+        references = {
+            child.tag: child.attrib.get(ANDROID + "drawable") for child in icon
+        }
+        if icon.tag != "adaptive-icon" or references != {
+            "background": f"@color/{name}_background",
+            "foreground": f"@drawable/{name}_foreground",
+        }:
+            raise AssertionError(f"{name}: unexpected adaptive-icon resource {references}")
+        color = ET.parse(first / written[1]).getroot().find("color")
+        if color is None or color.attrib.get("name") != f"{name}_background" or (
+            color.text != ADAPTIVE_BACKGROUND
+        ):
+            raise AssertionError(f"{name}: unexpected color resource")
+        assert_adaptive_layer(first / written[0], generated / f"{svg.stem}.xml")
+        count += 1
+    return count
 
 
 def paths_numerically_equal(
@@ -528,6 +664,10 @@ def verify_oracle() -> None:
     semicircle = arc_points((0.0, 0.0), (2.0, 0.0), 1.0, 1.0, 0.0, False, True)
     assert semicircle[-1] == (2.0, 0.0)
     assert max(abs(y) for _, y in semicircle) > 0.99
+    assert transform_path([("M", (2.0, 4.0)), ("A", (1.0, 2.0, 0.0, 0.0, 1.0, 3.0, 5.0))], 2.0, 1.0, 3.0) == [
+        ("M", (5.0, 11.0)),
+        ("A", (2.0, 4.0, 0.0, 0.0, 1.0, 7.0, 13.0)),
+    ]
 
 
 def manifest_lines(path: pathlib.Path) -> list[str]:
@@ -674,6 +814,7 @@ def main() -> None:
             assert_same_geometry(
                 first, official / first.name, compare_alpha=suite == "twotone-100"
             )
+        adaptive_count = check_adaptive_icons(binary, sources, generated, temporary)
 
     label = {
         "outlined-100": "sampled outlined Material Symbols",
@@ -683,6 +824,10 @@ def main() -> None:
     semantics = "geometry and fill alpha" if suite == "twotone-100" else "geometry"
     print(f"{count} / {count} {label} match official Android {semantics}")
     print(f"{count} / {count} {label} produce byte-identical repeated output")
+    print(
+        f"{adaptive_count} / {count} {label} generate deterministic adaptive icons "
+        f"whose foreground is the drawable fitted to the {ADAPTIVE_FIT:g}dp safe zone"
+    )
 
 
 if __name__ == "__main__":

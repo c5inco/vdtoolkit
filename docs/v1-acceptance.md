@@ -61,7 +61,12 @@ python3 tools/check-runeicons.py                              # Rune Icons stres
 ```
 
 The Material corpora download Apache-2.0 assets from the pinned Google commit
-and compare geometry against the official Android drawables. Nothing is
+and compare geometry against the official Android drawables. Each suite also
+runs `vdt adaptive` on every icon the way Android Studio's Image Asset wizard
+uses a Material Symbol as a launcher foreground, and checks that the output is
+deterministic, that the color and `adaptive-icon` resources are well formed,
+and that the foreground layer is exactly the plain drawable scaled into the
+66dp safe zone with every other attribute unchanged. Nothing is
 vendored. The Studio Icons suite is observational only: it checks a
 content-hashed public snapshot for compatibility and deterministic output but is
 not a release gate, because the site publishes no immutable archive, asset

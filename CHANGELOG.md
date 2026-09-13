@@ -19,6 +19,10 @@ follow [Semantic Versioning](https://semver.org/).
   resources. `--fit` scales artwork uniformly into a centered square such as
   the 66dp safe zone. The Rust API gains `Asset::fit_adaptive_layer`,
   `adaptive_icon_xml`, and `color_resource_xml`.
+- The Material corpus suites in `tools/check-material-symbols.py` also
+  generate an adaptive icon from every icon and verify determinism, the
+  generated resources, and that the foreground layer is the plain drawable
+  fitted to the safe zone.
 - Linear gradients and circular radial gradients on fills and strokes, written
   as inline `aapt` gradients. Stop opacity and all spread methods are kept, and
   gradients report API 24 as the minimum. Radial gradients with a focal point,

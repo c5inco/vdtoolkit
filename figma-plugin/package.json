@@ -1,10 +1,10 @@
 {
-  "name": "svg2vd-figma-codegen",
+  "name": "vdtoolkit-figma-codegen",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "build:wasm": "wasm-pack build ../bindings/wasm --target web --release --out-dir ../../figma-plugin/vendor/svg2vd-wasm",
+    "build:wasm": "wasm-pack build ../bindings/wasm --target web --release --out-dir ../../figma-plugin/vendor/vdtoolkit-wasm",
     "build": "npm run build:wasm && node build.mjs",
     "build:plugin": "node build.mjs",
     "typecheck": "tsc --noEmit",

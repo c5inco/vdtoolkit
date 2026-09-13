@@ -1,5 +1,5 @@
 {
-  "name": "svg2vd Dev Mode Codegen",
+  "name": "vdtoolkit Dev Mode Codegen",
   "id": "REPLACE_WITH_YOUR_FIGMA_PLUGIN_ID",
   "api": "1.0.0",
   "main": "dist/code.js",

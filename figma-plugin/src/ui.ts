@@ -1,6 +1,6 @@
-import init, { convertSvg } from "../vendor/svg2vd-wasm/svg2vd_wasm.js";
-import wasmBytes from "../vendor/svg2vd-wasm/svg2vd_wasm_bg.wasm";
-import type { ConvertResult } from "../vendor/svg2vd-wasm/svg2vd_wasm";
+import init, { convertSvg } from "../vendor/vdtoolkit-wasm/vdtoolkit_wasm.js";
+import wasmBytes from "../vendor/vdtoolkit-wasm/vdtoolkit_wasm_bg.wasm";
+import type { ConvertResult } from "../vendor/vdtoolkit-wasm/vdtoolkit_wasm";
 import type { ConvertRequest, ConvertResponse } from "./messages";
 
 declare const parent: Window;

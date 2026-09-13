@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import init, { analyzeSvg, convertSvg } from "../pkg/svg2vd_wasm.js";
+import init, { analyzeSvg, convertSvg } from "../pkg/vdtoolkit_wasm.js";
 
-const wasm = await readFile(new URL("../pkg/svg2vd_wasm_bg.wasm", import.meta.url));
+const wasm = await readFile(new URL("../pkg/vdtoolkit_wasm_bg.wasm", import.meta.url));
 await init({ module_or_path: wasm });
 
 const bytes = (source) => new TextEncoder().encode(source);

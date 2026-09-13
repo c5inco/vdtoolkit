@@ -6,7 +6,7 @@ return no code. It has no visible UI and makes no network requests.
 
 Figma's plugin sandbox cannot instantiate WebAssembly. The sandbox exports the
 frame as SVG and sends its bytes, with a correlation ID, to a hidden iframe.
-The iframe initializes one locally embedded `svg2vd` WebAssembly module and
+The iframe initializes one locally embedded `vdtoolkit` WebAssembly module and
 reuses it for concurrent requests. Conversion failures are returned as
 diagnostic code blocks instead of plugin crashes.
 
@@ -61,8 +61,8 @@ not be committed unless the repository adopts a shared registered plugin.
 4. Select a rectangle, group, component, instance, section, or any other
    non-frame node. The plugin should contribute no code block.
 5. To exercise diagnostics, select a frame whose SVG export contains an
-   unsupported effect such as a gradient. The Code panel should show an
-   **svg2vd diagnostics** block with stable `SVGVDnnn` codes where available.
+   unsupported effect such as a blur/filter. The Code panel should show a
+   **vdtoolkit diagnostics** block with stable `SVGVDnnn` codes where available.
 
 V0 intentionally does not support multi-selection, non-frame nodes,
 preferences, Figma for VS Code, or publication. Figma controls SVG export, so

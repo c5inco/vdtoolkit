@@ -1,11 +1,11 @@
 [package]
-name = "svg2vd-wasm"
+name = "vdtoolkit-wasm"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
-description = "WebAssembly bindings for svg2vd"
+description = "WebAssembly bindings for vdtoolkit"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/c5inco/svg2vd"
+repository = "https://github.com/c5inco/vdtoolkit"
 publish = false
 
 [lib]
@@ -14,7 +14,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde-wasm-bindgen = "0.6"
-svg2vd = { path = "../.." }
+vdtoolkit = { path = "../.." }
 wasm-bindgen = "0.2"
 
 [dev-dependencies]

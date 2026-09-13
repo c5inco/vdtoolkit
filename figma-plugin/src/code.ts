@@ -1,4 +1,4 @@
-import type { Analysis, ConvertResult, Diagnostic } from "../vendor/svg2vd-wasm/svg2vd_wasm";
+import type { Analysis, ConvertResult, Diagnostic } from "../vendor/vdtoolkit-wasm/vdtoolkit_wasm";
 import type { ConvertRequest, ConvertResponse } from "./messages";
 
 declare const __html__: string;
@@ -93,7 +93,7 @@ function diagnosticResult(message: string, analysis?: Analysis): CodegenResult[]
   const details = diagnostics.length > 0 ? diagnostics.map(formatDiagnostic).join("\n") : message;
   return [
     {
-      title: "svg2vd diagnostics",
+      title: "vdtoolkit diagnostics",
       language: "PLAINTEXT",
       code: details,
     },

@@ -1,4 +1,4 @@
-//! Browser-oriented WebAssembly adapter for the `svg2vd` Rust API.
+//! Browser-oriented WebAssembly adapter for the `vdtoolkit` Rust API.
 
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
@@ -8,7 +8,7 @@ use wasm_bindgen::prelude::*;
 enum OperationResult {
     Success {
         ok: bool,
-        analysis: svg2vd::Analysis,
+        analysis: vdtoolkit::Analysis,
         #[serde(skip_serializing_if = "Option::is_none")]
         xml: Option<String>,
     },
@@ -23,7 +23,7 @@ struct AdapterError {
     kind: &'static str,
     message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    analysis: Option<svg2vd::Analysis>,
+    analysis: Option<vdtoolkit::Analysis>,
 }
 
 #[wasm_bindgen(typescript_custom_section)]
@@ -45,6 +45,13 @@ export interface Diagnostic {
   suggestion?: string;
 }
 
+export interface Bounds {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
 export interface Metrics {
   width: number;
   height: number;
@@ -55,6 +62,7 @@ export interface Metrics {
   groups: number;
   gradients: number;
   clip_paths: number;
+  content_bounds: Bounds | null;
   estimated_xml_bytes: number;
 }
 
@@ -65,7 +73,7 @@ export interface Analysis {
   metrics: Metrics;
 }
 
-export interface Svg2vdError {
+export interface VdtoolkitError {
   kind: "utf8" | "unsafe_xml" | "xml" | "svg" | "unsupported" | "io" | "invalid_input";
   message: string;
   analysis?: Analysis;
@@ -73,11 +81,11 @@ export interface Svg2vdError {
 
 export type AnalyzeResult =
   | { ok: true; analysis: Analysis }
-  | { ok: false; error: Svg2vdError };
+  | { ok: false; error: VdtoolkitError };
 
 export type ConvertResult =
   | { ok: true; analysis: Analysis; xml: string }
-  | { ok: false; error: Svg2vdError };
+  | { ok: false; error: VdtoolkitError };
 "#;
 
 /// Analyze SVG bytes and return a structured JavaScript result.
@@ -99,7 +107,7 @@ export function convertSvg(source: Uint8Array, optimize: boolean): ConvertResult
 "#;
 
 fn analyze_result(source: &[u8]) -> OperationResult {
-    match svg2vd::analyze(source) {
+    match vdtoolkit::analyze(source) {
         Ok(analysis) => OperationResult::Success {
             ok: true,
             analysis,
@@ -110,7 +118,7 @@ fn analyze_result(source: &[u8]) -> OperationResult {
 }
 
 fn convert_result(source: &[u8], optimize: bool) -> OperationResult {
-    match svg2vd::convert(source) {
+    match vdtoolkit::convert(source) {
         Ok(mut asset) => {
             if optimize {
                 asset.optimize();
@@ -125,19 +133,19 @@ fn convert_result(source: &[u8], optimize: bool) -> OperationResult {
     }
 }
 
-fn failure(error: svg2vd::Error) -> OperationResult {
+fn failure(error: vdtoolkit::Error) -> OperationResult {
     let kind = match &error {
-        svg2vd::Error::Read { .. } | svg2vd::Error::Write { .. } => "io",
-        svg2vd::Error::Utf8(_) => "utf8",
-        svg2vd::Error::UnsafeXml(_) => "unsafe_xml",
-        svg2vd::Error::Xml(_) => "xml",
-        svg2vd::Error::Svg(_) => "svg",
-        svg2vd::Error::Incompatible(_) => "unsupported",
-        svg2vd::Error::InvalidInput(_) => "invalid_input",
+        vdtoolkit::Error::Read { .. } | vdtoolkit::Error::Write { .. } => "io",
+        vdtoolkit::Error::Utf8(_) => "utf8",
+        vdtoolkit::Error::UnsafeXml(_) => "unsafe_xml",
+        vdtoolkit::Error::Xml(_) => "xml",
+        vdtoolkit::Error::Svg(_) => "svg",
+        vdtoolkit::Error::Incompatible(_) => "unsupported",
+        vdtoolkit::Error::InvalidInput(_) => "invalid_input",
     };
     let message = error.to_string();
     let analysis = match error {
-        svg2vd::Error::Incompatible(analysis) => Some(analysis),
+        vdtoolkit::Error::Incompatible(analysis) => Some(*analysis),
         _ => None,
     };
     OperationResult::Failure {
@@ -173,8 +181,8 @@ mod tests {
     #[test]
     fn exact_and_normalized_results_match_the_native_api() {
         for source in [EXACT, NORMALIZED] {
-            let native_analysis = svg2vd::analyze(source).unwrap();
-            let native_asset = svg2vd::convert(source).unwrap();
+            let native_analysis = vdtoolkit::analyze(source).unwrap();
+            let native_asset = vdtoolkit::convert(source).unwrap();
 
             let analyzed = json(&analyze_result(source));
             let converted = json(&convert_result(source, false));
@@ -193,7 +201,7 @@ mod tests {
 
     #[test]
     fn unsupported_and_malformed_errors_preserve_native_information() {
-        let unsupported_analysis = svg2vd::analyze(UNSUPPORTED).unwrap();
+        let unsupported_analysis = vdtoolkit::analyze(UNSUPPORTED).unwrap();
         let unsupported = json(&convert_result(UNSUPPORTED, false));
         assert_eq!(unsupported["error"]["kind"], "unsupported");
         assert_eq!(
@@ -208,7 +216,7 @@ mod tests {
 
     #[test]
     fn optimization_and_determinism_match_the_native_api() {
-        let mut native = svg2vd::convert(DECIMALS).unwrap();
+        let mut native = vdtoolkit::convert(DECIMALS).unwrap();
         native.optimize();
         let optimized = json(&convert_result(DECIMALS, true));
         assert_eq!(optimized["xml"], native.to_xml());

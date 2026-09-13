@@ -1,4 +1,4 @@
-import type { ConvertResult } from "../vendor/svg2vd-wasm/svg2vd_wasm";
+import type { ConvertResult } from "../vendor/vdtoolkit-wasm/vdtoolkit_wasm";
 
 export interface ConvertRequest {
   type: "convert";

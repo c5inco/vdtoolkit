@@ -78,7 +78,7 @@ vdt adaptive --foreground logo.svg --background bg.svg --monochrome logo.svg \
 | `--foreground <svg>` | Foreground layer. Required. |
 | `--background <svg>` or `--background-color <#RRGGBB>` | Background layer, as a drawable or a color resource. Exactly one is required. |
 | `--monochrome <svg>` | Optional monochrome layer for themed icons on Android 13 and newer. |
-| `--fit <dp>` | Square that the foreground and monochrome artwork is scaled to fit, centered on the 108dp layer. Defaults to 108; use 66 to keep a logo inside the safe zone that no launcher mask hides. |
+| `--fit <dp>` | Square that the foreground and monochrome artwork is scaled to fit, centered on the 108dp layer. Defaults to 108 for artwork drawn on the full layer. For a plain logo, Android recommends 48 to 66; 66 is the safe zone that no launcher mask hides. |
 | `--name <name>` | Resource name, `ic_launcher` by default. Layers use it as a prefix. |
 
 The files written are `mipmap-anydpi-v26/<name>.xml`,

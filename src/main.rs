@@ -64,8 +64,8 @@ struct AdaptiveArgs {
     #[arg(long, default_value = "ic_launcher")]
     name: String,
     /// Size in dp of the centered square that the foreground and monochrome
-    /// artwork is scaled to fit. 108 fills the layer; 66 is the safe zone that
-    /// no launcher mask hides.
+    /// artwork is scaled to fit. 108 fills the layer. Android recommends 48 to
+    /// 66 for a logo; 66 is the safe zone that no launcher mask hides.
     #[arg(long, default_value_t = vdtoolkit::ADAPTIVE_ICON_SIZE)]
     fit: f32,
     /// Android `res/` directory to write into.

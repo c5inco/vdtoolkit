@@ -23,6 +23,11 @@ follow [Semantic Versioning](https://semver.org/).
   generate an adaptive icon from every icon and verify determinism, the
   generated resources, and that the foreground layer is the plain drawable
   fitted to the safe zone.
+- The Android renderer harness builds an adaptive icon from Material Symbols
+  layers with `vdt adaptive`, checks the layers and the `@color` background on
+  device, and drives the launcher through `UiAutomation` to confirm the icon
+  is composed, saving screenshots. A new `tools/android-renderer/run.sh` runs
+  the harness on emulator.wtf across a device matrix or on a local adb device.
 - Linear gradients and circular radial gradients on fills and strokes, written
   as inline `aapt` gradients. Stop opacity and all spread methods are kept, and
   gradients report API 24 as the minimum. Radial gradients with a focal point,

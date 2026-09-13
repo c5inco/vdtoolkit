@@ -139,20 +139,16 @@ impl Asset {
         outside.then_some(bounds)
     }
 
-    /// Whether the painted content of a fitted adaptive layer reaches every
-    /// edge of the 108dp layer. A background that does not, such as non-square
-    /// artwork letterboxed by [`Asset::fit_adaptive_layer`], leaves uncovered
-    /// areas that show through launcher masks and parallax. Only the bounding
-    /// box is checked, so holes inside the content are not detected.
+    /// Whether a fitted adaptive layer paints every pixel of the 108dp layer.
+    ///
+    /// The layer is rendered at one pixel per dp with clipping, fill rules,
+    /// and alpha applied, so letterboxed non-square artwork, inset clips,
+    /// holes, and transparent paint all count as not filling. Uncovered areas
+    /// in a background show through launcher masks and parallax.
     pub fn fills_adaptive_layer(&self) -> bool {
-        const TOLERANCE: f32 = 1e-3;
-        let far = adaptive::ADAPTIVE_ICON_SIZE - TOLERANCE;
-        self.analysis.metrics.content_bounds.is_some_and(|bounds| {
-            bounds.left <= TOLERANCE
-                && bounds.top <= TOLERANCE
-                && bounds.right >= far
-                && bounds.bottom >= far
-        })
+        let size = adaptive::ADAPTIVE_ICON_SIZE as u32;
+        render::render(&self.drawable, size, size)
+            .is_some_and(|pixmap| pixmap.pixels().iter().all(|pixel| pixel.alpha() > 0))
     }
 
     /// A 108dp adaptive icon layer filled with one solid `#RRGGBB` or

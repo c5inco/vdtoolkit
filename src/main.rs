@@ -258,26 +258,59 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
     ));
     files.push((mipmap_dir.join(&round_name).with_extension("xml"), icon));
     let mut images: Vec<(PathBuf, Vec<u8>)> = Vec::new();
+    // The two legacy layouts are exclusive, and a qualified resource left
+    // behind by an earlier run would outrank the new one on API 24 and 25, so
+    // whichever layout is not written this time is removed.
+    let mut stale: Vec<PathBuf> = Vec::new();
     if args.legacy {
         let legacy = vdtoolkit::Asset::legacy_launcher_icon(&background, &foreground);
         let xml = legacy.to_xml();
+        let names = [args.name.as_str(), round_name.as_str()];
+        let plain: Vec<PathBuf> = names
+            .iter()
+            .map(|name| args.output.join("mipmap").join(name).with_extension("xml"))
+            .collect();
+        let mut split: Vec<PathBuf> = names
+            .iter()
+            .map(|name| {
+                args.output
+                    .join("mipmap-anydpi-v24")
+                    .join(name)
+                    .with_extension("xml")
+            })
+            .collect();
+        for (density, _) in vdtoolkit::LEGACY_ICON_DENSITIES {
+            for name in names {
+                split.push(
+                    args.output
+                        .join(format!("mipmap-{density}"))
+                        .join(name)
+                        .with_extension("png"),
+                );
+            }
+        }
         if legacy.analysis.minimum_api == Some(21) {
-            let dir = args.output.join("mipmap");
-            files.push((dir.join(&args.name).with_extension("xml"), xml.clone()));
-            files.push((dir.join(&round_name).with_extension("xml"), xml));
+            for path in plain {
+                files.push((path, xml.clone()));
+            }
+            stale = split;
         } else {
             // Gradients, even-odd fills, or a second clip need API 24. The exact
             // vector serves API 24 and 25 from an anydpi folder, which outranks
             // density folders, and PNGs rendered from it serve API 21 to 23.
-            let dir = args.output.join("mipmap-anydpi-v24");
-            files.push((dir.join(&args.name).with_extension("xml"), xml.clone()));
-            files.push((dir.join(&round_name).with_extension("xml"), xml));
-            for (density, pixels) in vdtoolkit::LEGACY_ICON_DENSITIES {
-                let png = legacy.to_png(pixels, pixels)?;
-                let dir = args.output.join(format!("mipmap-{density}"));
-                images.push((dir.join(&args.name).with_extension("png"), png.clone()));
-                images.push((dir.join(&round_name).with_extension("png"), png));
+            for path in &split[..2] {
+                files.push((path.clone(), xml.clone()));
             }
+            for ((density, pixels), pair) in vdtoolkit::LEGACY_ICON_DENSITIES
+                .iter()
+                .zip(split[2..].chunks(2))
+            {
+                debug_assert!(pair[0].to_string_lossy().contains(density));
+                let png = legacy.to_png(*pixels, *pixels)?;
+                images.push((pair[0].clone(), png.clone()));
+                images.push((pair[1].clone(), png));
+            }
+            stale = plain;
         }
     }
 
@@ -288,6 +321,13 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
     for (path, contents) in &images {
         write_file(path, contents)?;
         println!("{}", path.display());
+    }
+    for path in stale.iter().filter(|path| path.is_file()) {
+        std::fs::remove_file(path).map_err(|source| Error::Write {
+            path: path.clone(),
+            source,
+        })?;
+        eprintln!("removed stale legacy icon {}", path.display());
     }
     Ok(Outcome::Passed)
 }
@@ -330,11 +370,16 @@ fn adaptive_layer(input: &Path, fit: f32, strict: bool, role: LayerRole) -> Opti
                     }
                 }
                 LayerRole::Background if !asset.fills_adaptive_layer() => {
-                    let detail = match asset.analysis.metrics.content_bounds {
+                    let detail = match short_of_layer(&asset) {
                         Some(bounds) => {
                             format!("content spans {} and does not fill", span(bounds))
                         }
-                        None => "has no painted content, so it does not fill".to_owned(),
+                        None if asset.analysis.metrics.content_bounds.is_none() => {
+                            "has no painted content, so it does not fill".to_owned()
+                        }
+                        None => "leaves unpainted pixels, from clipping, holes, or \
+                                 transparent paint, in"
+                            .to_owned(),
                     };
                     eprintln!(
                         "warning: {}: background {detail} the {}dp layer; \
@@ -352,6 +397,14 @@ fn adaptive_layer(input: &Path, fit: f32, strict: bool, role: LayerRole) -> Opti
             None
         }
     }
+}
+
+/// Content bounds when they stop short of some edge of the 108dp layer.
+fn short_of_layer(asset: &Asset) -> Option<vdtoolkit::Bounds> {
+    let far = vdtoolkit::ADAPTIVE_ICON_SIZE - 1e-3;
+    asset.analysis.metrics.content_bounds.filter(|bounds| {
+        bounds.left > 1e-3 || bounds.top > 1e-3 || bounds.right < far || bounds.bottom < far
+    })
 }
 
 /// Bounds as `left..right × top..bottom` in dp.

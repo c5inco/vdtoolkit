@@ -80,7 +80,7 @@ vdt adaptive --foreground logo.svg --background bg.svg --monochrome logo.svg \
 | `--monochrome <svg>` | Optional monochrome layer for themed icons on Android 13 and newer. |
 | `--fit <dp>` | Square that the foreground and monochrome artwork is scaled to fit, centered on the 108dp layer. Defaults to 108 for artwork drawn on the full layer. For a plain logo, Android recommends 48 to 66; 66 is the safe zone that no launcher mask hides. |
 | `--name <name>` | Resource name, `ic_launcher` by default. Layers use it as a prefix. |
-| `--legacy` | Also write a legacy icon for devices below API 26, with the 72dp visible area on the 44dp circle keyline of a 48dp icon. It is a vector in `mipmap/`. When the art needs API 24, because of gradients, even-odd fills, or clips, it is a vector in `mipmap-anydpi-v24/` for API 24 and 25 plus PNGs rendered from that vector in `mipmap-mdpi/` through `mipmap-xxxhdpi/` for API 21 to 23. |
+| `--legacy` | Also write a legacy icon for devices below API 26, with the 72dp visible area on the 44dp circle keyline of a 48dp icon. It is a vector in `mipmap/`. When the art needs API 24, because of gradients, even-odd fills, or clips, it is a vector in `mipmap-anydpi-v24/` for API 24 and 25 plus PNGs rendered from that vector in `mipmap-mdpi/` through `mipmap-xxxhdpi/` for API 21 to 23. | Regenerating a name switches layouts cleanly: files of the layout no longer used are removed.
 
 The files written are `mipmap-anydpi-v26/<name>.xml`,
 `mipmap-anydpi-v26/<name>_round.xml`, `drawable/<name>_foreground.xml`, either
@@ -89,9 +89,9 @@ The files written are `mipmap-anydpi-v26/<name>.xml`,
 scaled uniformly and centered, so rendering is unchanged apart from placement;
 a background SVG always fills the whole layer. A warning names any foreground
 or monochrome layer whose content leaves the 66dp safe zone, since launcher
-masks may hide it, and any background whose content does not reach every edge
-of the layer. Non-square background artwork is scaled to fit, not cropped, so
-it leaves transparent bands and triggers that warning. Every layer is converted before anything is written, and a
+masks may hide it, and any background that leaves part of the layer unpainted.
+Non-square background artwork is scaled to fit, not cropped, so it leaves
+transparent bands and triggers that warning, as do inset clips and holes. Every layer is converted before anything is written, and a
 layer that fails leaves the directory untouched.
 Add `android:icon="@mipmap/<name>"` and `android:roundIcon="@mipmap/<name>_round"`
 to the `<application>` element of the manifest.

@@ -1153,6 +1153,32 @@ fn detects_backgrounds_that_do_not_fill_the_layer() {
         assert!((actual - expected).abs() < 1e-3, "{bounds:?}");
     }
 
+    // Full-bleed paint under an inset clip, and a hole, are not filling
+    // either, even though their bounding boxes reach every edge.
+    assert!(
+        !fitted(&svg(
+            r#"width="108" height="108""#,
+            r##"<defs><clipPath id="c"><rect x="4" y="4" width="100" height="100"/></clipPath></defs>
+                <rect width="108" height="108" fill="#3DDC84" clip-path="url(#c)"/>"##
+        ))
+        .fills_adaptive_layer()
+    );
+    assert!(
+        !fitted(&svg(
+            r#"width="108" height="108""#,
+            r##"<path d="M0 0H108V108H0Z M40 40H68V68H40Z" fill="#3DDC84" fill-rule="evenodd"/>"##
+        ))
+        .fills_adaptive_layer()
+    );
+    // Semi-transparent paint still covers; only unpainted pixels count.
+    assert!(
+        fitted(&svg(
+            r#"width="108" height="108""#,
+            r##"<rect width="108" height="108" fill="#3DDC84" fill-opacity=".4"/>"##
+        ))
+        .fills_adaptive_layer()
+    );
+
     // Inset content, and a background that paints nothing.
     assert!(
         !fitted(&svg(
@@ -1383,6 +1409,70 @@ fn renders_legacy_gradients_like_the_vector() {
     assert_eq!(&png[16..24], &[0, 0, 0, 192, 0, 0, 0, 192]);
     assert_eq!(png, legacy.to_png(size, size).unwrap());
     assert!(matches!(legacy.to_png(0, 48), Err(Error::InvalidInput(_))));
+}
+
+#[test]
+fn cli_legacy_removes_the_other_layout_when_art_changes() {
+    let temp = tempfile::tempdir().unwrap();
+    let foreground = temp.path().join("fg.svg");
+    let gradient = temp.path().join("gradient.svg");
+    fs::write(
+        &foreground,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M2 2H22V22H2Z" fill="#102030"/></svg>"##,
+    )
+    .unwrap();
+    fs::write(&gradient, MIRRORED_GRADIENT_BACKGROUND).unwrap();
+    let res = temp.path().join("res");
+    let run = |background: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_vdt"))
+            .args(["adaptive", "--foreground"])
+            .arg(&foreground)
+            .args(background)
+            .args(["--fit", "66", "--legacy", "-o"])
+            .arg(&res)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        String::from_utf8(output.stderr).unwrap()
+    };
+    let split = [
+        "mipmap-anydpi-v24/ic_launcher.xml",
+        "mipmap-anydpi-v24/ic_launcher_round.xml",
+        "mipmap-mdpi/ic_launcher.png",
+        "mipmap-xxxhdpi/ic_launcher_round.png",
+    ];
+    let plain = ["mipmap/ic_launcher.xml", "mipmap/ic_launcher_round.xml"];
+
+    // API 24 art, then API 21 art with the same name: the qualified files
+    // that Android 24 and 25 would still prefer are removed.
+    let stderr = run(&["--background", gradient.to_str().unwrap()]);
+    assert!(!stderr.contains("removed"), "{stderr}");
+    let stderr = run(&["--background-color", "#3DDC84"]);
+    assert_eq!(
+        stderr.matches("removed stale legacy icon").count(),
+        12,
+        "{stderr}"
+    );
+    for relative in split {
+        assert!(!res.join(relative).exists(), "{relative} should be gone");
+    }
+    for relative in plain {
+        assert!(res.join(relative).is_file(), "{relative}");
+    }
+
+    // And back again.
+    let stderr = run(&["--background", gradient.to_str().unwrap()]);
+    assert_eq!(
+        stderr.matches("removed stale legacy icon").count(),
+        2,
+        "{stderr}"
+    );
+    for relative in plain {
+        assert!(!res.join(relative).exists(), "{relative} should be gone");
+    }
+    for relative in split {
+        assert!(res.join(relative).is_file(), "{relative}");
+    }
 }
 
 #[test]

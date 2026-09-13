@@ -10,15 +10,19 @@ if [[ -f "$HOME/.cargo/env" ]]; then
   # shellcheck disable=SC1091
   source "$HOME/.cargo/env"
 fi
+if ! command -v cargo >/dev/null && command -v rustup >/dev/null; then
+  PATH="$(dirname "$(rustup which cargo)"):$PATH"
+fi
 
+# Newest directory whose name matches a glob, ignoring aliases such as `latest`.
 latest_dir() {
-  for dir in "$1"/*/; do
+  for dir in "$1"/$2/; do
     basename "$dir"
   done | sort -V | tail -1
 }
 
-PLATFORM_VERSION="${PLATFORM_VERSION:-$(latest_dir "$SDK/platforms")}"
-BUILD_TOOLS_VERSION="${BUILD_TOOLS_VERSION:-$(latest_dir "$SDK/build-tools")}"
+PLATFORM_VERSION="${PLATFORM_VERSION:-$(latest_dir "$SDK/platforms" 'android-*')}"
+BUILD_TOOLS_VERSION="${BUILD_TOOLS_VERSION:-$(latest_dir "$SDK/build-tools" '[0-9]*')}"
 ANDROID_JAR="$SDK/platforms/$PLATFORM_VERSION/android.jar"
 ANDROID_TEST_BASE="$SDK/platforms/$PLATFORM_VERSION/optional/android.test.base.jar"
 BUILD_TOOLS="$SDK/build-tools/$BUILD_TOOLS_VERSION"
@@ -55,7 +59,7 @@ done < <(find "$BUILD/generated/res" -type f -name '*.xml' -print0)
 
 AAPT_RESOURCES=()
 while IFS= read -r -d '' flat; do
-  AAPT_RESOURCES+=(-R "$flat")
+  AAPT_RESOURCES+=("$flat")
 done < <(find "$BUILD/compiled" -type f -name '*.flat' -print0)
 "$BUILD_TOOLS/aapt2" link -o "$BUILD/app-unsigned.apk" \
   --manifest "$HARNESS/app/AndroidManifest.xml" -I "$ANDROID_JAR" \

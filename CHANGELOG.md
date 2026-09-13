@@ -19,6 +19,9 @@ follow [Semantic Versioning](https://semver.org/).
   Compose's VectorDrawable parser. It records one Compose divergence: a
   `</group>` closes enclosing clip paths, so a sibling after a nested group
   renders unclipped in Compose while the platform clips it correctly.
+- Optional Rune Icons stress suite, `tools/check-runeicons.py`, covering 908
+  icons in five styles from a pinned commit. It checks per-style coverage
+  floors and repeated-output determinism.
 
 ### Fixed
 

@@ -74,6 +74,24 @@ normalization), all deterministic. The eight remaining mask diagnostics are the
 six even-odd definitions and two subtractive definitions; no lossy mask is
 accepted.
 
+## Rune Icons stress corpus
+
+[Nexvyn/runeicons](https://github.com/Nexvyn/runeicons) publishes Apache-2.0
+SVG icons under `public/`. The suite sparse-checks out commit `f649e467` and
+converts all 908 icons in five styles: normal (217), duotone (215), fill (126),
+pixelated (215, built only from axis-aligned rectangles in roughly 40 to 42
+unit viewports), and glass (135). The
+per-style sprite sheets are excluded. Because the commit is pinned, the bytes
+cannot drift; there are no paired VectorDrawables, so the suite measures
+compatibility and repeated-output determinism only and is not a release gate.
+
+At that commit 775 of 908 icons convert (767 exact and 8 exact with
+normalization), all byte-identical on repeat. Every normal, duotone, fill, and
+pixelated icon converts, and the suite fails if any of those styles loses an
+icon. Only 2 of 135 glass icons convert: 132 blur their gradient layers with an
+`feGaussianBlur` / `feFlood` / `feBlend` filter chain and 119 clip them with
+alpha masks, neither of which VectorDrawable can express.
+
 ## Gradient lowering
 
 VectorDrawable gradients are inline complex colors from API 24. Linear

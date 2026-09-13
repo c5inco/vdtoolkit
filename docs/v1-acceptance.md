@@ -57,6 +57,7 @@ python3 tools/check-material-symbols.py                       # 100 outlined ico
 python3 tools/check-material-symbols.py --suite twotone-100   # 100 Two Tone icons, includes fill alpha
 python3 tools/check-material-symbols.py --suite outlined-all  # exhaustive pinned outlined corpus
 python3 tools/check-studio-icons.py                           # Studio Icons stress suite
+python3 tools/check-runeicons.py                              # Rune Icons stress suite
 ```
 
 The Material corpora download Apache-2.0 assets from the pinned Google commit
@@ -66,6 +67,10 @@ content-hashed public snapshot for compatibility and deterministic output but is
 not a release gate, because the site publishes no immutable archive, asset
 license, or official VectorDrawables. See
 [research.md](research.md#studio-icons-stress-corpus) for current figures.
+The Rune Icons suite is also observational: it fetches Apache-2.0 assets from a
+pinned GitHub commit and checks per-style coverage floors and deterministic
+output, but has no official VectorDrawables to compare against. See
+[research.md](research.md#rune-icons-stress-corpus).
 
 [`tools/android-renderer`](../tools/android-renderer) is a standalone harness
 that converts its SVG fixtures with the current binary and verifies rendered

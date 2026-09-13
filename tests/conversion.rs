@@ -1267,21 +1267,39 @@ fn composes_a_masked_legacy_icon() {
 
     let legacy = vdtoolkit::Asset::legacy_launcher_icon(&background, &foreground);
     let xml = legacy.to_xml();
+    // The 72dp visible circle lands on the 44dp keyline centered in 48dp.
     assert!(xml.contains("android:width=\"48dp\""));
-    assert!(xml.contains("android:viewportWidth=\"108\""));
-    assert!(xml.starts_with("<?xml"));
-    assert!(xml.contains("<clip-path\n        android:pathData=\"M54,18 C"));
-    assert_eq!(xml.matches("<group>").count(), 2);
-    assert!(xml.contains("android:fillColor=\"#3DDC84\""));
-    assert!(xml.contains("android:pathData=\"M26.5,26.5 L81.5,26.5 L81.5,81.5 L26.5,81.5 Z\""));
+    assert!(xml.contains("android:viewportWidth=\"48\""));
+    assert!(xml.contains("<clip-path\n        android:pathData=\"M24,2 C"));
+    // Layers without clips of their own are not wrapped in groups.
+    assert!(!xml.contains("<group>"));
     assert_eq!(legacy.analysis.minimum_api, Some(21));
     assert_eq!(legacy.analysis.compatibility, Compatibility::Exact);
     let metrics = &legacy.analysis.metrics;
-    assert_eq!(
-        (metrics.paths, metrics.clip_paths, metrics.groups),
-        (2, 1, 2)
-    );
+    assert_eq!((metrics.paths, metrics.clip_paths), (2, 1));
     assert_eq!(metrics.estimated_xml_bytes, xml.len());
+    // The foreground spans layer 26.5..81.5, which maps to 7.2..40.8.
+    let bounds = metrics.content_bounds.unwrap();
+    assert_eq!((bounds.left, bounds.right), (0.0, 48.0));
+
+    let rgba = legacy.render_rgba(48, 48).unwrap();
+    let pixel = |x: usize, y: usize| {
+        let index = (y * 48 + x) * 4;
+        [
+            rgba[index],
+            rgba[index + 1],
+            rgba[index + 2],
+            rgba[index + 3],
+        ]
+    };
+    assert_eq!(pixel(24, 24), [0x10, 0x20, 0x30, 255]);
+    // Above the foreground, inside the mask: the half-transparent background.
+    let [red, green, blue, alpha] = pixel(24, 4);
+    assert!(alpha.abs_diff(128) <= 1, "{:?}", pixel(24, 4));
+    assert!(red.abs_diff(0x3D) <= 2 && green.abs_diff(0xDC) <= 2 && blue.abs_diff(0x84) <= 2);
+    // Outside the mask.
+    assert_eq!(pixel(24, 0)[3], 0);
+    assert_eq!(pixel(1, 1)[3], 0);
 
     // A gradient background lifts the legacy icon to API 24.
     let gradient = br##"<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108">
@@ -1294,6 +1312,126 @@ fn composes_a_masked_legacy_icon() {
     background.fit_adaptive_layer(108.0).unwrap();
     let legacy = vdtoolkit::Asset::legacy_launcher_icon(&background, &foreground);
     assert_eq!(legacy.analysis.minimum_api, Some(24));
+}
+
+/// Mirrored blue to orange gradient every 54 units, full bleed on the layer.
+const MIRRORED_GRADIENT_BACKGROUND: &[u8] =
+    br##"<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108">
+    <defs><linearGradient id="g" x1="0" y1="0" x2="54" y2="0"
+            gradientUnits="userSpaceOnUse" spreadMethod="reflect">
+        <stop offset="0" stop-color="#1267D6"/><stop offset="1" stop-color="#E37A19"/>
+    </linearGradient></defs>
+    <rect width="108" height="108" fill="url(#g)"/>
+</svg>"##;
+
+/// Expected color of the mirrored gradient at layer x.
+fn mirrored_gradient_at(x: f32) -> [f32; 3] {
+    let t = if x <= 54.0 { x / 54.0 } else { 2.0 - x / 54.0 }.clamp(0.0, 1.0);
+    let mix = |a: f32, b: f32| a + (b - a) * t;
+    [
+        mix(0x12 as f32, 0xE3 as f32),
+        mix(0x67 as f32, 0x7A as f32),
+        mix(0xD6 as f32, 0x19 as f32),
+    ]
+}
+
+#[test]
+fn renders_legacy_gradients_like_the_vector() {
+    let logo = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M2 2H22V22H2Z" fill="#102030"/></svg>"##;
+    let mut foreground = vdtoolkit::convert(logo).unwrap();
+    foreground.fit_adaptive_layer(66.0).unwrap();
+    let mut background = vdtoolkit::convert(MIRRORED_GRADIENT_BACKGROUND).unwrap();
+    background.fit_adaptive_layer(108.0).unwrap();
+    let legacy = vdtoolkit::Asset::legacy_launcher_icon(&background, &foreground);
+    assert_eq!(legacy.analysis.minimum_api, Some(24));
+
+    let size = 192;
+    let rgba = legacy.render_rgba(size, size).unwrap();
+    let (scale, offset) = (44.0 / 72.0, -9.0);
+    let sample = |layer_x: f32, layer_y: f32| {
+        let per_unit = size as f32 / 48.0;
+        let x = ((layer_x * scale + offset) * per_unit) as usize;
+        let y = ((layer_y * scale + offset) * per_unit) as usize;
+        let index = (y * size as usize + x) * 4;
+        // Layer coordinate of the pixel center actually sampled.
+        let center_x = ((x as f32 + 0.5) / per_unit - offset) / scale;
+        (&rgba[index..index + 4], center_x)
+    };
+    // Above the foreground and inside the mask, on both sides of the mirror
+    // axis and at the axis itself.
+    for layer_x in [40.0, 54.0, 68.0] {
+        let (pixel, center_x) = sample(layer_x, 26.0);
+        let expected = mirrored_gradient_at(center_x);
+        assert_eq!(pixel[3], 255, "x {layer_x}");
+        for channel in 0..3 {
+            assert!(
+                (pixel[channel] as f32 - expected[channel]).abs() <= 3.0,
+                "x {layer_x}: {pixel:?} vs {expected:?}"
+            );
+        }
+    }
+    // Reflect, not clamp: equal distances from the axis match.
+    let (left, _) = sample(40.0, 26.0);
+    let (right, _) = sample(68.0 + 0.5 * 72.0 / 44.0 / 4.0, 26.0);
+    assert!(
+        left.iter().zip(right).all(|(a, b)| a.abs_diff(*b) <= 2),
+        "{left:?} {right:?}"
+    );
+
+    let png = legacy.to_png(size, size).unwrap();
+    assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
+    assert_eq!(&png[16..24], &[0, 0, 0, 192, 0, 0, 0, 192]);
+    assert_eq!(png, legacy.to_png(size, size).unwrap());
+    assert!(matches!(legacy.to_png(0, 48), Err(Error::InvalidInput(_))));
+}
+
+#[test]
+fn cli_legacy_splits_vector_and_pngs_when_art_needs_api_24() {
+    let temp = tempfile::tempdir().unwrap();
+    let foreground = temp.path().join("fg.svg");
+    let background = temp.path().join("gradient.svg");
+    fs::write(
+        &foreground,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M2 2H22V22H2Z" fill="#102030"/></svg>"##,
+    )
+    .unwrap();
+    fs::write(&background, MIRRORED_GRADIENT_BACKGROUND).unwrap();
+    let run = |res: &std::path::Path| {
+        let output = Command::new(env!("CARGO_BIN_EXE_vdt"))
+            .args(["adaptive", "--foreground"])
+            .arg(&foreground)
+            .arg("--background")
+            .arg(&background)
+            .args(["--fit", "66", "--legacy", "-o"])
+            .arg(res)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        assert!(output.stderr.is_empty(), "{output:?}");
+        String::from_utf8(output.stdout).unwrap()
+    };
+    let (first, second) = (temp.path().join("a"), temp.path().join("b"));
+    let listed = run(&first);
+    run(&second);
+
+    assert!(!first.join("mipmap").exists());
+    let vector = fs::read_to_string(first.join("mipmap-anydpi-v24/ic_launcher.xml")).unwrap();
+    assert!(vector.contains("<gradient"));
+    assert_eq!(
+        fs::read_to_string(first.join("mipmap-anydpi-v24/ic_launcher_round.xml")).unwrap(),
+        vector
+    );
+    for (density, pixels) in vdtoolkit::LEGACY_ICON_DENSITIES {
+        for name in ["ic_launcher", "ic_launcher_round"] {
+            let relative = format!("mipmap-{density}/{name}.png");
+            assert!(listed.contains(&relative), "{listed}");
+            let png = fs::read(first.join(&relative)).unwrap();
+            let size = pixels.to_be_bytes();
+            assert_eq!(&png[16..20], &size, "{relative}");
+            assert_eq!(&png[20..24], &size, "{relative}");
+            assert_eq!(png, fs::read(second.join(&relative)).unwrap(), "{relative}");
+        }
+    }
 }
 
 #[test]

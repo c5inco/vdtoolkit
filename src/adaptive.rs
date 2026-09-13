@@ -20,6 +20,19 @@ pub const ADAPTIVE_ICON_VISIBLE_DIAMETER: f32 = 72.0;
 /// Edge length in dp of a legacy launcher icon for devices below API 26.
 pub const LEGACY_ICON_SIZE: f32 = 48.0;
 
+/// Diameter in dp of the circle keyline a legacy launcher icon fills, centered
+/// in [`LEGACY_ICON_SIZE`].
+pub const LEGACY_ICON_KEYLINE: f32 = 44.0;
+
+/// Density buckets and pixel sizes for legacy launcher icon PNGs.
+pub const LEGACY_ICON_DENSITIES: [(&str, u32); 5] = [
+    ("mdpi", 48),
+    ("hdpi", 72),
+    ("xhdpi", 96),
+    ("xxhdpi", 144),
+    ("xxxhdpi", 192),
+];
+
 /// Write an `<adaptive-icon>` resource that references the given drawables.
 ///
 /// Each argument is a resource reference such as `@drawable/ic_launcher_foreground`
@@ -174,28 +187,52 @@ fn circle(cx: f32, cy: f32, r: f32) -> PathData {
     ])
 }
 
-/// Compose fitted background and foreground layers into one legacy icon:
-/// both layers under a circular clip of the visible area, the way launchers
-/// mask adaptive icons. Each layer is wrapped in a group so its own clip
-/// paths cannot leak into the other.
+/// Scale and offset from adaptive layer units to legacy icon units, which put
+/// the 72dp visible circle on the 44dp keyline centered in 48dp.
+pub(crate) fn legacy_mapping() -> (f32, f32) {
+    let scale = LEGACY_ICON_KEYLINE / ADAPTIVE_ICON_VISIBLE_DIAMETER;
+    (scale, (LEGACY_ICON_SIZE - ADAPTIVE_ICON_SIZE * scale) / 2.0)
+}
+
+/// Compose fitted background and foreground layers into one legacy icon under
+/// a circular clip, the way launchers mask adaptive icons.
+///
+/// A layer with clip paths of its own is wrapped in a group so its clips
+/// cannot reach the layer after it. Layers without clips are not wrapped,
+/// which keeps the drawable at the single clip API 21 applies reliably.
 pub(crate) fn legacy_icon(
     background: &VectorDrawable,
     foreground: &VectorDrawable,
 ) -> VectorDrawable {
-    let center = ADAPTIVE_ICON_SIZE / 2.0;
+    let (scale, offset) = legacy_mapping();
+    let center = LEGACY_ICON_SIZE / 2.0;
+    let mut children = vec![VectorNode::ClipPath(circle(
+        center,
+        center,
+        LEGACY_ICON_KEYLINE / 2.0,
+    ))];
+    for layer in [background, foreground] {
+        let mut nodes = layer.children.clone();
+        transform_nodes(&mut nodes, scale, offset, offset);
+        if contains_clip(&nodes) {
+            children.push(VectorNode::Group(VectorGroup { children: nodes }));
+        } else {
+            children.extend(nodes);
+        }
+    }
     VectorDrawable {
         width_dp: LEGACY_ICON_SIZE,
         height_dp: LEGACY_ICON_SIZE,
-        viewport_width: ADAPTIVE_ICON_SIZE,
-        viewport_height: ADAPTIVE_ICON_SIZE,
-        children: vec![
-            VectorNode::ClipPath(circle(center, center, ADAPTIVE_ICON_VISIBLE_DIAMETER / 2.0)),
-            VectorNode::Group(VectorGroup {
-                children: background.children.clone(),
-            }),
-            VectorNode::Group(VectorGroup {
-                children: foreground.children.clone(),
-            }),
-        ],
+        viewport_width: LEGACY_ICON_SIZE,
+        viewport_height: LEGACY_ICON_SIZE,
+        children,
     }
+}
+
+fn contains_clip(nodes: &[VectorNode]) -> bool {
+    nodes.iter().any(|node| match node {
+        VectorNode::Group(group) => contains_clip(&group.children),
+        VectorNode::ClipPath(_) => true,
+        VectorNode::Path(_) => false,
+    })
 }

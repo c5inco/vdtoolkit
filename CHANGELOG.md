@@ -19,10 +19,11 @@ follow [Semantic Versioning](https://semver.org/).
   resources. `--fit` scales artwork uniformly into a centered square such as
   the 66dp safe zone, with warnings when foreground content leaves it or a
   background does not fill the layer, and
-  `--legacy` writes a masked 48dp fallback icon for devices below API 26.
+  `--legacy` writes a masked fallback icon for devices below API 26: a vector,
+  or, when the art needs API 24, an API 24 vector plus PNGs at every density.
   The Rust API gains `Asset::fit_adaptive_layer`, `outside_adaptive_safe_zone`,
   `fills_adaptive_layer`,
-  `solid_adaptive_layer`, `legacy_launcher_icon`, `adaptive_icon_xml`, and
+  `solid_adaptive_layer`, `legacy_launcher_icon`, `render_rgba`, `to_png`, `adaptive_icon_xml`, and
   `color_resource_xml`.
 - The Material corpus suites in `tools/check-material-symbols.py` also
   generate an adaptive icon from every icon and verify determinism, the

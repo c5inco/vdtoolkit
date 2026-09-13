@@ -21,6 +21,7 @@ mod adaptive;
 mod analysis;
 mod error;
 mod optimize;
+mod render;
 mod svg;
 mod vector;
 mod xml;
@@ -28,7 +29,9 @@ mod xml;
 use std::path::Path;
 
 pub use adaptive::{
-    ADAPTIVE_ICON_SAFE_ZONE, ADAPTIVE_ICON_SIZE, adaptive_icon_xml, color_resource_xml,
+    ADAPTIVE_ICON_SAFE_ZONE, ADAPTIVE_ICON_SIZE, ADAPTIVE_ICON_VISIBLE_DIAMETER,
+    LEGACY_ICON_DENSITIES, LEGACY_ICON_KEYLINE, LEGACY_ICON_SIZE, adaptive_icon_xml,
+    color_resource_xml,
 };
 pub use analysis::{
     Analysis, Bounds, Compatibility, Diagnostic, DiagnosticCode, ElementLocation, Metrics, Severity,
@@ -162,14 +165,59 @@ impl Asset {
     }
 
     /// A legacy launcher icon for devices below API 26: the fitted
-    /// `background` and `foreground` layers composed under a circular clip of
-    /// the 72dp area launchers show, at 48dp. Fit both layers with
-    /// [`Asset::fit_adaptive_layer`] first.
+    /// `background` and `foreground` layers composed under a circular clip,
+    /// with the 72dp area launchers show mapped onto the 44dp circle keyline
+    /// of a 48dp icon. Fit both layers with [`Asset::fit_adaptive_layer`]
+    /// first.
+    ///
+    /// The result needs API 24 when a layer uses gradients, even-odd fills, or
+    /// clip paths of its own. [`Asset::to_png`] renders it for earlier devices.
     pub fn legacy_launcher_icon(background: &Asset, foreground: &Asset) -> Asset {
-        Self::synthesized(
+        let (scale, offset) = adaptive::legacy_mapping();
+        let mut asset = Self::synthesized(
             adaptive::legacy_icon(&background.drawable, &foreground.drawable),
             &[background, foreground],
-        )
+        );
+        if let Some(bounds) = &mut asset.analysis.metrics.content_bounds {
+            let map = |value: f32| (value * scale + offset).clamp(0.0, adaptive::LEGACY_ICON_SIZE);
+            *bounds = Bounds {
+                left: map(bounds.left),
+                top: map(bounds.top),
+                right: map(bounds.right),
+                bottom: map(bounds.bottom),
+            };
+        }
+        asset
+    }
+
+    /// Render the drawable at `width` × `height` pixels and return
+    /// unpremultiplied RGBA8 pixels, row by row from the top left.
+    ///
+    /// Geometry, fill rules, strokes, gradients, alpha, and clip scope follow
+    /// VectorDrawable semantics, with anti-aliasing.
+    pub fn render_rgba(&self, width: u32, height: u32) -> Result<Vec<u8>> {
+        let pixmap = self.render(width, height)?;
+        Ok(pixmap
+            .pixels()
+            .iter()
+            .flat_map(|pixel| {
+                let color = pixel.demultiply();
+                [color.red(), color.green(), color.blue(), color.alpha()]
+            })
+            .collect())
+    }
+
+    /// Render the drawable at `width` × `height` pixels as a PNG, as
+    /// [`Asset::render_rgba`] does.
+    pub fn to_png(&self, width: u32, height: u32) -> Result<Vec<u8>> {
+        self.render(width, height)?
+            .encode_png()
+            .map_err(|error| Error::InvalidInput(format!("cannot encode PNG: {error}")))
+    }
+
+    fn render(&self, width: u32, height: u32) -> Result<tiny_skia::Pixmap> {
+        render::render(&self.drawable, width, height)
+            .ok_or_else(|| Error::InvalidInput(format!("cannot render at {width} × {height} px")))
     }
 
     fn synthesized(drawable: vector::VectorDrawable, layers: &[&Asset]) -> Asset {
@@ -185,7 +233,7 @@ impl Asset {
             let source = &layer.analysis.metrics;
             metrics.paths += source.paths;
             metrics.path_commands += source.path_commands;
-            metrics.groups += source.groups + 1;
+            metrics.groups += source.groups;
             metrics.gradients += source.gradients;
             metrics.clip_paths += source.clip_paths;
             if let Some(bounds) = source.content_bounds {
@@ -214,6 +262,11 @@ impl Asset {
             metrics.clip_paths += 1;
             metrics.path_commands += 6;
         }
+        metrics.groups += drawable
+            .children
+            .iter()
+            .filter(|node| matches!(node, vector::VectorNode::Group(_)))
+            .count();
         let minimum_api = Some(drawable.minimum_api());
         let mut asset = Asset {
             drawable,

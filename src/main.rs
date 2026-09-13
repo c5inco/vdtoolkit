@@ -69,7 +69,9 @@ struct AdaptiveArgs {
     #[arg(long, default_value_t = vdtoolkit::ADAPTIVE_ICON_SIZE)]
     fit: f32,
     /// Also write a legacy icon for devices below API 26: the background and
-    /// foreground composed under a circular mask, as `mipmap/<name>.xml`.
+    /// foreground under a circular mask. It is a vector in `mipmap/`, or, when
+    /// the art needs API 24, a vector in `mipmap-anydpi-v24/` plus PNGs in
+    /// `mipmap-mdpi/` through `mipmap-xxxhdpi/`.
     #[arg(long)]
     legacy: bool,
     /// Android `res/` directory to write into.
@@ -255,24 +257,35 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
         icon.clone(),
     ));
     files.push((mipmap_dir.join(&round_name).with_extension("xml"), icon));
+    let mut images: Vec<(PathBuf, Vec<u8>)> = Vec::new();
     if args.legacy {
         let legacy = vdtoolkit::Asset::legacy_launcher_icon(&background, &foreground);
-        if let Some(api) = legacy.analysis.minimum_api.filter(|api| *api > 21) {
-            eprintln!(
-                "warning: legacy icon needs API {api} because a layer uses clips or gradients \
-                 and cannot be inflated on earlier devices"
-            );
-        }
-        let legacy_dir = args.output.join("mipmap");
         let xml = legacy.to_xml();
-        files.push((
-            legacy_dir.join(&args.name).with_extension("xml"),
-            xml.clone(),
-        ));
-        files.push((legacy_dir.join(&round_name).with_extension("xml"), xml));
+        if legacy.analysis.minimum_api == Some(21) {
+            let dir = args.output.join("mipmap");
+            files.push((dir.join(&args.name).with_extension("xml"), xml.clone()));
+            files.push((dir.join(&round_name).with_extension("xml"), xml));
+        } else {
+            // Gradients, even-odd fills, or a second clip need API 24. The exact
+            // vector serves API 24 and 25 from an anydpi folder, which outranks
+            // density folders, and PNGs rendered from it serve API 21 to 23.
+            let dir = args.output.join("mipmap-anydpi-v24");
+            files.push((dir.join(&args.name).with_extension("xml"), xml.clone()));
+            files.push((dir.join(&round_name).with_extension("xml"), xml));
+            for (density, pixels) in vdtoolkit::LEGACY_ICON_DENSITIES {
+                let png = legacy.to_png(pixels, pixels)?;
+                let dir = args.output.join(format!("mipmap-{density}"));
+                images.push((dir.join(&args.name).with_extension("png"), png.clone()));
+                images.push((dir.join(&round_name).with_extension("png"), png));
+            }
+        }
     }
 
     for (path, contents) in &files {
+        write_file(path, contents)?;
+        println!("{}", path.display());
+    }
+    for (path, contents) in &images {
         write_file(path, contents)?;
         println!("{}", path.display());
     }
@@ -384,7 +397,7 @@ fn normalize_color(color: &str) -> Result<String> {
     }
 }
 
-fn write_file(path: &Path, contents: &str) -> Result<()> {
+fn write_file(path: &Path, contents: impl AsRef<[u8]>) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|source| Error::Write {
             path: parent.to_owned(),

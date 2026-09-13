@@ -75,10 +75,16 @@ done
   --foreground "$BUILD/adaptive-src/$(basename "$ADAPTIVE_FOREGROUND")" \
   --background-color '#073042' \
   --fit 66 --name ic_launcher_solid --output "$BUILD/generated/res"
+# A mirrored gradient background needs API 24, so --legacy writes an
+# anydpi-v24 vector plus PNGs for API 21 to 23.
+"$ROOT/target/debug/vdt" adaptive \
+  --foreground "$BUILD/adaptive-src/$(basename "$ADAPTIVE_FOREGROUND")" \
+  --background "$HARNESS/fixtures/adaptive/gradient_background.svg" \
+  --fit 66 --name ic_launcher_gradient --legacy --output "$BUILD/generated/res"
 
 while IFS= read -r -d '' resource; do
   "$BUILD_TOOLS/aapt2" compile "$resource" -o "$BUILD/compiled"
-done < <(find "$BUILD/generated/res" -type f -name '*.xml' -print0)
+done < <(find "$BUILD/generated/res" -type f \( -name '*.xml' -o -name '*.png' \) -print0)
 
 AAPT_RESOURCES=()
 while IFS= read -r -d '' flat; do

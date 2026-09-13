@@ -8,6 +8,7 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Rect;
 import android.graphics.drawable.AdaptiveIconDrawable;
+import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.VectorDrawable;
@@ -41,14 +42,15 @@ public final class AdaptiveIconTest extends InstrumentationTestCase {
     public void testAdaptiveIconLayersRenderAtSafeZone() {
         Drawable icon = drawable(mipmap("ic_launcher"));
         if (Build.VERSION.SDK_INT < 26) {
-            // --legacy: both layers under a circular clip of the 72dp visible area.
+            // --legacy: both layers under a circular clip, the 72dp visible
+            // area mapped onto the 44dp keyline of the 48dp icon.
             assertTrue("API <26 must select the legacy vector, got " + icon,
                     icon instanceof VectorDrawable);
             Bitmap legacy = render(icon);
-            assertPixel(legacy, 540, 540, FOREGROUND);  // star fill
-            assertPixel(legacy, 540, 220, BACKGROUND);  // inside the mask, above the ring
-            assertTransparent(legacy, 540, 100);        // outside the 36dp mask radius
-            assertTransparent(legacy, 60, 60);          // corner mark is masked away
+            assertPixel(legacy, legacyX(54), legacyX(54), FOREGROUND); // star fill
+            assertPixel(legacy, legacyX(54), legacyX(22), BACKGROUND); // above the ring, in the mask
+            assertTransparent(legacy, legacyX(54), legacyX(16));        // outside the mask
+            assertTransparent(legacy, 60, 60);                           // corner mark masked away
             return;
         }
         assertTrue("expected AdaptiveIconDrawable, got " + icon,
@@ -124,6 +126,59 @@ public final class AdaptiveIconTest extends InstrumentationTestCase {
         int background = countNear(screen, bounds, BACKGROUND, LAUNCHER_TOLERANCE);
         assertTrue("launcher shows no foreground pixels in " + bounds, foreground > 0);
         assertTrue("launcher shows no background pixels in " + bounds, background > 0);
+    }
+
+    /**
+     * A mirrored gradient background needs API 24: API 26+ uses the adaptive
+     * icon, API 24 and 25 the anydpi-v24 legacy vector, and API 21 to 23 the
+     * PNG rendered from it. Every path must show the same gradient.
+     */
+    @SuppressWarnings("deprecation")
+    public void testGradientIconMatchesAcrossVectorAndPng() {
+        Drawable icon = drawable(mipmap("ic_launcher_gradient"));
+        Bitmap bitmap;
+        boolean adaptive = Build.VERSION.SDK_INT >= 26;
+        if (adaptive) {
+            assertTrue("expected AdaptiveIconDrawable, got " + icon,
+                    icon instanceof AdaptiveIconDrawable);
+            bitmap = render(((AdaptiveIconDrawable) icon).getBackground());
+        } else if (Build.VERSION.SDK_INT >= 24) {
+            assertTrue("API 24 and 25 must select the anydpi-v24 vector, got " + icon,
+                    icon instanceof VectorDrawable);
+            bitmap = render(icon);
+        } else {
+            assertTrue("API <24 must select the density PNG, got " + icon,
+                    icon instanceof BitmapDrawable);
+            bitmap = render(icon);
+        }
+        // Rendered PNGs are scaled by density, so allow more than the vector.
+        int tolerance = icon instanceof BitmapDrawable ? 10 : 4;
+        // Outside the star ring and inside the mask: both sides of the mirror
+        // axis at x 54, and the axis itself.
+        double[][] points = {{40, 26}, {68, 26}, {54, 23}};
+        for (double[] point : points) {
+            int x = adaptive ? (int) Math.round(point[0] * 10) : legacyX(point[0]);
+            int y = adaptive ? (int) Math.round(point[1] * 10) : legacyX(point[1]);
+            assertNear(bitmap, x, y, mirroredGradientAt(point[0]), tolerance);
+        }
+        if (!adaptive) {
+            assertTransparent(bitmap, 60, 60); // outside the mask
+        }
+    }
+
+    /** Bitmap pixel for a layer coordinate in a legacy icon rendered at LAYER px. */
+    private static int legacyX(double layer) {
+        return (int) Math.round((24 + (layer - 54) * 44.0 / 72.0) / 48.0 * LAYER);
+    }
+
+    /** Blue to orange every 54 units, reflected, as in gradient_background.svg. */
+    private static int mirroredGradientAt(double x) {
+        double t = x <= 54 ? x / 54 : 2 - x / 54;
+        t = Math.max(0, Math.min(1, t));
+        int red = (int) Math.round(0x12 + (0xE3 - 0x12) * t);
+        int green = (int) Math.round(0x67 + (0x7A - 0x67) * t);
+        int blue = (int) Math.round(0xD6 + (0x19 - 0xD6) * t);
+        return Color.argb(255, red, green, blue);
     }
 
     private int mipmap(String name) {
@@ -224,6 +279,12 @@ public final class AdaptiveIconTest extends InstrumentationTestCase {
         int actual = bitmap.getPixel(x, y);
         assertTrue(String.format("pixel at %d,%d: expected %08X, actual %08X", x, y, expected, actual),
                 near(actual, expected, TOLERANCE));
+    }
+
+    private static void assertNear(Bitmap bitmap, int x, int y, int expected, int tolerance) {
+        int actual = bitmap.getPixel(x, y);
+        assertTrue(String.format("pixel at %d,%d: expected %08X, actual %08X (tolerance %d)",
+                x, y, expected, actual, tolerance), near(actual, expected, tolerance));
     }
 
     private static void assertTransparent(Bitmap bitmap, int x, int y) {

@@ -7,7 +7,7 @@
 # below build/run/.
 #
 #   EW_DEVICES   semicolon-separated ew-cli device specs
-#                (default: Pixel7 on API 21, 26, 33, and 36)
+#                (default: Pixel7 on API 21, 24, 26, 33, and 36)
 set -euo pipefail
 
 HARNESS=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -18,7 +18,7 @@ PACKAGE=com.vdtoolkit.renderer
 RUNNER_CLASS=android.test.InstrumentationTestRunner
 SCREENSHOTS="/sdcard/Android/data/$PACKAGE/files/screenshots"
 OUT="$BUILD/run"
-EW_DEVICES="${EW_DEVICES:-model=Pixel7,version=21;model=Pixel7,version=26;model=Pixel7,version=33;model=Pixel7,version=36}"
+EW_DEVICES="${EW_DEVICES:-model=Pixel7,version=21;model=Pixel7,version=24;model=Pixel7,version=26;model=Pixel7,version=33;model=Pixel7,version=36}"
 
 for apk in "$APP" "$TEST"; do
   [[ -f "$apk" ]] || { echo "missing $apk; run build.sh first" >&2; exit 1; }

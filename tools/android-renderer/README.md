@@ -37,7 +37,7 @@ background, with `rocket_launch` as the monochrome layer, and
 `run.sh` runs both APKs and collects results under `build/run/`. With
 `EW_API_TOKEN` set and `ew-cli` installed it runs on
 [emulator.wtf](https://emulator.wtf) across `EW_DEVICES` (default: Pixel 7 on
-API 21, 26, 33, and 36, as `;`-separated `ew-cli --device` specs). Otherwise it
+API 21, 24, 26, 33, and 36, as `;`-separated `ew-cli --device` specs). Otherwise it
 uses the adb device named by `ANDROID_SERIAL`, or the only connected one.
 `RUNNER=ew` or `RUNNER=adb` forces a runner.
 
@@ -60,7 +60,10 @@ adb shell am instrument -w \
 renders each layer at 10 pixels per dp and checks the safe-zone placement, the
 background drawable and the `@color` background, and the monochrome layer on
 API 33+. Below API 26 it checks that the `--legacy` fallback is selected and renders
-both layers under the circular mask.
+both layers under the circular mask. `ic_launcher_gradient` uses a mirrored
+gradient background, which needs API 24; its test checks that API 21 to 23
+select the density PNG, API 24 and 25 the `mipmap-anydpi-v24` vector, and API
+26+ the adaptive icon, and that each shows the same gradient colors.
 On API 26+ it then drives the real launcher through `UiAutomation`: it goes
 home, finds the app by label (swiping the app drawer open if needed), and
 asserts that both foreground and background colors are visible inside the

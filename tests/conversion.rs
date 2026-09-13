@@ -1091,6 +1091,71 @@ fn fits_adaptive_layers_by_uniform_scale_and_centering() {
 }
 
 #[test]
+fn detects_content_outside_the_safe_zone() {
+    let logo = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M2 2H22V22H2Z" fill="#000"/></svg>"##;
+    let mut full = vdtoolkit::convert(logo).unwrap();
+    full.fit_adaptive_layer(vdtoolkit::ADAPTIVE_ICON_SIZE)
+        .unwrap();
+    let bounds = full.outside_adaptive_safe_zone().unwrap();
+    assert_eq!((bounds.left, bounds.right), (9.0, 99.0));
+    let mut safe = vdtoolkit::convert(logo).unwrap();
+    safe.fit_adaptive_layer(vdtoolkit::ADAPTIVE_ICON_SAFE_ZONE)
+        .unwrap();
+    assert!(safe.outside_adaptive_safe_zone().is_none());
+    // Content at exactly the safe zone edge is inside it.
+    let mut edge = vdtoolkit::convert(logo).unwrap();
+    edge.fit_adaptive_layer(72.0).unwrap();
+    assert!(edge.outside_adaptive_safe_zone().is_none());
+}
+
+#[test]
+fn composes_a_masked_legacy_icon() {
+    let logo = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M2 2H22V22H2Z" fill="#102030"/></svg>"##;
+    let mut foreground = vdtoolkit::convert(logo).unwrap();
+    foreground.fit_adaptive_layer(66.0).unwrap();
+    let background = vdtoolkit::Asset::solid_adaptive_layer("#803DDC84").unwrap();
+    assert!(
+        background
+            .to_xml()
+            .contains("android:fillAlpha=\"0.501961\"")
+    );
+    assert!(matches!(
+        vdtoolkit::Asset::solid_adaptive_layer("#fff"),
+        Err(Error::InvalidInput(_))
+    ));
+
+    let legacy = vdtoolkit::Asset::legacy_launcher_icon(&background, &foreground);
+    let xml = legacy.to_xml();
+    assert!(xml.contains("android:width=\"48dp\""));
+    assert!(xml.contains("android:viewportWidth=\"108\""));
+    assert!(xml.starts_with("<?xml"));
+    assert!(xml.contains("<clip-path\n        android:pathData=\"M54,18 C"));
+    assert_eq!(xml.matches("<group>").count(), 2);
+    assert!(xml.contains("android:fillColor=\"#3DDC84\""));
+    assert!(xml.contains("android:pathData=\"M26.5,26.5 L81.5,26.5 L81.5,81.5 L26.5,81.5 Z\""));
+    assert_eq!(legacy.analysis.minimum_api, Some(21));
+    assert_eq!(legacy.analysis.compatibility, Compatibility::Exact);
+    let metrics = &legacy.analysis.metrics;
+    assert_eq!(
+        (metrics.paths, metrics.clip_paths, metrics.groups),
+        (2, 1, 2)
+    );
+    assert_eq!(metrics.estimated_xml_bytes, xml.len());
+
+    // A gradient background lifts the legacy icon to API 24.
+    let gradient = br##"<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108">
+        <defs><linearGradient id="g" x1="0" y1="0" x2="108" y2="0" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#000"/><stop offset="1" stop-color="#FFF"/>
+        </linearGradient></defs>
+        <rect width="108" height="108" fill="url(#g)"/>
+    </svg>"##;
+    let mut background = vdtoolkit::convert(gradient).unwrap();
+    background.fit_adaptive_layer(108.0).unwrap();
+    let legacy = vdtoolkit::Asset::legacy_launcher_icon(&background, &foreground);
+    assert_eq!(legacy.analysis.minimum_api, Some(24));
+}
+
+#[test]
 fn writes_adaptive_icon_resources() {
     assert_eq!(
         vdtoolkit::adaptive_icon_xml("@color/bg", "@drawable/fg", Some("@drawable/mono")),
@@ -1195,6 +1260,11 @@ fn cli_adaptive_writes_layers_icon_and_color_resource() {
     assert!(output.status.success(), "{output:?}");
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert_eq!(stdout.lines().count(), 5);
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.is_empty(),
+        "fit 66 keeps the logo in the safe zone: {stderr}"
+    );
 
     let foreground_xml =
         fs::read_to_string(res.join("drawable/ic_launcher_foreground.xml")).unwrap();
@@ -1235,6 +1305,36 @@ fn cli_adaptive_writes_layers_icon_and_color_resource() {
     assert!(!icon.contains("monochrome"));
     assert!(res.join("drawable/ic_app_foreground.xml").is_file());
     assert!(!res.join("drawable/ic_app_background.xml").exists());
+    assert!(!res.join("mipmap").exists());
+
+    // The default fit leaves a plain logo outside the safe zone; --legacy
+    // adds the masked fallback icon.
+    let output = Command::new(env!("CARGO_BIN_EXE_vdt"))
+        .args(["adaptive", "--foreground"])
+        .arg(&foreground)
+        .args([
+            "--background-color",
+            "#3DDC84",
+            "--name",
+            "ic_old",
+            "--legacy",
+            "-o",
+        ])
+        .arg(&res)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("warning:"), "{stderr}");
+    assert!(stderr.contains("outside the 66dp safe zone"), "{stderr}");
+    let legacy = fs::read_to_string(res.join("mipmap/ic_old.xml")).unwrap();
+    assert!(legacy.contains("android:width=\"48dp\""));
+    assert!(legacy.contains("<clip-path"));
+    assert!(legacy.contains("android:fillColor=\"#3DDC84\""));
+    assert_eq!(
+        fs::read_to_string(res.join("mipmap/ic_old_round.xml")).unwrap(),
+        legacy
+    );
 }
 
 #[test]

@@ -4,7 +4,7 @@ use std::process::ExitCode;
 
 use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
-use vdtoolkit::{Analysis, Compatibility, Error, Result, Severity};
+use vdtoolkit::{Analysis, Asset, Compatibility, Error, Result, Severity};
 use walkdir::WalkDir;
 
 #[derive(Parser)]
@@ -68,6 +68,10 @@ struct AdaptiveArgs {
     /// 66 for a logo; 66 is the safe zone that no launcher mask hides.
     #[arg(long, default_value_t = vdtoolkit::ADAPTIVE_ICON_SIZE)]
     fit: f32,
+    /// Also write a legacy icon for devices below API 26: the background and
+    /// foreground composed under a circular mask, as `mipmap/<name>.xml`.
+    #[arg(long)]
+    legacy: bool,
     /// Android `res/` directory to write into.
     #[arg(short, long, value_name = "RES_DIR")]
     output: PathBuf,
@@ -186,25 +190,25 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
 
     // Every layer is converted before anything is written, so a failing
     // layer leaves the resource directory untouched.
-    let Some(foreground) = adaptive_layer(&args.foreground, args.fit, args.strict) else {
+    let Some(foreground) = adaptive_layer(&args.foreground, args.fit, args.strict, true) else {
         return Ok(Outcome::Failed);
     };
     let mut files = vec![(
         drawable_dir.join(&foreground_name).with_extension("xml"),
-        foreground,
+        foreground.to_xml(),
     )];
-    let background_reference = match (&args.background, color) {
-        (Some(background), _) => {
+    let (background, background_reference) = match (&args.background, color) {
+        (Some(path), _) => {
             let Some(layer) =
-                adaptive_layer(background, vdtoolkit::ADAPTIVE_ICON_SIZE, args.strict)
+                adaptive_layer(path, vdtoolkit::ADAPTIVE_ICON_SIZE, args.strict, false)
             else {
                 return Ok(Outcome::Failed);
             };
             files.push((
                 drawable_dir.join(&background_name).with_extension("xml"),
-                layer,
+                layer.to_xml(),
             ));
-            format!("@drawable/{background_name}")
+            (layer, format!("@drawable/{background_name}"))
         }
         (None, Some(color)) => {
             files.push((
@@ -214,18 +218,21 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
                     .with_extension("xml"),
                 vdtoolkit::color_resource_xml(&background_name, &color),
             ));
-            format!("@color/{background_name}")
+            (
+                vdtoolkit::Asset::solid_adaptive_layer(&color)?,
+                format!("@color/{background_name}"),
+            )
         }
         (None, None) => unreachable!("clap requires a background layer"),
     };
     let monochrome_reference = match &args.monochrome {
         Some(monochrome) => {
-            let Some(layer) = adaptive_layer(monochrome, args.fit, args.strict) else {
+            let Some(layer) = adaptive_layer(monochrome, args.fit, args.strict, true) else {
                 return Ok(Outcome::Failed);
             };
             files.push((
                 drawable_dir.join(&monochrome_name).with_extension("xml"),
-                layer,
+                layer.to_xml(),
             ));
             Some(format!("@drawable/{monochrome_name}"))
         }
@@ -236,16 +243,28 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
         &format!("@drawable/{foreground_name}"),
         monochrome_reference.as_deref(),
     );
+    let round_name = format!("{}_round", args.name);
     files.push((
         mipmap_dir.join(&args.name).with_extension("xml"),
         icon.clone(),
     ));
-    files.push((
-        mipmap_dir
-            .join(format!("{}_round", args.name))
-            .with_extension("xml"),
-        icon,
-    ));
+    files.push((mipmap_dir.join(&round_name).with_extension("xml"), icon));
+    if args.legacy {
+        let legacy = vdtoolkit::Asset::legacy_launcher_icon(&background, &foreground);
+        if let Some(api) = legacy.analysis.minimum_api.filter(|api| *api > 21) {
+            eprintln!(
+                "warning: legacy icon needs API {api} because a layer uses clips or gradients \
+                 and cannot be inflated on earlier devices"
+            );
+        }
+        let legacy_dir = args.output.join("mipmap");
+        let xml = legacy.to_xml();
+        files.push((
+            legacy_dir.join(&args.name).with_extension("xml"),
+            xml.clone(),
+        ));
+        files.push((legacy_dir.join(&round_name).with_extension("xml"), xml));
+    }
 
     for (path, contents) in &files {
         write_file(path, contents)?;
@@ -254,9 +273,11 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
     Ok(Outcome::Passed)
 }
 
-/// Convert one layer, or report the failure with its path and return `None`.
-fn adaptive_layer(input: &Path, fit: f32, strict: bool) -> Option<String> {
-    let layer = || -> Result<String> {
+/// Convert and fit one layer, or report the failure with its path and return
+/// `None`. Foreground and monochrome layers warn when content leaves the safe
+/// zone; a background is meant to fill the layer.
+fn adaptive_layer(input: &Path, fit: f32, strict: bool, check_safe_zone: bool) -> Option<Asset> {
+    let layer = || -> Result<Asset> {
         let mut asset = vdtoolkit::convert_file(input)?;
         if strict && asset.analysis.compatibility != Compatibility::Exact {
             return Err(Error::InvalidInput(
@@ -264,15 +285,37 @@ fn adaptive_layer(input: &Path, fit: f32, strict: bool) -> Option<String> {
             ));
         }
         asset.fit_adaptive_layer(fit)?;
-        Ok(asset.to_xml())
+        Ok(asset)
     };
     match layer() {
-        Ok(xml) => Some(xml),
+        Ok(asset) => {
+            if check_safe_zone {
+                if let Some(bounds) = asset.outside_adaptive_safe_zone() {
+                    eprintln!(
+                        "warning: {}: content spans {}..{} × {}..{}dp, outside the {}dp safe zone; \
+                         launcher masks may hide it (see --fit)",
+                        input.display(),
+                        vdtoolkit_number(bounds.left),
+                        vdtoolkit_number(bounds.right),
+                        vdtoolkit_number(bounds.top),
+                        vdtoolkit_number(bounds.bottom),
+                        vdtoolkit::ADAPTIVE_ICON_SAFE_ZONE
+                    );
+                }
+            }
+            Some(asset)
+        }
         Err(error) => {
             print_error(Some(input), &error);
             None
         }
     }
+}
+
+/// Short decimal for dp values in warnings.
+fn vdtoolkit_number(value: f32) -> String {
+    let text = format!("{value:.1}");
+    text.strip_suffix(".0").map(str::to_owned).unwrap_or(text)
 }
 
 fn validate_resource_name(name: &str) -> Result<()> {

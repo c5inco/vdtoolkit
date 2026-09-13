@@ -123,6 +123,94 @@ impl Asset {
         self.analysis.metrics.estimated_xml_bytes = self.to_xml().len();
         Ok(())
     }
+
+    /// Content bounds of a fitted adaptive layer that reach outside the
+    /// centered 66dp safe zone, which launcher masks may hide. `None` when
+    /// the content stays inside or there is no painted content.
+    pub fn outside_adaptive_safe_zone(&self) -> Option<Bounds> {
+        let bounds = self.analysis.metrics.content_bounds?;
+        let inset = (adaptive::ADAPTIVE_ICON_SIZE - adaptive::ADAPTIVE_ICON_SAFE_ZONE) / 2.0;
+        let (low, high) = (inset - 1e-3, adaptive::ADAPTIVE_ICON_SIZE - inset + 1e-3);
+        let outside =
+            bounds.left < low || bounds.top < low || bounds.right > high || bounds.bottom > high;
+        outside.then_some(bounds)
+    }
+
+    /// A 108dp adaptive icon layer filled with one solid `#RRGGBB` or
+    /// `#AARRGGBB` color, for composing a legacy icon over a color background.
+    pub fn solid_adaptive_layer(color: &str) -> Result<Asset> {
+        let (rgb, alpha) = adaptive::parse_color(color).ok_or_else(|| {
+            Error::InvalidInput(format!("color must be #RRGGBB or #AARRGGBB, got {color:?}"))
+        })?;
+        Ok(Self::synthesized(adaptive::solid_layer(rgb, alpha), &[]))
+    }
+
+    /// A legacy launcher icon for devices below API 26: the fitted
+    /// `background` and `foreground` layers composed under a circular clip of
+    /// the 72dp area launchers show, at 48dp. Fit both layers with
+    /// [`Asset::fit_adaptive_layer`] first.
+    pub fn legacy_launcher_icon(background: &Asset, foreground: &Asset) -> Asset {
+        Self::synthesized(
+            adaptive::legacy_icon(&background.drawable, &foreground.drawable),
+            &[background, foreground],
+        )
+    }
+
+    fn synthesized(drawable: vector::VectorDrawable, layers: &[&Asset]) -> Asset {
+        let mut metrics = Metrics {
+            width: drawable.width_dp,
+            height: drawable.height_dp,
+            viewport_width: drawable.viewport_width,
+            viewport_height: drawable.viewport_height,
+            ..Metrics::default()
+        };
+        let mut compatibility = Compatibility::Exact;
+        for layer in layers {
+            let source = &layer.analysis.metrics;
+            metrics.paths += source.paths;
+            metrics.path_commands += source.path_commands;
+            metrics.groups += source.groups + 1;
+            metrics.gradients += source.gradients;
+            metrics.clip_paths += source.clip_paths;
+            if let Some(bounds) = source.content_bounds {
+                metrics.content_bounds = Some(match metrics.content_bounds {
+                    None => bounds,
+                    Some(union) => Bounds {
+                        left: union.left.min(bounds.left),
+                        top: union.top.min(bounds.top),
+                        right: union.right.max(bounds.right),
+                        bottom: union.bottom.max(bounds.bottom),
+                    },
+                });
+            }
+            compatibility.worsen(layer.analysis.compatibility);
+        }
+        if layers.is_empty() {
+            metrics.paths = 1;
+            metrics.path_commands = 5;
+            metrics.content_bounds = Some(Bounds {
+                left: 0.0,
+                top: 0.0,
+                right: drawable.viewport_width,
+                bottom: drawable.viewport_height,
+            });
+        } else {
+            metrics.clip_paths += 1;
+            metrics.path_commands += 6;
+        }
+        let minimum_api = Some(drawable.minimum_api());
+        let mut asset = Asset {
+            drawable,
+            analysis: Analysis {
+                compatibility,
+                minimum_api,
+                diagnostics: Vec::new(),
+                metrics,
+            },
+        };
+        asset.analysis.metrics.estimated_xml_bytes = asset.to_xml().len();
+        asset
+    }
 }
 
 /// Analyze an SVG file without converting it.

@@ -80,14 +80,17 @@ vdt adaptive --foreground logo.svg --background bg.svg --monochrome logo.svg \
 | `--monochrome <svg>` | Optional monochrome layer for themed icons on Android 13 and newer. |
 | `--fit <dp>` | Square that the foreground and monochrome artwork is scaled to fit, centered on the 108dp layer. Defaults to 108 for artwork drawn on the full layer. For a plain logo, Android recommends 48 to 66; 66 is the safe zone that no launcher mask hides. |
 | `--name <name>` | Resource name, `ic_launcher` by default. Layers use it as a prefix. |
+| `--legacy` | Also write `mipmap/<name>.xml` for devices below API 26: a 48dp vector of the background and foreground under a circular mask of the 72dp area launchers show. |
 
 The files written are `mipmap-anydpi-v26/<name>.xml`,
 `mipmap-anydpi-v26/<name>_round.xml`, `drawable/<name>_foreground.xml`, either
 `drawable/<name>_background.xml` or `values/<name>_background.xml`, and
 `drawable/<name>_monochrome.xml` when a monochrome layer is given. Artwork is
 scaled uniformly and centered, so rendering is unchanged apart from placement;
-a background SVG always fills the whole layer. Every layer is converted before
-anything is written, and a layer that fails leaves the directory untouched.
+a background SVG always fills the whole layer. A warning names any foreground
+or monochrome layer whose content leaves the 66dp safe zone, since launcher
+masks may hide it. Every layer is converted before anything is written, and a
+layer that fails leaves the directory untouched.
 Add `android:icon="@mipmap/<name>"` and `android:roundIcon="@mipmap/<name>_round"`
 to the `<application>` element of the manifest.
 

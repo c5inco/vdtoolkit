@@ -2,13 +2,23 @@
 
 use std::fmt::Write;
 
-use crate::vector::{Paint, PathCommand, PathData, VectorDrawable, VectorNode};
+use crate::vector::{
+    Color, FillRule, LineCap, LineJoin, Paint, PathCommand, PathData, VectorDrawable, VectorGroup,
+    VectorNode, VectorPath,
+};
 
 /// Edge length in dp of every adaptive icon layer.
 pub const ADAPTIVE_ICON_SIZE: f32 = 108.0;
 
 /// Edge length in dp of the square that is never masked away by launchers.
 pub const ADAPTIVE_ICON_SAFE_ZONE: f32 = 66.0;
+
+/// Diameter in dp of the circular area launchers show; the outer 18dp on each
+/// side is reserved for masks and effects.
+pub const ADAPTIVE_ICON_VISIBLE_DIAMETER: f32 = 72.0;
+
+/// Edge length in dp of a legacy launcher icon for devices below API 26.
+pub const LEGACY_ICON_SIZE: f32 = 48.0;
 
 /// Write an `<adaptive-icon>` resource that references the given drawables.
 ///
@@ -102,5 +112,90 @@ fn transform_paint(paint: &mut Paint, scale: f32, dx: f32, dy: f32) {
             gradient.center_y = gradient.center_y * scale + dy;
             gradient.radius *= scale;
         }
+    }
+}
+
+/// Parse `#RRGGBB` or `#AARRGGBB` into a color and an alpha in `0..=1`.
+pub(crate) fn parse_color(text: &str) -> Option<(Color, f32)> {
+    let digits = text.strip_prefix('#').unwrap_or(text);
+    if !matches!(digits.len(), 6 | 8) || !digits.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    let value = u32::from_str_radix(digits, 16).ok()?;
+    let (alpha, rgb) = if digits.len() == 8 {
+        ((value >> 24) as u8, value & 0x00FF_FFFF)
+    } else {
+        (u8::MAX, value)
+    };
+    let color = Color((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8);
+    Some((color, f32::from(alpha) / 255.0))
+}
+
+/// A full-layer rectangle in one solid color.
+pub(crate) fn solid_layer(color: Color, alpha: f32) -> VectorDrawable {
+    let size = ADAPTIVE_ICON_SIZE;
+    VectorDrawable {
+        width_dp: size,
+        height_dp: size,
+        viewport_width: size,
+        viewport_height: size,
+        children: vec![VectorNode::Path(VectorPath {
+            path_data: PathData(vec![
+                PathCommand::Move(0.0, 0.0),
+                PathCommand::Line(size, 0.0),
+                PathCommand::Line(size, size),
+                PathCommand::Line(0.0, size),
+                PathCommand::Close,
+            ]),
+            fill: Some(Paint::Solid(color)),
+            fill_alpha: alpha,
+            fill_rule: FillRule::NonZero,
+            stroke: None,
+            stroke_alpha: 1.0,
+            stroke_width: 1.0,
+            stroke_cap: LineCap::Butt,
+            stroke_join: LineJoin::Miter,
+            stroke_miter: 4.0,
+        })],
+    }
+}
+
+/// A circle as four cubic Béziers, the closest VectorDrawable can come.
+fn circle(cx: f32, cy: f32, r: f32) -> PathData {
+    const KAPPA: f32 = 0.552_284_8;
+    let k = r * KAPPA;
+    PathData(vec![
+        PathCommand::Move(cx, cy - r),
+        PathCommand::Cubic(cx + k, cy - r, cx + r, cy - k, cx + r, cy),
+        PathCommand::Cubic(cx + r, cy + k, cx + k, cy + r, cx, cy + r),
+        PathCommand::Cubic(cx - k, cy + r, cx - r, cy + k, cx - r, cy),
+        PathCommand::Cubic(cx - r, cy - k, cx - k, cy - r, cx, cy - r),
+        PathCommand::Close,
+    ])
+}
+
+/// Compose fitted background and foreground layers into one legacy icon:
+/// both layers under a circular clip of the visible area, the way launchers
+/// mask adaptive icons. Each layer is wrapped in a group so its own clip
+/// paths cannot leak into the other.
+pub(crate) fn legacy_icon(
+    background: &VectorDrawable,
+    foreground: &VectorDrawable,
+) -> VectorDrawable {
+    let center = ADAPTIVE_ICON_SIZE / 2.0;
+    VectorDrawable {
+        width_dp: LEGACY_ICON_SIZE,
+        height_dp: LEGACY_ICON_SIZE,
+        viewport_width: ADAPTIVE_ICON_SIZE,
+        viewport_height: ADAPTIVE_ICON_SIZE,
+        children: vec![
+            VectorNode::ClipPath(circle(center, center, ADAPTIVE_ICON_VISIBLE_DIAMETER / 2.0)),
+            VectorNode::Group(VectorGroup {
+                children: background.children.clone(),
+            }),
+            VectorNode::Group(VectorGroup {
+                children: foreground.children.clone(),
+            }),
+        ],
     }
 }

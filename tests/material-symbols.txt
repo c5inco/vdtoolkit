@@ -1,6 +1,7 @@
 # google/material-design-icons @ 0cbb08816df07faaae3dca060d4ebb10b66c214f
 # Material Symbols Outlined, 24px, weight 400, fill 0, grade 0.
 # Selected by ascending SHA-256("svg2vd-material-symbols-v1\0" + path).
+# The seed keeps its original spelling so this pinned list stays reproducible.
 symbols/web/mobile_off/materialsymbolsoutlined/mobile_off_24px.svg
 symbols/web/control_camera/materialsymbolsoutlined/control_camera_24px.svg
 symbols/web/tab_close/materialsymbolsoutlined/tab_close_24px.svg

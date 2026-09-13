@@ -11,5 +11,5 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "svg2vd-compose-renderer"
+rootProject.name = "vdtoolkit-compose-renderer"
 include(":app")

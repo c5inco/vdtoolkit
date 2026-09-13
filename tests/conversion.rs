@@ -1,7 +1,7 @@
 use std::fs;
 use std::process::Command;
 
-use svg2vd::{Compatibility, DiagnosticCode, Error};
+use vdtoolkit::{Compatibility, DiagnosticCode, Error};
 
 #[test]
 fn converts_viewbox_geometry_colors_and_fill_rule() {
@@ -10,7 +10,7 @@ fn converts_viewbox_geometry_colors_and_fill_rule() {
         <path d="M10 20 L20 20 L20 25 Z" fill="#123456" fill-opacity=".25" fill-rule="evenodd"/>
     </svg>"##;
 
-    let asset = svg2vd::convert(source).unwrap();
+    let asset = vdtoolkit::convert(source).unwrap();
     let xml = asset.to_xml();
 
     assert_eq!(asset.analysis.compatibility, Compatibility::Exact);
@@ -32,7 +32,7 @@ fn normalizes_shapes_nested_transforms_and_uniform_strokes() {
         </g></g>
     </svg>"##;
 
-    let asset = svg2vd::convert(source).unwrap();
+    let asset = vdtoolkit::convert(source).unwrap();
     let xml = asset.to_xml();
 
     assert_eq!(
@@ -59,7 +59,7 @@ fn normalizes_every_core_shape_and_local_use() {
         <use href="#tick" transform="translate(24 20)"/>
     </svg>"##;
 
-    let asset = svg2vd::convert(source).unwrap();
+    let asset = vdtoolkit::convert(source).unwrap();
     assert_eq!(
         asset.analysis.compatibility,
         Compatibility::ExactWithNormalization
@@ -79,7 +79,7 @@ fn resolves_inherited_paint_and_flattens_rotation() {
         </g>
     </svg>"##;
 
-    let asset = svg2vd::convert(source).unwrap();
+    let asset = vdtoolkit::convert(source).unwrap();
     let xml = asset.to_xml();
     assert!(xml.contains("android:pathData=\"M-2,1 L-2,3\""));
     assert!(xml.contains("android:fillColor=\"#102030\""));
@@ -94,7 +94,7 @@ fn lowers_single_path_opacity_without_changing_compositing() {
         <path d="M2 2H22V22H2Z" fill="#102030" style="opacity: .3"/>
     </svg>"##;
 
-    let asset = svg2vd::convert(source).unwrap();
+    let asset = vdtoolkit::convert(source).unwrap();
     let xml = asset.to_xml();
     assert_eq!(
         asset.analysis.compatibility,
@@ -112,7 +112,7 @@ fn rejects_opacity_when_painted_content_can_overlap() {
         let source = format!(
             r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">{content}</svg>"#
         );
-        let analysis = svg2vd::analyze(source.as_bytes()).unwrap();
+        let analysis = vdtoolkit::analyze(source.as_bytes()).unwrap();
         assert_eq!(analysis.compatibility, Compatibility::Unsupported);
         assert!(analysis.diagnostics.iter().any(|diagnostic| {
             matches!(diagnostic.code, DiagnosticCode::UnsupportedPaint)
@@ -127,7 +127,7 @@ fn normalizes_arc_geometry_and_emits_parseable_xml() {
         <path d="M2 12A10 10 0 0 1 22 12" fill="none" stroke="#000"/>
     </svg>"##;
 
-    let xml = svg2vd::convert(source).unwrap().to_xml();
+    let xml = vdtoolkit::convert(source).unwrap().to_xml();
     assert!(xml.contains(" C"), "arc should normalize to cubic geometry");
     assert!(xml.contains("22,12"));
     roxmltree::Document::parse(&xml).unwrap();
@@ -135,7 +135,7 @@ fn normalizes_arc_geometry_and_emits_parseable_xml() {
 
 #[test]
 fn malformed_svg_is_a_structured_error_not_a_panic() {
-    let result = svg2vd::convert(br#"<svg><path d="M0 0"></svg>"#);
+    let result = vdtoolkit::convert(br#"<svg><path d="M0 0"></svg>"#);
     assert!(matches!(result, Err(Error::Xml(_))));
 }
 
@@ -145,7 +145,7 @@ fn never_converts_known_lossy_features() {
         <image href="https://example.com/pixel.png" width="24" height="24"/>
     </svg>"#;
 
-    let analysis = svg2vd::analyze(source).unwrap();
+    let analysis = vdtoolkit::analyze(source).unwrap();
     assert_eq!(analysis.compatibility, Compatibility::Unsupported);
     assert!(
         analysis
@@ -154,7 +154,7 @@ fn never_converts_known_lossy_features() {
             .any(|diagnostic| matches!(diagnostic.code, DiagnosticCode::ExternalImage))
     );
     assert!(matches!(
-        svg2vd::convert(source),
+        vdtoolkit::convert(source),
         Err(Error::Incompatible(_))
     ));
 }
@@ -164,7 +164,7 @@ fn rejects_non_uniform_transforms_on_strokes() {
     let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
         <path transform="scale(2 3)" d="M1 1L4 1" fill="none" stroke="#000"/>
     </svg>"##;
-    let analysis = svg2vd::analyze(source).unwrap();
+    let analysis = vdtoolkit::analyze(source).unwrap();
     assert_eq!(analysis.compatibility, Compatibility::Unsupported);
     assert!(
         analysis.diagnostics.iter().any(|diagnostic| matches!(
@@ -186,7 +186,7 @@ fn rejects_stroke_features_vector_drawable_cannot_express() {
                 <path d="M1 1L20 20" fill="#fff" stroke="#000" {extra}/>
             </svg>"##
         );
-        let analysis = svg2vd::analyze(source.as_bytes()).unwrap();
+        let analysis = vdtoolkit::analyze(source.as_bytes()).unwrap();
         assert_eq!(
             analysis.compatibility,
             Compatibility::Unsupported,
@@ -202,7 +202,7 @@ fn aosp_edge_fixtures_have_stable_conversion_outcomes() {
             <path d="M1 1H7V4H1Z"/>
         </g>
     </svg>"##;
-    let asset = svg2vd::convert(convertible).unwrap();
+    let asset = vdtoolkit::convert(convertible).unwrap();
     assert_eq!(
         asset.analysis.compatibility,
         Compatibility::ExactWithNormalization
@@ -244,7 +244,7 @@ fn aosp_edge_fixtures_have_stable_conversion_outcomes() {
     ];
 
     for (name, expected_code, source) in unsupported {
-        let analysis = svg2vd::analyze(source.as_bytes()).unwrap();
+        let analysis = vdtoolkit::analyze(source.as_bytes()).unwrap();
         assert_eq!(analysis.compatibility, Compatibility::Unsupported, "{name}");
         assert!(
             analysis
@@ -266,7 +266,7 @@ fn lowers_transformed_single_path_clips_with_api_21_ordering() {
         </g>
     </svg>"##;
 
-    let asset = svg2vd::convert(source).unwrap();
+    let asset = vdtoolkit::convert(source).unwrap();
     let xml = asset.to_xml();
     let clip = xml.find("<clip-path").unwrap();
     let path = xml.find("<path").unwrap();
@@ -286,7 +286,7 @@ fn lowers_object_bounding_box_clips_to_viewport_geometry() {
         <rect x="4" y="6" width="8" height="10" fill="#123456" clip-path="url(#c)"/>
     </svg>"##;
 
-    let asset = svg2vd::convert(source).unwrap();
+    let asset = vdtoolkit::convert(source).unwrap();
     let xml = asset.to_xml();
     assert!(xml.contains("android:pathData=\"M4,6 L8,6 L8,16 L4,16 Z\""));
     assert!(xml.contains("android:pathData=\"M4,6 L12,6 L12,16 L4,16 Z\""));
@@ -304,7 +304,7 @@ fn lowers_opaque_white_masks_to_scoped_clips() {
         </g>
     </svg>"##;
 
-    let asset = svg2vd::convert(source).unwrap();
+    let asset = vdtoolkit::convert(source).unwrap();
     let xml = asset.to_xml();
     assert_eq!(xml.matches("<clip-path").count(), 2);
     let region = xml.find("M4,5 L24,5 L24,23 L4,23 Z").unwrap();
@@ -323,7 +323,7 @@ fn lowers_object_bounding_box_mask_content() {
         <rect x="4" y="6" width="8" height="10" fill="#123456" mask="url(#m)"/>
     </svg>"##;
 
-    let asset = svg2vd::convert(source).unwrap();
+    let asset = vdtoolkit::convert(source).unwrap();
     let xml = asset.to_xml();
     assert_eq!(xml.matches("<clip-path").count(), 2);
     assert!(xml.contains("android:pathData=\"M4,6 L8,6 L8,16 L4,16 Z\""));
@@ -339,7 +339,7 @@ fn rejects_masks_that_are_not_hard_white_geometry() {
         br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><mask id="m"><path fill="#fff" fill-rule="evenodd" d="M0 0H24V24H0ZM4 4V20H20V4Z"/></mask><path d="M0 0H24V24H0Z" mask="url(#m)"/></svg>"##.as_slice(),
         br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><mask id="m" fill="#000"><path fill="#fff" d="M0 0H24V24H0Z"/><path d="M4 4H20V20H4Z"/></mask><path d="M0 0H24V24H0Z" mask="url(#m)"/></svg>"##.as_slice(),
     ] {
-        let analysis = svg2vd::analyze(source).unwrap();
+        let analysis = vdtoolkit::analyze(source).unwrap();
         assert_eq!(analysis.compatibility, Compatibility::Unsupported);
         assert!(analysis
             .diagnostics
@@ -362,7 +362,7 @@ fn preserves_nested_clip_intersection_and_scope() {
         </g>
     </svg>"##;
 
-    let asset = svg2vd::convert(source).unwrap();
+    let asset = vdtoolkit::convert(source).unwrap();
     let xml = asset.to_xml();
     assert_eq!(xml.matches("<group>").count(), 2);
     assert_eq!(xml.matches("<clip-path").count(), 2);
@@ -380,7 +380,7 @@ fn rejects_clip_semantics_android_cannot_represent_exactly() {
         br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><defs><clipPath id="c"><path d="M0 0H8V24H0Z"/><path d="M16 0H24V24H16Z"/></clipPath></defs><path d="M0 0H24V24H0Z" clip-path="url(#c)"/></svg>"##.as_slice(),
         br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><defs><clipPath id="c"><path clip-rule="evenodd" d="M0 0H24V24H0ZM4 4V20H20V4Z"/></clipPath></defs><path d="M0 0H24V24H0Z" clip-path="url(#c)"/></svg>"##.as_slice(),
     ] {
-        let analysis = svg2vd::analyze(source).unwrap();
+        let analysis = vdtoolkit::analyze(source).unwrap();
         assert_eq!(analysis.compatibility, Compatibility::Unsupported);
         assert!(analysis.diagnostics.iter().any(|diagnostic| matches!(
             diagnostic.code,
@@ -394,8 +394,8 @@ fn output_is_deterministic() {
     let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
         <circle cx="12" cy="12" r="8" fill="#ff0055"/>
     </svg>"##;
-    let first = svg2vd::convert(source).unwrap().to_xml();
-    let second = svg2vd::convert(source).unwrap().to_xml();
+    let first = vdtoolkit::convert(source).unwrap().to_xml();
+    let second = vdtoolkit::convert(source).unwrap().to_xml();
     assert_eq!(first.as_bytes(), second.as_bytes());
 }
 
@@ -404,7 +404,7 @@ fn embedding_api_serializes_and_optimizes_an_asset() {
     let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
         <path d="M1.234567 2.345678L20.987654 21.876543" fill="#123456"/>
     </svg>"##;
-    let mut asset = svg2vd::convert(source).unwrap();
+    let mut asset = vdtoolkit::convert(source).unwrap();
     let before = asset.to_xml();
 
     asset.optimize();
@@ -433,7 +433,7 @@ fn cli_converts_directories_and_check_has_ci_exit_code() {
     )
     .unwrap();
 
-    let check = Command::new(env!("CARGO_BIN_EXE_svg2vd"))
+    let check = Command::new(env!("CARGO_BIN_EXE_vdt"))
         .args(["check", input.to_str().unwrap(), "--format", "json"])
         .output()
         .unwrap();
@@ -442,7 +442,7 @@ fn cli_converts_directories_and_check_has_ci_exit_code() {
     assert_eq!(json.as_array().unwrap().len(), 2);
 
     fs::remove_file(nested.join("bad.svg")).unwrap();
-    let convert = Command::new(env!("CARGO_BIN_EXE_svg2vd"))
+    let convert = Command::new(env!("CARGO_BIN_EXE_vdt"))
         .args([input.to_str().unwrap(), "-o", output.to_str().unwrap()])
         .output()
         .unwrap();
@@ -464,7 +464,7 @@ fn optimize_reports_before_and_after_sizes() {
     )
     .unwrap();
 
-    let result = Command::new(env!("CARGO_BIN_EXE_svg2vd"))
+    let result = Command::new(env!("CARGO_BIN_EXE_vdt"))
         .args([
             "optimize",
             input.to_str().unwrap(),
@@ -513,7 +513,7 @@ fn lowers_user_space_linear_gradient_with_stop_alpha_and_spread() {
         <path d="M0 0H24V24H0Z" fill="url(#g)" fill-opacity=".8"/>
     </svg>"##;
 
-    let asset = svg2vd::convert(source).unwrap();
+    let asset = vdtoolkit::convert(source).unwrap();
     let xml = asset.to_xml();
     assert_eq!(asset.analysis.compatibility, Compatibility::Exact);
     assert_eq!(asset.analysis.minimum_api, Some(24));
@@ -541,7 +541,7 @@ fn solid_drawables_do_not_declare_the_aapt_namespace() {
     let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
         <path d="M0 0H24V24H0Z" fill="#123456"/>
     </svg>"##;
-    let asset = svg2vd::convert(source).unwrap();
+    let asset = vdtoolkit::convert(source).unwrap();
     assert!(!asset.to_xml().contains("xmlns:aapt"));
     assert_eq!(asset.analysis.minimum_api, Some(21));
 }
@@ -553,7 +553,7 @@ fn maps_object_bounding_box_linear_gradients_to_viewport_coordinates() {
         <rect x="4" y="6" width="8" height="10" fill="url(#g)"/>
     </svg>"##;
 
-    let asset = svg2vd::convert(source).unwrap();
+    let asset = vdtoolkit::convert(source).unwrap();
     let xml = asset.to_xml();
     assert_eq!(
         asset.analysis.compatibility,
@@ -579,7 +579,7 @@ fn skewed_linear_gradients_follow_the_inverse_transpose() {
         <path d="M0 0H10V10H0Z" fill="url(#g)"/>
     </svg>"##;
 
-    let xml = svg2vd::convert(source).unwrap().to_xml();
+    let xml = vdtoolkit::convert(source).unwrap().to_xml();
     for (name, expected) in [
         ("startX", 0.0),
         ("startY", 0.0),
@@ -599,7 +599,7 @@ fn zero_length_linear_gradients_paint_their_last_stop() {
         <path d="M0 0H24V24H0Z" fill="url(#g)"/>
     </svg>"##;
 
-    let asset = svg2vd::convert(source).unwrap();
+    let asset = vdtoolkit::convert(source).unwrap();
     let xml = asset.to_xml();
     assert!(xml.contains(r##"android:fillColor="#0B6E4F""##));
     assert!(xml.contains(r#"android:fillAlpha="0.5""#));
@@ -623,7 +623,7 @@ fn lowers_circular_radial_gradients_and_gradient_strokes_under_uniform_scale() {
         </g>
     </svg>"##;
 
-    let mut asset = svg2vd::convert(source).unwrap();
+    let mut asset = vdtoolkit::convert(source).unwrap();
     let xml = asset.to_xml();
     assert!(xml.contains(r#"android:type="radial""#));
     assert!(xml.contains(r#"android:tileMode="repeat""#));
@@ -656,7 +656,7 @@ fn rejects_radial_gradients_android_cannot_draw() {
             r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><defs><radialGradient id="r" gradientUnits="userSpaceOnUse" cx="12" cy="12" r="10" fr="2"><stop/><stop offset="1" stop-color="#fff"/></radialGradient></defs><path d="M0 0H24V24H0Z" fill="url(#r)"/></svg>"##,
         ),
     ] {
-        let analysis = svg2vd::analyze(source.as_bytes()).unwrap();
+        let analysis = vdtoolkit::analyze(source.as_bytes()).unwrap();
         assert_eq!(analysis.compatibility, Compatibility::Unsupported, "{name}");
         assert!(
             analysis
@@ -674,7 +674,7 @@ fn reports_content_bounds_including_strokes_clamped_to_the_viewport() {
         <rect x="4" y="6" width="8" height="10" fill="#000"/>
         <path d="M2 20H30" stroke="#000" stroke-width="2"/>
     </svg>"##;
-    let bounds = svg2vd::analyze(source)
+    let bounds = vdtoolkit::analyze(source)
         .unwrap()
         .metrics
         .content_bounds
@@ -686,7 +686,7 @@ fn reports_content_bounds_including_strokes_clamped_to_the_viewport() {
 
     let empty = br#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"/>"#;
     assert!(
-        svg2vd::analyze(empty)
+        vdtoolkit::analyze(empty)
             .unwrap()
             .metrics
             .content_bounds
@@ -710,7 +710,7 @@ fn cli_directory_runs_report_every_file_and_continue_past_failures() {
     )
     .unwrap();
     let run = |args: &[&str]| {
-        Command::new(env!("CARGO_BIN_EXE_svg2vd"))
+        Command::new(env!("CARGO_BIN_EXE_vdt"))
             .args(args)
             .output()
             .unwrap()
@@ -757,7 +757,7 @@ fn content_bounds_ignore_hidden_and_unpainted_geometry() {
         <path d="M2 2H30V6H2Z" fill="none" stroke="none"/>
         <rect x="4" y="6" width="8" height="10" fill="#000"/>
     </svg>"##;
-    let analysis = svg2vd::analyze(source).unwrap();
+    let analysis = vdtoolkit::analyze(source).unwrap();
     assert_eq!(analysis.metrics.paths, 1);
     let bounds = analysis.metrics.content_bounds.unwrap();
     assert_close(bounds.left, 4.0);
@@ -769,7 +769,7 @@ fn content_bounds_ignore_hidden_and_unpainted_geometry() {
         <path d="M0 0H24V24H0Z" visibility="hidden" fill="#000"/>
     </svg>"##;
     assert!(
-        svg2vd::analyze(only_hidden)
+        vdtoolkit::analyze(only_hidden)
             .unwrap()
             .metrics
             .content_bounds
@@ -789,7 +789,7 @@ fn single_stop_gradients_paint_a_solid_color() {
         <path d="M0 0H12V24H0Z" fill="url(#g)"/>
         <path d="M12 0H24V24H12Z" fill="url(#r)"/>
     </svg>"##;
-    let asset = svg2vd::convert(source).unwrap();
+    let asset = vdtoolkit::convert(source).unwrap();
     let xml = asset.to_xml();
     assert!(xml.contains(r##"android:fillColor="#3DDC84""##));
     assert!(xml.contains(r#"android:fillAlpha="0.5""#));
@@ -810,7 +810,7 @@ fn content_bounds_ignore_fully_transparent_paint() {
         <path d="M0 0H24V24H0Z" fill="none" stroke="#000" stroke-width="0"/>
         <rect x="4" y="6" width="8" height="10" fill="#000" stroke="#000" stroke-width="4" stroke-opacity="0"/>
     </svg>"##;
-    let analysis = svg2vd::analyze(source).unwrap();
+    let analysis = vdtoolkit::analyze(source).unwrap();
     let bounds = analysis.metrics.content_bounds.unwrap();
     // Only the rect's fill paints; its transparent stroke must not widen the bounds.
     assert_close(bounds.left, 4.0);
@@ -822,7 +822,7 @@ fn content_bounds_ignore_fully_transparent_paint() {
         <path d="M0 0H24V24H0Z" fill="#000" fill-opacity="0"/>
     </svg>"##;
     assert!(
-        svg2vd::analyze(nothing_visible)
+        vdtoolkit::analyze(nothing_visible)
             .unwrap()
             .metrics
             .content_bounds
@@ -847,7 +847,7 @@ fn content_bounds_ignore_gradients_whose_stops_are_all_transparent() {
         <path d="M0 0H24V24H0Z" fill="none" stroke="url(#clear)" stroke-width="4"/>
         <rect x="4" y="6" width="8" height="10" fill="url(#faint)"/>
     </svg>"##;
-    let analysis = svg2vd::analyze(source).unwrap();
+    let analysis = vdtoolkit::analyze(source).unwrap();
     assert_eq!(
         analysis.metrics.paths, 3,
         "transparent gradients are still emitted"
@@ -865,7 +865,7 @@ fn content_bounds_ignore_gradients_whose_stops_are_all_transparent() {
         <path d="M0 0H24V24H0Z" fill="url(#clear)"/>
     </svg>"##;
     assert!(
-        svg2vd::analyze(only_clear)
+        vdtoolkit::analyze(only_clear)
             .unwrap()
             .metrics
             .content_bounds
@@ -887,7 +887,7 @@ fn optimize_keeps_gradient_geometry_valid() {
         <path d="M0 0H12V24H0Z" fill="url(#tiny)"/>
         <path d="M12 0H24V24H12Z" fill="url(#short)"/>
     </svg>"##;
-    let mut asset = svg2vd::convert(source).unwrap();
+    let mut asset = vdtoolkit::convert(source).unwrap();
     asset.optimize();
     let xml = asset.to_xml();
     let radius = attribute(&xml, "gradientRadius");
@@ -911,7 +911,7 @@ fn gradient_degeneracy_is_judged_after_the_gradient_transform() {
             gradientTransform="scale(100000)"><stop stop-color="#000"/><stop offset="1" stop-color="#fff"/></linearGradient></defs>
         <path d="M0 0H24V24H0Z" fill="url(#g)"/>
     </svg>"##;
-    let xml = svg2vd::convert(scaled).unwrap().to_xml();
+    let xml = vdtoolkit::convert(scaled).unwrap().to_xml();
     assert!(
         xml.contains("aapt"),
         "scaled gradient must stay a gradient:\n{xml}"
@@ -925,7 +925,7 @@ fn gradient_degeneracy_is_judged_after_the_gradient_transform() {
             <stop stop-color="#f00"/><stop offset="1" stop-color="#00f"/></linearGradient></defs>
         <path d="M0 0H24V24H0Z" fill="url(#g)"/>
     </svg>"##;
-    let xml = svg2vd::convert(sub_resolution).unwrap().to_xml();
+    let xml = vdtoolkit::convert(sub_resolution).unwrap().to_xml();
     assert!(
         xml.contains("aapt"),
         "sub-resolution axis must stay a gradient:\n{xml}"
@@ -945,7 +945,7 @@ fn radial_radius_stays_positive_without_optimization() {
             <stop stop-color="#fff"/><stop offset="1" stop-color="#000"/></radialGradient></defs>
         <path d="M0 0H24V24H0Z" fill="url(#r)"/>
     </svg>"##;
-    let xml = svg2vd::convert(source).unwrap().to_xml();
+    let xml = vdtoolkit::convert(source).unwrap().to_xml();
     let radius = attribute(&xml, "gradientRadius");
     assert!(
         radius > 0.0,
@@ -965,7 +965,7 @@ fn content_bounds_use_the_serialized_gradient_alpha() {
         <path d="M0 0H24V24H0Z" fill="url(#faint)"/>
         <rect x="4" y="6" width="8" height="10" fill="#000"/>
     </svg>"##;
-    let asset = svg2vd::convert(source).unwrap();
+    let asset = vdtoolkit::convert(source).unwrap();
     let xml = asset.to_xml();
     assert!(xml.contains(r##"android:color="#00000000""##), "{xml}");
     assert!(xml.contains(r##"android:color="#00FFFFFF""##), "{xml}");
@@ -983,7 +983,7 @@ fn content_bounds_use_the_serialized_gradient_alpha() {
         </linearGradient></defs>
         <path d="M0 0H24V24H0Z" fill="url(#g)"/>
     </svg>"##;
-    let asset = svg2vd::convert(barely).unwrap();
+    let asset = vdtoolkit::convert(barely).unwrap();
     assert!(asset.to_xml().contains(r##"android:color="#01000000""##));
     assert_close(asset.analysis.metrics.content_bounds.unwrap().right, 24.0);
 }
@@ -996,7 +996,7 @@ fn content_bounds_use_the_serialized_path_alpha_and_stroke_width() {
         <path d="M0 0H24V24H0Z" fill="none" stroke="#000" stroke-width="0.0000004"/>
         <rect x="4" y="6" width="8" height="10" fill="#000"/>
     </svg>"##;
-    let asset = svg2vd::convert(source).unwrap();
+    let asset = vdtoolkit::convert(source).unwrap();
     let xml = asset.to_xml();
     assert!(xml.contains(r#"android:fillAlpha="0""#), "{xml}");
     assert!(xml.contains(r#"android:strokeAlpha="0""#), "{xml}");
@@ -1011,7 +1011,7 @@ fn content_bounds_use_the_serialized_path_alpha_and_stroke_width() {
     let faint = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
         <path d="M0 0H24V24H0Z" fill="#000" fill-opacity="0.000001"/>
     </svg>"##;
-    let asset = svg2vd::convert(faint).unwrap();
+    let asset = vdtoolkit::convert(faint).unwrap();
     assert!(asset.to_xml().contains(r#"android:fillAlpha="0.000001""#));
     assert_close(asset.analysis.metrics.content_bounds.unwrap().right, 24.0);
 }

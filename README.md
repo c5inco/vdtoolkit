@@ -1,7 +1,7 @@
-# svg2vd
+# vdtoolkit
 
 Convert SVG icons to Android VectorDrawable XML without Android Studio, the
-Android SDK, Gradle, or a JVM. `svg2vd` is a single native binary and a small
+Android SDK, Gradle, or a JVM. `vdtoolkit` is a single native binary and a small
 Rust library. Output is deterministic, and anything VectorDrawable cannot render
 exactly is rejected with a diagnostic instead of silently approximated.
 
@@ -12,11 +12,13 @@ of emitting a drawable that renders differently from the source.
 ## Install
 
 ```sh
-cargo install svg2vd --locked
+cargo install vdtoolkit --locked
 ```
 
+The package is `vdtoolkit` and the installed command is `vdt`.
+
 Prebuilt binaries for macOS, Linux, and Windows are on the
-[Releases page](https://github.com/c5inco/svg2vd/releases).
+[Releases page](https://github.com/c5inco/vdtoolkit/releases).
 
 To build from a clone of this repository instead, you need Rust 1.85 or newer:
 
@@ -27,11 +29,11 @@ cargo install --path . --locked
 ## Usage
 
 ```sh
-svg2vd icon.svg -o ic_icon.xml            # shorthand for `convert`
-svg2vd convert icons/ -o res/drawable/    # directories work; tree is preserved
-svg2vd check icon.svg                     # is it convertible? (no output written)
-svg2vd inspect icon.svg --format json     # diagnostics, min API, metrics
-svg2vd optimize icon.svg -o ic_icon.xml   # convert with smaller numbers, same rendering
+vdt icon.svg -o ic_icon.xml            # shorthand for `convert`
+vdt convert icons/ -o res/drawable/    # directories work; tree is preserved
+vdt check icon.svg                     # is it convertible? (no output written)
+vdt inspect icon.svg --format json     # diagnostics, min API, metrics
+vdt optimize icon.svg -o ic_icon.xml   # convert with smaller numbers, same rendering
 ```
 
 | Command | What it does |
@@ -104,16 +106,16 @@ for the renderer findings behind those levels.
 ## Rust API (experimental)
 
 Rust programs can embed the same analyzer and converter without launching a
-subprocess. API docs are on [docs.rs](https://docs.rs/svg2vd).
+subprocess. API docs are on [docs.rs](https://docs.rs/vdtoolkit).
 
 ```rust
 let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
     <path d="M2 2H22V22H2Z" fill="#123456"/>
 </svg>"##;
-let asset = svg2vd::convert(source)?;
+let asset = vdtoolkit::convert(source)?;
 assert_eq!(asset.analysis.minimum_api, Some(21));
 let xml = asset.to_xml();
-# Ok::<(), svg2vd::Error>(())
+# Ok::<(), vdtoolkit::Error>(())
 ```
 
 The CLI is the stable interface. The Rust API may change between `0.x`

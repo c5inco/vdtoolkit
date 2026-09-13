@@ -1,4 +1,4 @@
-package com.svg2vd.renderer.compose
+package com.vdtoolkit.renderer.compose
 
 import android.content.res.Resources
 import android.os.Build
@@ -125,7 +125,7 @@ class ComposeRendererTest {
         get() = InstrumentationRegistry.getInstrumentation().targetContext.resources
 
     private fun resourceId(name: String): Int {
-        val id = resources.getIdentifier(name, "drawable", "com.svg2vd.renderer.compose")
+        val id = resources.getIdentifier(name, "drawable", "com.vdtoolkit.renderer.compose")
         assertTrue("missing drawable resource $name", id != 0)
         return id
     }

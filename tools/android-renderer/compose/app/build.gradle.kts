@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "com.svg2vd.renderer.compose"
+    namespace = "com.vdtoolkit.renderer.compose"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.svg2vd.renderer.compose"
+        applicationId = "com.vdtoolkit.renderer.compose"
         minSdk = 23
         targetSdk = 36
         versionCode = 1

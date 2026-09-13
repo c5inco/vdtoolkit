@@ -11,10 +11,10 @@
 //! let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
 //!     <path d="M2 2H22V22H2Z" fill="#123456"/>
 //! </svg>"##;
-//! let asset = svg2vd::convert(source)?;
+//! let asset = vdtoolkit::convert(source)?;
 //! assert_eq!(asset.analysis.minimum_api, Some(21));
 //! assert!(asset.to_xml().contains("<vector"));
-//! # Ok::<(), svg2vd::Error>(())
+//! # Ok::<(), vdtoolkit::Error>(())
 //! ```
 
 mod analysis;

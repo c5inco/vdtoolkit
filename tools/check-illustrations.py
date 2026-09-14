@@ -72,6 +72,13 @@ MINIMUM_CONVERTIBLE = {
 # two rasterizers stays far below this.
 VISUAL_TOLERANCE = 0.005
 
+# Mean channel difference, out of 255, over the pixels either render paints,
+# above which a converted file also counts as a visual mismatch. The pixel
+# count above misses a shift of up to 32 levels in color or opacity across all
+# the artwork, since no single pixel crosses its threshold; this catches it.
+# The worst pinned file measures 0.22.
+PAINTED_MEAN_TOLERANCE = 1.0
+
 CONVERTIBLE = ("exact", "exact_with_normalization")
 
 
@@ -253,8 +260,14 @@ def main() -> None:
             if len(comparisons) != len(convertible):
                 raise AssertionError(f"{source}: compare returned {len(comparisons)} of {len(convertible)}")
             mismatches = sorted(
-                (c for c in comparisons if "error" in c or c["different_pixels"] > VISUAL_TOLERANCE),
-                key=lambda c: -c.get("different_pixels", 1.0),
+                (
+                    c
+                    for c in comparisons
+                    if "error" in c
+                    or c["different_pixels"] > VISUAL_TOLERANCE
+                    or c["painted_mean_difference"] > PAINTED_MEAN_TOLERANCE
+                ),
+                key=lambda c: (-c.get("different_pixels", 1.0), -c.get("painted_mean_difference", 255.0)),
             )
             compared = [c for c in comparisons if "error" not in c]
             summary[source] = {
@@ -283,7 +296,8 @@ def main() -> None:
     print(f"{convertible} / {convertible} convertible illustrations are byte-identical on repeat")
     print(
         f"{matches} / {convertible} converted drawables render within "
-        f"{VISUAL_TOLERANCE:.1%} of pixels of the resvg source render"
+        f"{VISUAL_TOLERANCE:.1%} of pixels and {PAINTED_MEAN_TOLERANCE:g} / 255 mean "
+        f"channel difference of the resvg source render"
     )
     for source, s in summary.items():
         repository, commit, license, description = SOURCES[source]
@@ -328,7 +342,8 @@ def main() -> None:
             else:
                 print(
                     f"    {name}: {c['different_pixels']:.1%} of pixels differ, "
-                    f"mean {c['mean_absolute_difference']:.2f}"
+                    f"mean {c['mean_absolute_difference']:.2f}, "
+                    f"painted mean {c['painted_mean_difference']:.2f}"
                 )
 
     mismatched = sum(len(s["mismatches"]) for s in summary.values())

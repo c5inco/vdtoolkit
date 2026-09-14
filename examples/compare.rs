@@ -3,10 +3,13 @@
 //! renderer, which follows VectorDrawable semantics.
 //!
 //! Prints one JSON object per input file: the render size, the mean absolute
-//! channel difference over unpremultiplied RGBA, and the fraction of pixels
+//! channel difference over unpremultiplied RGBA, both across the whole canvas
+//! and across only the pixels either render paints, and the fraction of pixels
 //! whose largest channel difference is above 32, which is well past the
-//! anti-aliasing noise between two rasterizers. Used by
-//! `tools/check-illustrations.py`.
+//! anti-aliasing noise between two rasterizers. The painted mean does not
+//! shrink with empty canvas, so it catches a small shift in color or opacity
+//! across all the artwork that no single pixel pushes past the threshold. Used
+//! by `tools/check-illustrations.py`.
 
 use std::path::Path;
 
@@ -24,6 +27,7 @@ struct Comparison<'a> {
     width: u32,
     height: u32,
     mean_absolute_difference: f64,
+    painted_mean_difference: f64,
     different_pixels: f64,
 }
 
@@ -80,13 +84,21 @@ fn compare(path: &Path) -> Result<Comparison<'static>, String> {
         .map_err(|error| error.to_string())?;
     let reference = render_reference(&source, width, height)?;
     let mut total = 0u64;
+    let mut painted_total = 0u64;
+    let mut painted = 0usize;
     let mut different = 0usize;
     for (a, b) in drawable.chunks(4).zip(reference.chunks(4)) {
         let mut largest = 0u8;
+        let mut pixel_total = 0u64;
         for (x, y) in a.iter().zip(b) {
             let difference = x.abs_diff(*y);
-            total += u64::from(difference);
+            pixel_total += u64::from(difference);
             largest = largest.max(difference);
+        }
+        total += pixel_total;
+        if a[3] > 0 || b[3] > 0 {
+            painted += 1;
+            painted_total += pixel_total;
         }
         if largest > PIXEL_THRESHOLD {
             different += 1;
@@ -98,6 +110,11 @@ fn compare(path: &Path) -> Result<Comparison<'static>, String> {
         width,
         height,
         mean_absolute_difference: total as f64 / (pixels * 4.0),
+        painted_mean_difference: if painted == 0 {
+            0.0
+        } else {
+            painted_total as f64 / (painted as f64 * 4.0)
+        },
         different_pixels: different as f64 / pixels,
     })
 }

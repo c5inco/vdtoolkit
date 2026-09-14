@@ -167,10 +167,12 @@ repository commit and per-file content hash and downloaded on demand:
 The suite reports compatibility, the rejection codes and reasons, which code
 combinations block each file, repeated-output determinism, and a visual
 comparison: `examples/compare.rs` renders the source through resvg and the
-converted drawable through the library's VectorDrawable renderer at 256px and
-counts the pixels whose largest channel difference exceeds 32.
+converted drawable through the library's VectorDrawable renderer at 256px. A
+file fails when more than 0.5% of pixels have a channel difference above 32, or
+when the mean channel difference over painted pixels exceeds 1 / 255, which
+catches a small shift in color or opacity across all the artwork.
 
-| Source | Convertible | Byte-identical on repeat | Within 0.5% of pixels of resvg |
+| Source | Convertible | Byte-identical on repeat | Renders like resvg |
 | --- | --- | --- | --- |
 | illlustrations | 50 / 130 | 50 / 50 | 50 / 50 |
 | flowbite | 86 / 107 | 86 / 86 | 86 / 86 |
@@ -178,7 +180,8 @@ counts the pixels whose largest channel difference exceeds 32.
 | noto | 118 / 200 | 118 / 118 | 118 / 118 |
 
 Nothing is approximate, and every converted file renders like its source: the
-mean channel difference is at most 0.02 / 255, from anti-aliasing. The
+mean channel difference over painted pixels is at most 0.22 / 255 for any
+single file, from anti-aliasing. The
 converted flowbite set alone carries 1366 gradients across 5339 paths, so the
 gradient lowering from #1 is now exercised on real Figma-exported artwork
 rather than fixtures, and the 33 clip paths and 529 groups in the converted

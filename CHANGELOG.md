@@ -51,7 +51,8 @@ follow [Semantic Versioning](https://semver.org/).
   gradients on most paths, and group opacity. It reports compatibility and
   the rejection reasons per source, checks determinism and per-source
   convertible floors, and compares each converted drawable against a resvg
-  render of its source through the new `examples/compare.rs`, which adds
+  render of its source, by differing pixels and by mean channel difference
+  over painted pixels, through the new `examples/compare.rs`, which adds
   `resvg` as a dev-dependency. Findings are in `docs/research.md`.
 - Optional Rune Icons stress suite, `tools/check-runeicons.py`, covering 908
   icons in five styles from a pinned commit. It checks per-style coverage

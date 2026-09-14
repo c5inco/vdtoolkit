@@ -58,6 +58,7 @@ python3 tools/check-material-symbols.py --suite twotone-100   # 100 Two Tone ico
 python3 tools/check-material-symbols.py --suite outlined-all  # exhaustive pinned outlined corpus
 python3 tools/check-studio-icons.py                           # Studio Icons stress suite
 python3 tools/check-runeicons.py                              # Rune Icons stress suite
+python3 tools/check-illustrations.py                          # complex-illustration corpus, with visual comparison
 ```
 
 The Material corpora download Apache-2.0 assets from the pinned Google commit

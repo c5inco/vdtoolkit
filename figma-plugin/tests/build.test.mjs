@@ -8,8 +8,12 @@ const code = await readFile(new URL("../dist/code.js", import.meta.url), "utf8")
 const icon = { diagnostics: [], metrics: { width: 24, height: 24, viewport_width: 24, viewport_height: 24 } };
 const ui = await readFile(new URL("../dist/ui.html", import.meta.url), "utf8");
 
-test("manifest declares a network-free Dev Mode codegen plugin", () => {
-  assert.deepEqual(manifest.editorType, ["dev"]);
+test("manifest declares a network-free codegen plugin with a Design Mode export command", () => {
+  assert.deepEqual(manifest.editorType, ["figma", "dev"]);
+  assert.deepEqual(
+    manifest.menu.map((item) => item.command),
+    ["export-vector-drawables"],
+  );
   assert.deepEqual(manifest.capabilities, ["codegen"]);
   assert.deepEqual(manifest.networkAccess.allowedDomains, ["none"]);
   assert.equal(manifest.main, "dist/code.js");
@@ -27,6 +31,8 @@ test("plugin bundles are self-contained and preserve the node-type guard", () =>
   assert.match(code, /showUI\([^)]*,\s*\{\s*visible:\s*false\s*\}/);
   assert.match(code, /postMessage/);
   assert.match(ui, /^<!doctype html>/);
+  // The export dialog draws into document.body as soon as the script runs.
+  assert.match(ui, /<body><script>/);
   assert.match(ui, /AGFzbQE/); // base64-encoded WebAssembly magic bytes
   assert.doesNotMatch(ui, /https?:\/\//);
   assert.doesNotMatch(ui, /<script[^>]+src=/);
@@ -36,6 +42,7 @@ test("sandbox ignores unsupported nodes and correlates concurrent iframe respons
   let generate;
   const posted = [];
   const figma = {
+    mode: "codegen",
     showUI: (_html, options) => assert.equal(options.visible, false),
     ui: {
       onmessage: undefined,
@@ -126,6 +133,7 @@ test("large drawables keep their size and surface warnings", async () => {
   let generate;
   const posted = [];
   const figma = {
+    mode: "codegen",
     showUI() {},
     ui: { onmessage: undefined, postMessage: (message) => posted.push(message) },
     codegen: { on: (_event, handler) => (generate = handler) },

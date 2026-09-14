@@ -1,5 +1,6 @@
 import type { Analysis, ConvertResult, Diagnostic } from "../vendor/vdtoolkit-wasm/vdtoolkit_wasm";
-import type { ConvertRequest, ConvertResponse } from "./messages";
+import { blockingDiagnostics, capitalize, warningDiagnostics } from "./diagnostics";
+import type { ConvertRequest, ExportCandidate, ReviewRequest, SandboxMessage } from "./messages";
 
 declare const __html__: string;
 
@@ -15,27 +16,92 @@ const pending = new Map<
   }
 >();
 
-figma.showUI(__html__, { visible: false });
-
-figma.ui.onmessage = (message: ConvertResponse) => {
-  if (message.type !== "converted" || typeof message.id !== "string") return;
-  const request = pending.get(message.id);
-  if (!request) return;
-  pending.delete(message.id);
-  clearTimeout(request.timer);
-  request.resolve(message.result);
-};
-
 type ConvertibleNode = FrameNode | ComponentNode | InstanceNode;
 
-figma.codegen.on("generate", (event) => {
-  if (!isConvertible(event.node)) return [];
-  return withinDeadline(generate(event.node), CODEGEN_DEADLINE_MS);
-});
+// The layers the export dialog opened with. Refresh re-checks these rather than the
+// current selection, because fixing a layer usually means selecting just that layer.
+let reviewedNodeIds: string[] = [];
+
+figma.ui.onmessage = (message: SandboxMessage) => {
+  switch (message?.type) {
+    case "converted":
+      return settle(message.id, message.result);
+    case "focus":
+      return focus(message.nodeId);
+    case "exported":
+      return figma.notify(
+        message.count === 1 ? "Exported 1 Vector Drawable" : `Exported ${message.count} Vector Drawables`,
+      );
+    case "close":
+      return figma.closePlugin();
+    case "refresh":
+      return refreshReview();
+  }
+};
+
+// Dev Mode's Code panel runs the plugin in "codegen" mode; the menu command runs it normally.
+if (figma.mode === "codegen") {
+  figma.showUI(__html__, { visible: false });
+  figma.codegen.on("generate", (event) => {
+    if (!isConvertible(event.node)) return [];
+    return withinDeadline(generate(event.node), CODEGEN_DEADLINE_MS);
+  });
+} else {
+  void openExportDialog();
+}
 
 // Component sets are excluded: exporting one would stack every variant into a single drawable.
 function isConvertible(node: SceneNode): node is ConvertibleNode {
   return node.type === "FRAME" || node.type === "COMPONENT" || node.type === "INSTANCE";
+}
+
+async function openExportDialog(): Promise<void> {
+  const selection = figma.currentPage.selection;
+  if (selection.length === 0) {
+    figma.notify("Select one or more frames to export as Vector Drawables.");
+    figma.closePlugin();
+    return;
+  }
+  reviewedNodeIds = selection.map((node) => node.id);
+  figma.showUI(__html__, { width: 400, height: 480, title: "Export Vector Drawables", themeColors: true });
+  await postReview(selection);
+}
+
+// Layers deleted since the dialog opened are dropped: there is nothing left to fix or export.
+async function refreshReview(): Promise<void> {
+  const nodes = await Promise.all(reviewedNodeIds.map((id) => figma.getNodeByIdAsync(id)));
+  await postReview(nodes.filter(isSceneNode));
+}
+
+async function postReview(nodes: readonly SceneNode[]): Promise<void> {
+  const request: ReviewRequest = { type: "review", candidates: await Promise.all(nodes.map(exportCandidate)) };
+  figma.ui.postMessage(request);
+}
+
+function isSceneNode(node: BaseNode | null): node is SceneNode {
+  return node !== null && !node.removed && node.type !== "PAGE" && node.type !== "DOCUMENT";
+}
+
+async function exportCandidate(node: SceneNode): Promise<ExportCandidate> {
+  const candidate = { nodeId: node.id, name: node.name };
+  if (node.type === "COMPONENT_SET") {
+    return { ...candidate, skipReason: "Component sets can't be exported as one drawable. Select the variants instead." };
+  }
+  if (!isConvertible(node)) {
+    return { ...candidate, skipReason: "Only frames, components, and instances can be exported." };
+  }
+  try {
+    return { ...candidate, source: await node.exportAsync({ format: "SVG" }) };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return { ...candidate, skipReason: `Figma couldn't export this layer as SVG: ${reason}` };
+  }
+}
+
+// Zooms without changing the selection, so the user can fix a layer and refresh the dialog.
+async function focus(nodeId: string): Promise<void> {
+  const node = await figma.getNodeByIdAsync(nodeId);
+  if (node && "absoluteBoundingBox" in node) figma.viewport.scrollAndZoomIntoView([node]);
 }
 
 async function generate(node: ConvertibleNode): Promise<CodegenResult[]> {
@@ -58,6 +124,14 @@ async function generate(node: ConvertibleNode): Promise<CodegenResult[]> {
   } catch (error) {
     return diagnosticResult(error instanceof Error ? error.message : String(error));
   }
+}
+
+function settle(id: string, result: ConvertResult): void {
+  const request = typeof id === "string" ? pending.get(id) : undefined;
+  if (!request) return;
+  pending.delete(id);
+  clearTimeout(request.timer);
+  request.resolve(result);
 }
 
 function convert(source: Uint8Array): Promise<ConvertResult> {
@@ -102,10 +176,7 @@ async function withinDeadline(
 const WRAP_COLUMNS = 52;
 
 function diagnosticResult(message: string, analysis?: Analysis): CodegenResult[] {
-  const diagnostics = analysis?.diagnostics ?? [];
-  // Info diagnostics (e.g. SVGVD011 "normalization required") are noise next to real blockers.
-  const blocking = diagnostics.filter((diagnostic) => diagnostic.severity !== "info");
-  const shown = blocking.length > 0 ? blocking : diagnostics;
+  const shown = blockingDiagnostics(analysis?.diagnostics ?? []);
   return [
     {
       title: "Can't convert to Vector Drawable",
@@ -115,29 +186,20 @@ function diagnosticResult(message: string, analysis?: Analysis): CodegenResult[]
   ];
 }
 
-// Conversion succeeded, but Android would still flag the output (e.g. SVGVD016 for icons over 200dp).
 function warningResult(analysis: Analysis): CodegenResult[] {
-  const warnings = analysis.diagnostics.filter((diagnostic) => diagnostic.severity === "warning");
+  const warnings = warningDiagnostics(analysis.diagnostics);
   if (warnings.length === 0) return [];
   return [{ title: "Warnings", language: "PLAINTEXT", code: formatDiagnostics(warnings) }];
 }
 
 function formatDiagnostics(diagnostics: Diagnostic[]): string {
-  const seen = new Set<string>();
-  return diagnostics
-    .filter((diagnostic) => !seen.has(diagnostic.message) && seen.add(diagnostic.message))
-    .map(formatDiagnostic)
-    .join("\n\n");
+  return diagnostics.map(formatDiagnostic).join("\n\n");
 }
 
 // Source locations are omitted: they point into Figma's SVG export, which the user never sees.
 function formatDiagnostic(diagnostic: Diagnostic): string {
   const summary = wrap(`• ${capitalize(diagnostic.message)} (${diagnostic.code})`, "  ");
   return diagnostic.suggestion ? `${summary}\n${wrap(`→ ${diagnostic.suggestion}`, "  ", "  ")}` : summary;
-}
-
-function capitalize(text: string): string {
-  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 function wrap(text: string, continuation: string, first = ""): string {

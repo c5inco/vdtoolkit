@@ -26,4 +26,4 @@ await build({
 });
 
 const script = (await readFile("dist/ui.js", "utf8")).replaceAll("</script", "<\\/script");
-await writeFile("dist/ui.html", `<!doctype html><meta charset="utf-8"><script>${script}</script>\n`);
+await writeFile("dist/ui.html", `<!doctype html><meta charset="utf-8"><body><script>${script}</script>\n`);

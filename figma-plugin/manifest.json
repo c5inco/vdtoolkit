@@ -4,12 +4,18 @@
   "api": "1.0.0",
   "main": "dist/code.js",
   "ui": "dist/ui.html",
-  "editorType": ["dev"],
+  "editorType": ["figma", "dev"],
   "capabilities": ["codegen"],
   "codegenLanguages": [
     {
       "label": "Android Vector Drawable",
       "value": "android-vectordrawable"
+    }
+  ],
+  "menu": [
+    {
+      "name": "Export Selection as Vector Drawables…",
+      "command": "export-vector-drawables"
     }
   ],
   "networkAccess": {

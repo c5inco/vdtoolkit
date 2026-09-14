@@ -1,8 +1,24 @@
-# Figma Dev Mode codegen proof of concept
+# Figma plugin
 
-The development plugin converts exactly one selected `FRAME`, `COMPONENT`, or
-`INSTANCE` into optimized Android VectorDrawable XML in Figma's native Code
-panel. All other node types, including component sets, return no code. It has no visible UI and makes no network requests.
+The development plugin has two entry points and makes no network requests:
+
+- **Dev Mode codegen.** Converts exactly one selected `FRAME`, `COMPONENT`, or
+  `INSTANCE` into optimized Android VectorDrawable XML in Figma's native Code
+  panel. All other node types, including component sets, return no code.
+- **Design Mode batch export.** **Plugins → Vector Drawable Toolkit → Export
+  Selection as Vector Drawables…** opens a dialog listing every selected layer.
+  Layers that convert are checked by default and show the Android file name
+  they will be saved as; layers that can't convert (unsupported effects, other
+  node types, component sets) are listed with their `SVGVDnnn` issues and can't
+  be checked. **Show** zooms to a layer without changing the selection.
+  **Refresh** re-checks the layers the dialog opened with (not the current
+  selection, since fixing a layer usually means selecting it), keeps anything
+  the user unchecked, and drops layers that were deleted. One
+  checked drawable downloads as `.xml`; several download as
+  `vector-drawables.zip`.
+
+The plugin checks `figma.mode`: `"codegen"` keeps the hidden converter used by
+the Code panel, and any other mode opens the export dialog.
 
 Figma's plugin sandbox cannot instantiate WebAssembly. The sandbox exports the
 selected node as SVG and sends its bytes, with a correlation ID, to a hidden iframe.
@@ -73,8 +89,18 @@ not be committed unless the repository adopts a shared registered plugin.
    **Can't convert to Vector Drawable** block listing each blocking issue with its stable `SVGVDnnn` code.
 6. Select a frame larger than 200×200. The XML keeps Figma's size and a
    **Warnings** block shows `SVGVD016`.
+7. Switch to Design Mode and select several frames, including one with a blur,
+   one larger than 200×200, and a group. Run **Export Selection as Vector
+   Drawables…**. The clean frame and the large frame (with an `SVGVD016`
+   warning) are checked; the blurred frame and the group are listed under
+   **Needs fixes in Figma** without a checkbox.
+8. Uncheck one ready layer and click **Export**. The download contains only the
+   remaining checked drawables, and a toast confirms the count.
+9. With the dialog open, select the blurred frame, remove its blur, and click
+   **Refresh**. It moves to **Ready to export**, checked, and the layer you
+   unchecked stays unchecked.
 
-V0 intentionally does not support multi-selection, other node types,
-preferences, Figma for VS Code, or publication. Figma controls SVG export, so
+Codegen intentionally does not support multi-selection, preferences, Figma for
+VS Code, or publication. Figma controls SVG export, so
 the generated drawable reflects Figma's exported representation rather than
 the original editable object model.

@@ -1,4 +1,5 @@
-use std::ffi::OsString;
+use std::collections::HashMap;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -39,6 +40,11 @@ struct ConvertArgs {
     /// Output XML file or directory. Required for directory input.
     #[arg(short, long)]
     output: Option<PathBuf>,
+    /// Size in dp of the drawable's longer side; the other side keeps the
+    /// aspect ratio and the drawing is unchanged. Defaults to the SVG's width
+    /// and height, or 24 for an SVG with only a viewBox larger than 200.
+    #[arg(long, value_name = "DP")]
+    size: Option<f32>,
     /// Reject SVGs that require safe normalization.
     #[arg(long)]
     strict: bool,
@@ -253,9 +259,10 @@ fn notification(args: NotificationArgs) -> Result<Outcome> {
             args.fit
         )));
     }
+    let outputs = plan_outputs(&args.input, &inputs, args.output.as_deref());
     let mut failures = 0;
-    for input in &inputs {
-        if let Err(error) = notification_one(&args, input) {
+    for (input, output) in inputs.iter().zip(outputs) {
+        if let Err(error) = output.and_then(|output| notification_one(&args, input, output)) {
             print_error(Some(input), &error);
             failures += 1;
         }
@@ -270,7 +277,7 @@ fn notification(args: NotificationArgs) -> Result<Outcome> {
     })
 }
 
-fn notification_one(args: &NotificationArgs, input: &Path) -> Result<()> {
+fn notification_one(args: &NotificationArgs, input: &Path, output: Option<Output>) -> Result<()> {
     let mut asset = vdtoolkit::convert_file(input)?;
     if args.strict && asset.analysis.compatibility != Compatibility::Exact {
         return Err(Error::InvalidInput(
@@ -283,8 +290,8 @@ fn notification_one(args: &NotificationArgs, input: &Path) -> Result<()> {
         asset.optimize();
     }
     let xml = asset.to_xml();
-    match output_path(&args.input, input, args.output.as_deref()) {
-        Some(output) => write_file(&output, &xml)?,
+    match output {
+        Some(output) => output.write(input, &xml)?,
         None => print!("{xml}"),
     }
     Ok(())
@@ -520,18 +527,127 @@ fn adaptive_layer(args: &AdaptiveArgs, input: &Path, fit: f32, kind: IconKind) -
 }
 
 fn validate_resource_name(name: &str) -> Result<()> {
-    let mut chars = name.chars();
-    let valid = chars
-        .next()
-        .is_some_and(|first| first.is_ascii_lowercase() || first == '_')
-        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
-    if valid {
+    if is_resource_name(name) {
         Ok(())
     } else {
         Err(Error::InvalidInput(format!(
-            "resource name must match [a-z_][a-z0-9_]*, got {name:?}"
+            "resource name must match [a-z_][a-z0-9_]* and not be a Java keyword, got {name:?}"
         )))
     }
+}
+
+/// Java keywords and literals, which aapt2 rejects as resource names because
+/// they cannot be fields of the generated `R` class.
+const JAVA_KEYWORDS: &[&str] = &[
+    "abstract",
+    "assert",
+    "boolean",
+    "break",
+    "byte",
+    "case",
+    "catch",
+    "char",
+    "class",
+    "const",
+    "continue",
+    "default",
+    "do",
+    "double",
+    "else",
+    "enum",
+    "extends",
+    "false",
+    "final",
+    "finally",
+    "float",
+    "for",
+    "goto",
+    "if",
+    "implements",
+    "import",
+    "instanceof",
+    "int",
+    "interface",
+    "long",
+    "native",
+    "new",
+    "null",
+    "package",
+    "private",
+    "protected",
+    "public",
+    "return",
+    "short",
+    "static",
+    "strictfp",
+    "super",
+    "switch",
+    "synchronized",
+    "this",
+    "throw",
+    "throws",
+    "transient",
+    "true",
+    "try",
+    "void",
+    "volatile",
+    "while",
+];
+
+fn is_resource_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|first| first.is_ascii_lowercase() || first == '_')
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+        && name != "_"
+        && !JAVA_KEYWORDS.contains(&name)
+}
+
+/// Turn a file name into a valid Android resource name. A valid name is kept;
+/// otherwise words become lowercase and are joined by underscores, as
+/// `Arrow-Left` becomes `arrow_left` and `HTTPServer` becomes `http_server`,
+/// and a name that would start with a digit or be a Java keyword gains an
+/// `ic_` prefix.
+fn resource_name(stem: &str) -> Result<String> {
+    if is_resource_name(stem) {
+        return Ok(stem.to_owned());
+    }
+    let chars: Vec<char> = stem.chars().collect();
+    let mut name = String::with_capacity(stem.len());
+    for (index, &c) in chars.iter().enumerate() {
+        if c.is_ascii_uppercase() {
+            let previous = index.checked_sub(1).map(|previous| chars[previous]);
+            let next = chars.get(index + 1);
+            // A word starts after a lowercase letter or digit, and at the last
+            // capital of an acronym followed by a lowercase word.
+            let word_start = previous
+                .is_some_and(|previous| previous.is_ascii_lowercase() || previous.is_ascii_digit())
+                || (previous.is_some_and(|previous| previous.is_ascii_uppercase())
+                    && next.is_some_and(char::is_ascii_lowercase));
+            if word_start {
+                name.push('_');
+            }
+            name.push(c.to_ascii_lowercase());
+        } else if c.is_ascii_lowercase() || c.is_ascii_digit() {
+            name.push(c);
+        } else if !name.ends_with('_') {
+            name.push('_');
+        }
+    }
+    let name = name.trim_matches('_');
+    if name.is_empty() {
+        return Err(Error::InvalidInput(format!(
+            "cannot make an Android resource name from {stem:?}; use letters or digits in the file name"
+        )));
+    }
+    Ok(
+        if name.starts_with(|c: char| c.is_ascii_digit()) || JAVA_KEYWORDS.contains(&name) {
+            format!("ic_{name}")
+        } else {
+            name.to_owned()
+        },
+    )
 }
 
 fn normalize_color(color: &str) -> Result<String> {
@@ -565,9 +681,15 @@ fn convert(args: ConvertArgs, optimize: bool) -> Result<Outcome> {
             "directory conversion requires an output directory".to_owned(),
         ));
     }
+    if let Some(size) = args.size.filter(|size| !(size.is_finite() && *size > 0.0)) {
+        return Err(Error::InvalidInput(format!(
+            "--size must be a positive number of dp, got {size}"
+        )));
+    }
+    let outputs = plan_outputs(&args.input, &inputs, args.output.as_deref());
     let mut failures = 0;
-    for input in &inputs {
-        if let Err(error) = convert_one(&args, input, optimize) {
+    for (input, output) in inputs.iter().zip(outputs) {
+        if let Err(error) = output.and_then(|output| convert_one(&args, input, output, optimize)) {
             print_error(Some(input), &error);
             failures += 1;
         }
@@ -582,12 +704,36 @@ fn convert(args: ConvertArgs, optimize: bool) -> Result<Outcome> {
     })
 }
 
-fn convert_one(args: &ConvertArgs, input: &Path, optimize: bool) -> Result<()> {
+fn convert_one(
+    args: &ConvertArgs,
+    input: &Path,
+    output: Option<Output>,
+    optimize: bool,
+) -> Result<()> {
     let mut asset = vdtoolkit::convert_file(input)?;
     if args.strict && asset.analysis.compatibility != Compatibility::Exact {
         return Err(Error::InvalidInput(
             "requires normalization and was rejected by --strict".to_owned(),
         ));
+    }
+    if let Some(size) = args.size {
+        asset.set_size(size)?;
+    } else if !asset.has_declared_size() && is_large(&asset.analysis) {
+        // Without width and height the viewBox units become dp, and a viewBox
+        // this large is a drawing grid, such as Material Symbols' 960, rather
+        // than an intended size.
+        let metrics = &asset.analysis.metrics;
+        let viewbox = (metrics.viewport_width, metrics.viewport_height);
+        asset.set_size(DEFAULT_ICON_SIZE)?;
+        let metrics = &asset.analysis.metrics;
+        eprintln!(
+            "note: {}: no width or height and a {}×{} viewBox, so it is drawn at {}×{}dp; pass --size to choose",
+            input.display(),
+            viewbox.0,
+            viewbox.1,
+            metrics.width,
+            metrics.height
+        );
     }
     for diagnostic in &asset.analysis.diagnostics {
         if matches!(diagnostic.severity, Severity::Warning) {
@@ -598,6 +744,11 @@ fn convert_one(args: &ConvertArgs, input: &Path, optimize: bool) -> Result<()> {
                 diagnostic.message
             );
         }
+    }
+    if args.size.is_none() && is_large(&asset.analysis) {
+        eprintln!(
+            "hint: pass --size {DEFAULT_ICON_SIZE} to draw it at {DEFAULT_ICON_SIZE}dp; the drawing is unchanged"
+        );
     }
     let generated_bytes = asset.to_xml().len();
     if optimize {
@@ -619,13 +770,24 @@ fn convert_one(args: &ConvertArgs, input: &Path, optimize: bool) -> Result<()> {
         eprintln!("Optimized drawable: {} bytes", xml.len());
         eprintln!("Reduction: {reduction:.1}%");
     }
-    let output = output_path(&args.input, input, args.output.as_deref());
-    if let Some(output) = output {
-        write_file(&output, &xml)?;
-    } else {
-        print!("{xml}");
+    match output {
+        Some(output) => output.write(input, &xml)?,
+        None => print!("{xml}"),
     }
     Ok(())
+}
+
+/// Size in dp of a Material icon, used for an SVG whose only size is a large
+/// viewBox.
+const DEFAULT_ICON_SIZE: f32 = 24.0;
+
+/// Whether the analysis carries the warning for a drawable larger than
+/// Android recommends.
+fn is_large(analysis: &Analysis) -> bool {
+    analysis
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.code.as_str() == DiagnosticCode::LargeDimensions.as_str())
 }
 
 fn report(args: ReportArgs, inspect: bool) -> Result<Outcome> {
@@ -820,13 +982,79 @@ fn inputs(path: &Path) -> Result<Vec<PathBuf>> {
     Ok(files)
 }
 
-fn output_path(root: &Path, input: &Path, output: Option<&Path>) -> Option<PathBuf> {
-    let output = output?;
-    if root.is_file() {
-        return Some(output.to_owned());
+/// Where a converted file is written, and the name it would have had when
+/// that is not a valid Android resource name.
+struct Output {
+    path: PathBuf,
+    renamed_from: Option<String>,
+}
+
+impl Output {
+    fn write(&self, input: &Path, contents: &str) -> Result<()> {
+        write_file(&self.path, contents)?;
+        if let Some(requested) = &self.renamed_from {
+            eprintln!(
+                "note: {}: written as {} because {requested:?} is not a valid Android resource name",
+                input.display(),
+                self.path.display()
+            );
+        }
+        Ok(())
     }
-    let relative = input.strip_prefix(root).unwrap_or(input);
-    Some(output.join(relative).with_extension("xml"))
+}
+
+/// Plan every input's output up front with a valid Android resource name, so
+/// an input whose name is already taken fails instead of overwriting the
+/// earlier file. `None` writes to stdout.
+fn plan_outputs(
+    root: &Path,
+    inputs: &[PathBuf],
+    output: Option<&Path>,
+) -> Vec<Result<Option<Output>>> {
+    let mut taken: HashMap<PathBuf, &Path> = HashMap::new();
+    inputs
+        .iter()
+        .map(|input| {
+            let Some(output) = output else {
+                return Ok(None);
+            };
+            let (directory, stem, extension) = if root.is_file() {
+                (
+                    output.parent().unwrap_or(Path::new("")).to_owned(),
+                    output.file_stem(),
+                    output.extension(),
+                )
+            } else {
+                let relative = input.strip_prefix(root).unwrap_or(input);
+                let destination = output.join(relative);
+                (
+                    destination.parent().unwrap_or(output).to_owned(),
+                    input.file_stem(),
+                    Some(OsStr::new("xml")),
+                )
+            };
+            let requested = stem
+                .map(|stem| stem.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let name = resource_name(&requested)?;
+            let mut path = directory.join(&name);
+            if let Some(extension) = extension {
+                path.set_extension(extension);
+            }
+            if let Some(first) = taken.get(&path) {
+                return Err(Error::InvalidInput(format!(
+                    "{} is already the output of {}; rename one of them",
+                    path.display(),
+                    first.display()
+                )));
+            }
+            taken.insert(path.clone(), input);
+            Ok(Some(Output {
+                renamed_from: (name != requested).then_some(requested),
+                path,
+            }))
+        })
+        .collect()
 }
 
 fn print_error(path: Option<&Path>, error: &Error) {

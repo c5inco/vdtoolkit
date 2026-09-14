@@ -8,6 +8,17 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `convert`, `optimize`, and `notification` write valid Android resource names.
+  A file name Android would reject, such as `Arrow-Left.svg`, is written as
+  `arrow_left.xml` with a note on stderr; a name starting with a digit or equal
+  to a Java keyword gains an `ic_` prefix. An input whose name is already taken
+  by another input's output fails instead of overwriting it. `adaptive --name`
+  also rejects Java keywords.
+- `convert --size <dp>` and `optimize --size <dp>` set the drawable's longer
+  side, keeping the aspect ratio and the viewport. An SVG with only a viewBox
+  larger than 200 is drawn at 24dp by default, and a drawable with a declared
+  size over 200dp gets a hint to pass `--size`. The Rust API gains
+  `Asset::set_size` and `Asset::has_declared_size`.
 - The findings of the generator commands carry diagnostic codes. `SVGVD017`
   warns that a notification icon paints almost the whole canvas, `SVGVD018`
   that it has no painted content, `SVGVD019` that adaptive foreground or

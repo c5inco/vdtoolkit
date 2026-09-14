@@ -9,7 +9,7 @@ rejected, that repeated output is byte-identical, and how closely the
 converted drawable renders to the source SVG.
 
 The corpus is `tests/illustrations.txt`: files pinned by repository commit
-and content hash, downloaded on demand. Compatibility floors keep a
+and content hash, downloaded on demand. A per-file list of convertible files keeps a
 regression from passing silently, and `--worst` lists the files the visual
 comparison likes least.
 """
@@ -30,6 +30,7 @@ import urllib.request
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CARGO = shutil.which("cargo") or str(pathlib.Path.home() / ".cargo/bin/cargo")
 MANIFEST = ROOT / "tests/illustrations.txt"
+CONVERTIBLE_LIST = ROOT / "tests/illustrations-convertible.txt"
 
 # Source key -> (repository, commit, license, what the files are).
 SOURCES = {
@@ -59,14 +60,6 @@ SOURCES = {
     ),
 }
 
-# Convertible files per source at the pinned commit. A drop is a regression.
-MINIMUM_CONVERTIBLE = {
-    "illlustrations": 50,
-    "flowbite": 86,
-    "fluent": 1,
-    "noto": 118,
-}
-
 # Fraction of pixels that may differ from the resvg render of the source
 # before a converted file counts as a visual mismatch. Anti-aliasing between
 # two rasterizers stays far below this.
@@ -90,6 +83,22 @@ def read_manifest() -> list[tuple[str, str, str]]:
         source, digest, path = line.split(" ", 2)
         entries.append((source, digest, path))
     return entries
+
+
+def read_convertible() -> set[tuple[str, str]]:
+    """Pinned files that must stay convertible, as (source, path)."""
+    pinned = set()
+    for line in CONVERTIBLE_LIST.read_text().splitlines():
+        if line and not line.startswith("#"):
+            source, path = line.split(" ", 1)
+            pinned.add((source, path))
+    return pinned
+
+
+def write_convertible(pinned: set[tuple[str, str]]) -> None:
+    header = [line for line in CONVERTIBLE_LIST.read_text().splitlines() if line.startswith("#")]
+    body = [f"{source} {path}" for source, path in sorted(pinned)]
+    CONVERTIBLE_LIST.write_text("\n".join(header + body) + "\n")
 
 
 def local_name(source: str, path: str) -> str:
@@ -167,7 +176,19 @@ def main() -> None:
     parser.add_argument(
         "--examples", type=int, default=3, help="rejected files to name per diagnostic code"
     )
+    parser.add_argument(
+        "--update-convertible",
+        action="store_true",
+        help="rewrite tests/illustrations-convertible.txt from this run instead of "
+        "failing on files that stopped or started converting",
+    )
     arguments = parser.parse_args()
+    by_local = {local_name(source, path): (source, path) for source, _, path in read_manifest()}
+    pinned = read_convertible()
+    unknown = pinned - set(by_local.values())
+    if unknown:
+        raise SystemExit(f"{CONVERTIBLE_LIST.name} lists files not in the manifest: {sorted(unknown)}")
+    observed: set[tuple[str, str]] = set()
 
     with tempfile.TemporaryDirectory(prefix="vdtoolkit-illustrations-") as temporary:
         temporary = pathlib.Path(temporary)
@@ -219,7 +240,7 @@ def main() -> None:
                     reasons[reason] += 1
             # Every pinned file must stay analyzable. A parse failure on a file
             # that was already unsupported would otherwise drop out of every
-            # later check while the convertible floor still passes.
+            # later check without failing anything.
             if failed:
                 raise AssertionError(
                     f"{source}: {len(failed)} files could not be analyzed: "
@@ -231,10 +252,22 @@ def main() -> None:
                 raise AssertionError(
                     f"{source}: {compatibility['approximate']} files became approximate"
                 )
-            if len(convertible) < MINIMUM_CONVERTIBLE[source]:
+            # Compared file by file, so one file that starts converting cannot
+            # hide another that stopped.
+            now = {by_local[path.name] for path in convertible}
+            observed |= now
+            expected = {entry for entry in pinned if entry[0] == source}
+            lost = sorted(path for _, path in expected - now)
+            gained = sorted(path for _, path in now - expected)
+            if lost and not arguments.update_convertible:
                 raise AssertionError(
-                    f"{source}: convertible files regressed from "
-                    f"{MINIMUM_CONVERTIBLE[source]} to {len(convertible)}"
+                    f"{source}: {len(lost)} pinned files stopped converting: " + ", ".join(lost)
+                )
+            if gained and not arguments.update_convertible:
+                print(
+                    f"{source}: {len(gained)} files now convert and are not pinned; record "
+                    f"them with --update-convertible: " + ", ".join(gained),
+                    flush=True,
                 )
 
             first = temporary / f"{source}-generated"
@@ -350,6 +383,12 @@ def main() -> None:
     if mismatched:
         raise AssertionError(
             f"{mismatched} converted drawables do not render like their source"
+        )
+    if arguments.update_convertible and observed != pinned:
+        write_convertible(observed)
+        print(
+            f"Updated {CONVERTIBLE_LIST.name}: {len(observed - pinned)} added, "
+            f"{len(pinned - observed)} removed"
         )
 
 

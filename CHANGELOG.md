@@ -49,8 +49,8 @@ follow [Semantic Versioning](https://semver.org/).
   SVGs from four openly licensed sources, pinned by commit and content hash in
   `tests/illustrations.txt`, covering many-path scenes, nested clips, masks,
   gradients on most paths, and group opacity. It reports compatibility and
-  the rejection reasons per source, checks determinism and per-source
-  convertible floors, and compares each converted drawable against a resvg
+  the rejection reasons per source, checks determinism and that every file
+  pinned in `tests/illustrations-convertible.txt` still converts, and compares each converted drawable against a resvg
   render of its source, by differing pixels and by mean channel difference
   over painted pixels, through the new `examples/compare.rs`, which adds
   `resvg` as a dev-dependency. Findings are in `docs/research.md`.

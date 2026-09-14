@@ -282,9 +282,13 @@ def transform_path(
 
 
 def assert_adaptive_layer(
-    layer: pathlib.Path, plain: pathlib.Path
+    layer: pathlib.Path, plain: pathlib.Path, abs_tol: float = 1e-5
 ) -> None:
-    """The foreground layer must be the plain drawable fitted to the safe zone."""
+    """The foreground layer must be the plain drawable fitted to the safe zone.
+
+    `abs_tol` is the distance in dp each coordinate may sit from the fitted
+    geometry; an optimized layer is rounded to a thousandth.
+    """
     root = ET.parse(layer).getroot()
     for attribute, expected in (
         ("width", "108dp"),
@@ -323,28 +327,45 @@ def assert_adaptive_layer(
             dy,
         )
         if not paths_numerically_equal(
-            canonical_path(actual.attrib[ANDROID + "pathData"], simplify=False), fitted
+            canonical_path(actual.attrib[ANDROID + "pathData"], simplify=False),
+            fitted,
+            abs_tol=abs_tol,
         ):
             raise AssertionError(f"{layer.name}: path {index} is not the fitted geometry")
         if ANDROID + "strokeWidth" in expected.attrib and not math.isclose(
             float(actual.attrib[ANDROID + "strokeWidth"]),
             float(expected.attrib[ANDROID + "strokeWidth"]) * scale,
             rel_tol=1e-6,
-            abs_tol=1e-5,
+            abs_tol=abs_tol,
         ):
             raise AssertionError(f"{layer.name}: path {index} stroke width is not scaled")
+
+
+# Half a thousandth of a dp, the most `--optimize` moves a coordinate.
+OPTIMIZED_TOLERANCE = 5e-4 + 1e-6
 
 
 def check_adaptive_icons(
     binary: pathlib.Path, sources: pathlib.Path, generated: pathlib.Path, temporary: pathlib.Path
 ) -> int:
-    """Generate an adaptive icon from every symbol; check layers and determinism."""
+    """Generate an adaptive icon from every symbol; check layers and determinism.
+
+    Each symbol is generated twice plain and twice with `--optimize`, so both
+    paths are checked for byte-identical repeated output.
+    """
     first = temporary / "adaptive"
     second = temporary / "adaptive-again"
+    optimized = temporary / "adaptive-optimized"
+    optimized_again = temporary / "adaptive-optimized-again"
     count = 0
     for svg in sorted(sources.glob("*.svg")):
         name = "ic_" + re.sub(r"[^a-z0-9_]", "_", svg.stem.lower())
-        for output in (first, second):
+        for output, extra in (
+            (first, []),
+            (second, []),
+            (optimized, ["--optimize"]),
+            (optimized_again, ["--optimize"]),
+        ):
             subprocess.run(
                 [
                     binary,
@@ -359,6 +380,7 @@ def check_adaptive_icons(
                     name,
                     "--output",
                     output,
+                    *extra,
                 ],
                 check=True,
                 stdout=subprocess.DEVNULL,
@@ -372,6 +394,20 @@ def check_adaptive_icons(
         for relative in written:
             if (first / relative).read_bytes() != (second / relative).read_bytes():
                 raise AssertionError(f"{relative}: adaptive output is not deterministic")
+            if (optimized / relative).read_bytes() != (
+                optimized_again / relative
+            ).read_bytes():
+                raise AssertionError(
+                    f"{relative}: optimized adaptive output is not deterministic"
+                )
+        # Only the layer drawable carries numbers to shorten.
+        for relative in written[1:]:
+            if (optimized / relative).read_bytes() != (first / relative).read_bytes():
+                raise AssertionError(f"{relative}: --optimize changed a non-drawable")
+        if len((optimized / written[0]).read_bytes()) > len(
+            (first / written[0]).read_bytes()
+        ):
+            raise AssertionError(f"{written[0]}: --optimize made the layer larger")
         icon = ET.parse(first / written[2]).getroot()
         references = {
             child.tag: child.attrib.get(ANDROID + "drawable") for child in icon
@@ -387,6 +423,11 @@ def check_adaptive_icons(
         ):
             raise AssertionError(f"{name}: unexpected color resource")
         assert_adaptive_layer(first / written[0], generated / f"{svg.stem}.xml")
+        assert_adaptive_layer(
+            optimized / written[0],
+            generated / f"{svg.stem}.xml",
+            abs_tol=OPTIMIZED_TOLERANCE,
+        )
         count += 1
     return count
 
@@ -394,12 +435,13 @@ def check_adaptive_icons(
 def paths_numerically_equal(
     left: list[tuple[str, tuple[float, ...]]],
     right: list[tuple[str, tuple[float, ...]]],
+    abs_tol: float = 1e-5,
 ) -> bool:
     return len(left) == len(right) and all(
         left_command == right_command
         and len(left_values) == len(right_values)
         and all(
-            math.isclose(left_value, right_value, rel_tol=1e-7, abs_tol=1e-5)
+            math.isclose(left_value, right_value, rel_tol=1e-7, abs_tol=abs_tol)
             for left_value, right_value in zip(left_values, right_values)
         )
         for (left_command, left_values), (right_command, right_values) in zip(left, right)
@@ -825,7 +867,8 @@ def main() -> None:
     print(f"{count} / {count} {label} match official Android {semantics}")
     print(f"{count} / {count} {label} produce byte-identical repeated output")
     print(
-        f"{adaptive_count} / {count} {label} generate deterministic adaptive icons "
+        f"{adaptive_count} / {count} {label} generate deterministic adaptive icons, "
+        f"plain and with --optimize, "
         f"whose foreground is the drawable fitted to the {ADAPTIVE_FIT:g}dp safe zone"
     )
 

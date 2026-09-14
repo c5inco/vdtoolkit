@@ -1,6 +1,7 @@
 package com.vdtoolkit.renderer.test;
 
 import android.accessibilityservice.AccessibilityService;
+import android.accessibilityservice.AccessibilityServiceInfo;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -17,6 +18,7 @@ import android.os.ParcelFileDescriptor;
 import android.os.SystemClock;
 import android.test.InstrumentationTestCase;
 import android.view.accessibility.AccessibilityNodeInfo;
+import android.view.accessibility.AccessibilityWindowInfo;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -129,7 +131,7 @@ public final class NotificationIconTest extends InstrumentationTestCase {
             SystemClock.sleep(2500);
             save("shade", automation.takeScreenshot());
             assertNotNull("the shade shows no notification titled " + TITLE,
-                    findText(automation.getRootInActiveWindow()));
+                    waitForTitle(automation));
         } finally {
             manager.cancel(1);
             automation.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK);
@@ -196,6 +198,27 @@ public final class NotificationIconTest extends InstrumentationTestCase {
                                 && Color.green(pixel) >= 255 - TOLERANCE
                                 && Color.blue(pixel) >= 255 - TOLERANCE);
             }
+        }
+    }
+
+    /**
+     * The notification's title in any window on screen. The active window is
+     * not always the shade (it is the app's own window on some API levels), so
+     * every interactive window is searched, retrying while the shade settles.
+     */
+    private static AccessibilityNodeInfo waitForTitle(UiAutomation automation) {
+        AccessibilityServiceInfo info = automation.getServiceInfo();
+        info.flags |= AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS;
+        automation.setServiceInfo(info);
+        long deadline = SystemClock.uptimeMillis() + 5000;
+        while (true) {
+            AccessibilityNodeInfo found = findText(automation.getRootInActiveWindow());
+            for (AccessibilityWindowInfo window : automation.getWindows()) {
+                if (found != null) break;
+                found = findText(window.getRoot());
+            }
+            if (found != null || SystemClock.uptimeMillis() > deadline) return found;
+            SystemClock.sleep(250);
         }
     }
 

@@ -60,6 +60,26 @@ produces a stable report with diagnostic codes for use in CI, and lists a
 `path` and `error` for any file that could not be read or parsed. `--strict`
 accepts only input that needs no normalization at all.
 
+Written files get names Android accepts as resources: lowercase letters,
+digits, and underscores, not starting with a digit and not a Java keyword. A
+valid name is kept. Any other name is rewritten and the new name is printed:
+`Arrow-Left.svg` becomes `arrow_left.xml`, `HTTPServer.svg` becomes
+`http_server.xml`, and `2x.svg` and `switch.svg` become `ic_2x.xml` and
+`ic_switch.xml`. This covers `convert`, `optimize`, and `notification`,
+including a name given with `-o`. When two inputs in a directory would get the
+same name, the later one fails instead of overwriting the first.
+
+`convert` and `optimize` keep the SVG's `width` and `height` as the drawable's
+size. `--size <dp>` sets the longer side instead, and the other side keeps the
+aspect ratio; the viewport is unchanged, so the drawing is too. An SVG with only
+a `viewBox` has no size of its own, so its viewBox units become dp, except that
+a viewBox larger than 200 is drawn at 24dp: a Material Symbols download on its
+960-unit grid becomes a 24dp icon, not a 960dp one.
+
+```sh
+vdt convert hero.svg --size 24 -o res/drawable/ic_hero.xml
+```
+
 `check` and `inspect` take `--as <kind>` to also report what making the SVG
 into that kind of icon would find, exactly as `notification` or `adaptive`
 would, without writing anything. The kinds are `notification`,

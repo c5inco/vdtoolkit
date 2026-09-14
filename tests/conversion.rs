@@ -2436,3 +2436,189 @@ fn cli_inspect_as_reports_icon_findings_without_writing() {
         "{stderr}"
     );
 }
+
+fn icon_svg(size: u32) -> String {
+    format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}"><path d="M0 0H{size}V{size}Z" fill="#000"/></svg>"##
+    )
+}
+
+#[test]
+fn cli_writes_valid_android_resource_names() {
+    let temp = tempfile::tempdir().unwrap();
+    let input = temp.path().join("icons");
+    let output = temp.path().join("drawable");
+    fs::create_dir_all(&input).unwrap();
+    for name in [
+        "Arrow-Left",
+        "HTTPServer",
+        "2x",
+        "switch",
+        "_private",
+        "ic_ok",
+    ] {
+        fs::write(input.join(name).with_extension("svg"), icon_svg(24)).unwrap();
+    }
+    // Sorts after `Arrow-Left` and would overwrite its output.
+    fs::write(input.join("arrow_left.svg"), icon_svg(48)).unwrap();
+
+    let result = Command::new(env!("CARGO_BIN_EXE_vdt"))
+        .args([input.to_str().unwrap(), "-o", output.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert_eq!(result.status.code(), Some(1));
+    let stderr = String::from_utf8(result.stderr).unwrap();
+    assert!(stderr.contains("arrow_left.svg"), "{stderr}");
+    assert!(stderr.contains("rename one of them"), "{stderr}");
+    assert!(stderr.contains("written as"), "{stderr}");
+    assert!(
+        !stderr.contains("ic_ok"),
+        "valid names are not renamed: {stderr}"
+    );
+
+    let mut written: Vec<String> = fs::read_dir(&output)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect();
+    written.sort();
+    assert_eq!(
+        written,
+        [
+            "_private.xml",
+            "arrow_left.xml",
+            "http_server.xml",
+            "ic_2x.xml",
+            "ic_ok.xml",
+            "ic_switch.xml",
+        ]
+    );
+    let kept = fs::read_to_string(output.join("arrow_left.xml")).unwrap();
+    assert_eq!(dimension(&kept, "width"), 24.0);
+
+    let single = temp.path().join("My Icon.xml");
+    let result = Command::new(env!("CARGO_BIN_EXE_vdt"))
+        .args([
+            "convert",
+            input.join("2x.svg").to_str().unwrap(),
+            "-o",
+            single.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(result.status.success(), "{:?}", result.stderr);
+    assert!(temp.path().join("my_icon.xml").is_file());
+    assert!(!single.exists());
+
+    let adaptive = Command::new(env!("CARGO_BIN_EXE_vdt"))
+        .args([
+            "adaptive",
+            "--foreground",
+            input.join("2x.svg").to_str().unwrap(),
+            "--background-color",
+            "#000000",
+            "--name",
+            "switch",
+            "-o",
+            temp.path().join("res").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(adaptive.status.code(), Some(1));
+}
+
+#[test]
+fn cli_size_sets_the_longer_side_and_keeps_the_viewport() {
+    let temp = tempfile::tempdir().unwrap();
+    let convert = |source: &[u8], extra: &[&str]| {
+        let input = temp.path().join("in.svg");
+        let output = temp.path().join("out.xml");
+        fs::write(&input, source).unwrap();
+        let _ = fs::remove_file(&output);
+        let result = Command::new(env!("CARGO_BIN_EXE_vdt"))
+            .args([
+                "convert",
+                input.to_str().unwrap(),
+                "-o",
+                output.to_str().unwrap(),
+            ])
+            .args(extra)
+            .output()
+            .unwrap();
+        let xml = fs::read_to_string(&output).unwrap_or_default();
+        (result, xml)
+    };
+
+    let (result, xml) = convert(LARGE, &["--size", "24"]);
+    assert!(result.status.success());
+    assert_eq!(dimension(&xml, "width"), 24.0);
+    assert_eq!(dimension(&xml, "height"), 16.0);
+    assert_eq!(attribute(&xml, "viewportWidth"), 480.0);
+    assert!(
+        !String::from_utf8(result.stderr)
+            .unwrap()
+            .contains("SVGVD016")
+    );
+
+    let (result, xml) = convert(LARGE, &[]);
+    assert!(result.status.success());
+    assert_eq!(dimension(&xml, "width"), 480.0);
+    let stderr = String::from_utf8(result.stderr).unwrap();
+    assert!(
+        stderr.contains("SVGVD016") && stderr.contains("--size 24"),
+        "{stderr}"
+    );
+
+    let symbols = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="M80 -80H880V-880Z"/></svg>"##;
+    let (result, xml) = convert(symbols, &[]);
+    assert!(result.status.success());
+    assert_eq!(dimension(&xml, "width"), 24.0);
+    assert_eq!(dimension(&xml, "height"), 24.0);
+    let stderr = String::from_utf8(result.stderr).unwrap();
+    assert!(
+        stderr.contains("note:") && !stderr.contains("SVGVD016"),
+        "{stderr}"
+    );
+
+    let small = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48"><path d="M0 0H48V48Z"/></svg>"##;
+    let (result, xml) = convert(small, &[]);
+    assert!(result.status.success());
+    assert_eq!(dimension(&xml, "width"), 48.0);
+    assert!(result.stderr.is_empty());
+
+    let (result, _) = convert(small, &["--size", "0"]);
+    assert_eq!(result.status.code(), Some(1));
+}
+
+#[test]
+fn set_size_scales_both_ways_and_updates_the_warning() {
+    let mut asset = vdtoolkit::convert(LARGE).unwrap();
+    assert!(asset.has_declared_size());
+    asset.set_size(24.0).unwrap();
+    assert_eq!(
+        (asset.analysis.metrics.width, asset.analysis.metrics.height),
+        (24.0, 16.0)
+    );
+    assert!(asset.analysis.diagnostics.is_empty());
+    asset.set_size(300.0).unwrap();
+    assert_eq!(asset.analysis.metrics.height, 200.0);
+    assert_eq!(asset.analysis.diagnostics[0].code.as_str(), "SVGVD016");
+    assert!(asset.set_size(0.0).is_err());
+    assert!(asset.set_size(f32::NAN).is_err());
+
+    let viewbox_only = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M0 0H24V24Z"/></svg>"##;
+    assert!(
+        !vdtoolkit::convert(viewbox_only)
+            .unwrap()
+            .has_declared_size()
+    );
+}
+
+fn dimension(xml: &str, name: &str) -> f32 {
+    let key = format!("android:{name}=\"");
+    let start = xml
+        .find(&key)
+        .unwrap_or_else(|| panic!("missing android:{name} in\n{xml}"))
+        + key.len();
+    let end = xml[start..].find("dp\"").unwrap() + start;
+    xml[start..end].parse().unwrap()
+}

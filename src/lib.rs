@@ -48,6 +48,7 @@ pub struct Asset {
     drawable: vector::VectorDrawable,
     /// Compatibility, minimum Android API, diagnostics, and source metrics.
     pub analysis: Analysis,
+    declared_size: bool,
 }
 
 impl Asset {
@@ -81,19 +82,51 @@ impl Asset {
             drawable.width_dp = scaled(width);
             drawable.height_dp = max_dp;
         }
-        self.analysis.metrics.width = drawable.width_dp;
-        self.analysis.metrics.height = drawable.height_dp;
+        self.resized();
+        true
+    }
+
+    /// Set `android:width` and `android:height` so the longer side is
+    /// `size_dp` and the other keeps the aspect ratio exactly. The viewport is
+    /// kept, so the drawing is unchanged apart from its size.
+    pub fn set_size(&mut self, size_dp: f32) -> Result<()> {
+        if !(size_dp.is_finite() && size_dp > 0.0) {
+            return Err(Error::InvalidInput(format!(
+                "size must be a positive number of dp, got {size_dp}"
+            )));
+        }
+        let drawable = &mut self.drawable;
+        let (width, height) = (drawable.width_dp, drawable.height_dp);
+        if width >= height {
+            drawable.width_dp = size_dp;
+            drawable.height_dp = height * size_dp / width;
+        } else {
+            drawable.width_dp = width * size_dp / height;
+            drawable.height_dp = size_dp;
+        }
+        self.resized();
+        Ok(())
+    }
+
+    /// Whether the SVG declared its own `width` or `height`. An SVG with only
+    /// a `viewBox` has no size of its own, so its viewBox units become dp.
+    pub fn has_declared_size(&self) -> bool {
+        self.declared_size
+    }
+
+    /// Update the metrics and the large-dimensions warning after the drawable
+    /// size changed.
+    fn resized(&mut self) {
+        let (width, height) = (self.drawable.width_dp, self.drawable.height_dp);
+        self.analysis.metrics.width = width;
+        self.analysis.metrics.height = height;
         self.analysis.diagnostics.retain(|diagnostic| {
             diagnostic.code.as_str() != DiagnosticCode::LargeDimensions.as_str()
         });
         self.analysis
             .diagnostics
-            .extend(vector::large_dimensions_warning(
-                drawable.width_dp,
-                drawable.height_dp,
-            ));
+            .extend(vector::large_dimensions_warning(width, height));
         self.analysis.metrics.estimated_xml_bytes = self.to_xml().len();
-        true
     }
 
     /// Turn this asset into an adaptive icon layer: a 108dp square drawable
@@ -338,6 +371,7 @@ impl Asset {
                 diagnostics: Vec::new(),
                 metrics,
             },
+            declared_size: true,
         };
         asset.analysis.metrics.estimated_xml_bytes = asset.to_xml().len();
         asset
@@ -406,5 +440,6 @@ pub fn convert(source: &[u8]) -> Result<Asset> {
             .drawable
             .expect("conversion requested for a compatible SVG"),
         analysis: processed.analysis,
+        declared_size: processed.declared_size,
     })
 }

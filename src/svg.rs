@@ -7,6 +7,8 @@ use crate::vector::{self, VectorDrawable};
 pub(crate) struct Processed {
     pub analysis: Analysis,
     pub drawable: Option<VectorDrawable>,
+    /// Whether the root declares a size rather than borrowing its viewBox.
+    pub declared_size: bool,
 }
 
 pub(crate) fn process(source: &[u8], keep_drawable: bool) -> Result<Processed> {
@@ -42,6 +44,9 @@ pub(crate) fn process(source: &[u8], keep_drawable: bool) -> Result<Processed> {
             metrics,
         },
         drawable: keep_drawable.then_some(drawable).flatten(),
+        declared_size: ["width", "height"]
+            .into_iter()
+            .any(|attribute| document.root_element().has_attribute(attribute)),
     })
 }
 

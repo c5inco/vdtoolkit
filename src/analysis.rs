@@ -153,6 +153,22 @@ pub enum DiagnosticCode {
     UnsupportedDimensions,
     #[serde(rename = "SVGVD016")]
     LargeDimensions,
+    /// A notification icon paints almost the whole canvas, so it tints into
+    /// a filled square rather than a silhouette.
+    #[serde(rename = "SVGVD017")]
+    NotificationPlate,
+    /// A notification icon has no painted content.
+    #[serde(rename = "SVGVD018")]
+    EmptyArtwork,
+    /// Adaptive foreground or monochrome content leaves the 66dp safe zone.
+    #[serde(rename = "SVGVD019")]
+    OutsideSafeZone,
+    /// An adaptive background does not paint every pixel of the 108dp layer.
+    #[serde(rename = "SVGVD020")]
+    BackgroundGap,
+    /// Colors or gradients were flattened to white for a notification icon.
+    #[serde(rename = "SVGVD021")]
+    PaintFlattened,
 }
 
 impl DiagnosticCode {
@@ -175,6 +191,11 @@ impl DiagnosticCode {
             Self::UnsupportedClipPath => "SVGVD014",
             Self::UnsupportedDimensions => "SVGVD015",
             Self::LargeDimensions => "SVGVD016",
+            Self::NotificationPlate => "SVGVD017",
+            Self::EmptyArtwork => "SVGVD018",
+            Self::OutsideSafeZone => "SVGVD019",
+            Self::BackgroundGap => "SVGVD020",
+            Self::PaintFlattened => "SVGVD021",
         }
     }
 }

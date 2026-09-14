@@ -20,6 +20,7 @@
 mod adaptive;
 mod analysis;
 mod error;
+mod icon;
 mod notification;
 mod optimize;
 mod render;
@@ -38,6 +39,7 @@ pub use analysis::{
     Analysis, Bounds, Compatibility, Diagnostic, DiagnosticCode, ElementLocation, Metrics, Severity,
 };
 pub use error::{Error, Result};
+pub use icon::IconKind;
 pub use notification::{Flattening, NOTIFICATION_ICON_LIVE_AREA, NOTIFICATION_ICON_SIZE};
 
 /// A converted SVG and its compatibility analysis.
@@ -354,6 +356,34 @@ pub fn analyze_file(path: &Path) -> Result<Analysis> {
 /// Analyze SVG bytes without converting them.
 pub fn analyze(source: &[u8]) -> Result<Analysis> {
     Ok(svg::process(source, false)?.analysis)
+}
+
+/// Analyze an SVG file as an icon of `kind` fitted to `fit` dp, without
+/// writing anything, as [`analyze_as`] does.
+pub fn analyze_file_as(path: &Path, kind: IconKind, fit: f32) -> Result<Analysis> {
+    let source = std::fs::read(path).map_err(|source| Error::Read {
+        path: path.to_owned(),
+        source,
+    })?;
+    analyze_as(&source, kind, fit)
+}
+
+/// Analyze SVG bytes as an icon of `kind` fitted to `fit` dp, without
+/// keeping the drawable.
+///
+/// A convertible SVG is converted and turned into the icon with
+/// [`Asset::to_icon`], so the analysis carries the kind's findings and the
+/// metrics of the fitted result. An SVG that cannot be converted yields its
+/// compatibility analysis alone, as [`analyze`] would.
+pub fn analyze_as(source: &[u8], kind: IconKind, fit: f32) -> Result<Analysis> {
+    match convert(source) {
+        Ok(mut asset) => {
+            asset.to_icon(kind, fit)?;
+            Ok(asset.analysis)
+        }
+        Err(Error::Incompatible(analysis)) => Ok(*analysis),
+        Err(error) => Err(error),
+    }
 }
 
 /// Convert an SVG file exactly or with safe normalization.

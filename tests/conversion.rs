@@ -1923,12 +1923,17 @@ fn cli_notification_writes_white_icons_and_warns_about_plates() {
         .unwrap();
     assert!(output.status.success(), "{output:?}");
     let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(stderr.contains("flattened 1 color to white"), "{stderr}");
     assert!(
-        stderr.contains("plate.svg: artwork paints 100% of the 24dp canvas"),
+        stderr.contains("note: ")
+            && stderr.contains("bell.svg: SVGVD021  flattened 1 color to white"),
         "{stderr}"
     );
-    assert!(!stderr.contains("bell.svg: artwork paints"), "{stderr}");
+    assert!(
+        stderr.contains("warning: ")
+            && stderr.contains("plate.svg: SVGVD017  artwork paints 100% of the 24dp canvas"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("bell.svg: SVGVD017"), "{stderr}");
 
     let bell = fs::read_to_string(drawable.join("bell.xml")).unwrap();
     assert!(bell.contains("android:width=\"24dp\""));
@@ -2201,4 +2206,233 @@ fn optimizing_a_legacy_icon_only_moves_edge_pixels_by_one_coverage_step() {
             differences.len()
         );
     }
+}
+
+#[test]
+fn icon_kinds_add_coded_findings_without_changing_compatibility() {
+    let plate = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <path d="M0 0H24V24H0Z" fill="#101010"/>
+    </svg>"##;
+    let mut asset = vdtoolkit::convert(plate).unwrap();
+    asset
+        .to_icon(vdtoolkit::IconKind::Notification, 24.0)
+        .unwrap();
+    let codes: Vec<&str> = asset
+        .analysis
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.code.as_str())
+        .collect();
+    assert_eq!(codes, ["SVGVD021", "SVGVD017"], "{codes:?}");
+    let plate_warning = &asset.analysis.diagnostics[1];
+    assert!(matches!(plate_warning.severity, Severity::Warning));
+    assert!(
+        plate_warning
+            .message
+            .starts_with("artwork paints 100% of the 24dp canvas")
+    );
+    assert!(plate_warning.suggestion.is_some());
+    let note = &asset.analysis.diagnostics[0];
+    assert!(matches!(note.severity, Severity::Info));
+    assert_eq!(
+        note.message,
+        "flattened 1 color to white; Android tints the alpha channel only"
+    );
+    assert_eq!(asset.analysis.compatibility, Compatibility::Exact);
+    assert_eq!(asset.analysis.minimum_api, Some(21));
+    assert!(asset.to_xml().contains("android:fillColor=\"#FFFFFF\""));
+
+    let empty = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"></svg>"##;
+    let mut asset = vdtoolkit::convert(empty).unwrap();
+    asset
+        .to_icon(vdtoolkit::IconKind::Notification, 24.0)
+        .unwrap();
+    assert!(asset.analysis.diagnostics.iter().any(|diagnostic| {
+        diagnostic.code.as_str() == "SVGVD018" && diagnostic.message.contains("no painted content")
+    }));
+
+    // A plain logo fitted to the full layer spills out of the safe zone; the
+    // safe-zone fit keeps it in and adds nothing.
+    let logo = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M12 2L2 22h20z" fill="#3DDC84"/></svg>"##;
+    let mut asset = vdtoolkit::convert(logo).unwrap();
+    asset
+        .to_icon(vdtoolkit::IconKind::AdaptiveForeground, 108.0)
+        .unwrap();
+    let outside = asset
+        .analysis
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code.as_str() == "SVGVD019")
+        .expect("safe zone warning");
+    assert_eq!(
+        outside.message,
+        "content spans 9..99 × 9..99dp, outside the 66dp safe zone; launcher masks may hide it"
+    );
+    assert_eq!(
+        outside.suggestion.as_deref(),
+        Some("Scale the artwork into the safe zone with --fit 66 or smaller.")
+    );
+    let mut asset = vdtoolkit::convert(logo).unwrap();
+    asset
+        .to_icon(vdtoolkit::IconKind::AdaptiveForeground, 66.0)
+        .unwrap();
+    assert!(
+        asset.analysis.diagnostics.is_empty(),
+        "{:?}",
+        asset.analysis.diagnostics
+    );
+
+    // A non-square background leaves bands; a full square background is fine.
+    let wide = br##"<svg xmlns="http://www.w3.org/2000/svg" width="108" height="54"><path d="M0 0H108V54H0Z" fill="#FFFFFF"/></svg>"##;
+    let mut asset = vdtoolkit::convert(wide).unwrap();
+    asset
+        .to_icon(vdtoolkit::IconKind::AdaptiveBackground, 108.0)
+        .unwrap();
+    let gap = asset
+        .analysis
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code.as_str() == "SVGVD020")
+        .expect("background warning");
+    assert_eq!(
+        gap.message,
+        "background content spans 0..108 × 27..81dp and does not fill the 108dp layer; \
+         uncovered areas show through launcher masks and parallax"
+    );
+    let square = br##"<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108"><path d="M0 0H108V108H0Z" fill="#FFFFFF"/></svg>"##;
+    let mut asset = vdtoolkit::convert(square).unwrap();
+    asset
+        .to_icon(vdtoolkit::IconKind::AdaptiveBackground, 108.0)
+        .unwrap();
+    assert!(asset.analysis.diagnostics.is_empty());
+
+    // The kinds carry their canvas, and the fit is validated against it.
+    assert_eq!(vdtoolkit::IconKind::Notification.canvas(), 24.0);
+    assert_eq!(vdtoolkit::IconKind::AdaptiveBackground.default_fit(), 108.0);
+    assert!(matches!(
+        asset.to_icon(vdtoolkit::IconKind::Notification, 25.0),
+        Err(Error::InvalidInput(_))
+    ));
+    assert_eq!(
+        serde_json::to_string(&vdtoolkit::IconKind::AdaptiveForeground).unwrap(),
+        "\"adaptive-foreground\""
+    );
+}
+
+#[test]
+fn analyze_as_reports_icon_findings_without_a_drawable() {
+    let plate = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <path d="M0 0H24V24H0Z" fill="#101010"/>
+    </svg>"##;
+    let analysis = vdtoolkit::analyze_as(plate, vdtoolkit::IconKind::Notification, 24.0).unwrap();
+    assert!(
+        analysis
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code.as_str() == "SVGVD017")
+    );
+    assert_eq!(analysis.metrics.width, 24.0);
+
+    // An SVG that cannot be converted still gets its compatibility analysis.
+    let masked = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <defs><mask id="m"><rect width="24" height="24" fill="url(#g)"/></mask>
+        <linearGradient id="g"><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#000"/></linearGradient></defs>
+        <rect width="24" height="24" fill="#f00" mask="url(#m)"/>
+    </svg>"##;
+    let analysis = vdtoolkit::analyze_as(masked, vdtoolkit::IconKind::Notification, 24.0).unwrap();
+    assert!(!analysis.compatibility.convertible());
+    assert!(
+        analysis
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code.as_str() != "SVGVD017")
+    );
+}
+
+#[test]
+fn cli_inspect_as_reports_icon_findings_without_writing() {
+    let temp = tempfile::tempdir().unwrap();
+    let icons = temp.path().join("icons");
+    fs::create_dir(&icons).unwrap();
+    let logo = icons.join("logo.svg");
+    fs::write(
+        &logo,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M12 2L2 22h20z" fill="#3DDC84"/></svg>"##,
+    )
+    .unwrap();
+    fs::write(
+        icons.join("plate.svg"),
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><rect width="24" height="24" fill="#101010"/></svg>"##,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_vdt"))
+        .args(["inspect", "--as", "notification", "--format", "json"])
+        .arg(&icons)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let entries = report.as_array().unwrap();
+    assert_eq!(entries.len(), 2);
+    let codes = |entry: &serde_json::Value| -> Vec<String> {
+        entry["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|diagnostic| diagnostic["code"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    let (logo_entry, plate_entry) = (&entries[0], &entries[1]);
+    assert!(logo_entry["path"].as_str().unwrap().ends_with("logo.svg"));
+    assert_eq!(
+        logo_entry["icon"],
+        serde_json::json!({"kind": "notification", "fit": 24.0})
+    );
+    assert_eq!(codes(logo_entry), ["SVGVD021"]);
+    assert_eq!(codes(plate_entry), ["SVGVD011", "SVGVD021", "SVGVD017"]);
+    assert_eq!(plate_entry["diagnostics"][2]["severity"], "warning");
+    assert_eq!(plate_entry["metrics"]["width"], 24.0);
+    assert_eq!(plate_entry["compatibility"], "exact_with_normalization");
+    // Nothing was written next to the inputs.
+    assert_eq!(fs::read_dir(&icons).unwrap().count(), 2);
+
+    // The adaptive kinds take the generator's --fit; a plain report has no
+    // icon field and no icon findings.
+    let run = |args: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_vdt"))
+            .args(args)
+            .arg(&logo)
+            .output()
+            .unwrap();
+        (
+            output.status.code(),
+            String::from_utf8(output.stdout).unwrap(),
+            String::from_utf8(output.stderr).unwrap(),
+        )
+    };
+    let (code, stdout, _) = run(&["inspect", "--as", "adaptive-foreground"]);
+    assert_eq!(code, Some(0));
+    assert!(
+        stdout.contains("SVGVD019  content spans 9..99 × 9..99dp"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("Viewport: 108 × 108"), "{stdout}");
+    let (code, stdout, _) = run(&["check", "--as", "adaptive-foreground", "--fit", "66"]);
+    assert_eq!(code, Some(0));
+    assert!(!stdout.contains("SVGVD019"), "{stdout}");
+    let (_, stdout, _) = run(&["inspect", "--format", "json"]);
+    assert!(!stdout.contains("\"icon\""), "{stdout}");
+    assert!(!stdout.contains("SVGVD02"), "{stdout}");
+
+    // --fit needs a kind, and must fit the kind's canvas.
+    let (code, _, stderr) = run(&["inspect", "--fit", "20"]);
+    assert_eq!(code, Some(2));
+    assert!(stderr.contains("--as"), "{stderr}");
+    let (code, _, stderr) = run(&["inspect", "--as", "notification", "--fit", "30"]);
+    assert_eq!(code, Some(1));
+    assert!(
+        stderr.contains("--fit must be between 0 and 24 dp, got 30"),
+        "{stderr}"
+    );
 }

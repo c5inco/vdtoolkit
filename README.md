@@ -39,6 +39,7 @@ vdt icon.svg -o ic_icon.xml            # shorthand for `convert`
 vdt convert icons/ -o res/drawable/    # directories work; tree is preserved
 vdt check icon.svg                     # is it convertible? (no output written)
 vdt inspect icon.svg --format json     # diagnostics, min API, metrics
+vdt inspect bell.svg --as notification --format json  # would it make a good notification icon?
 vdt optimize icon.svg -o ic_icon.xml   # convert with smaller numbers, same rendering
 vdt adaptive --foreground fg.svg --background-color '#3DDC84' -o app/src/main/res
 vdt notification bell.svg -o res/drawable/ic_stat_bell.xml
@@ -58,6 +59,20 @@ is named on stderr and the remaining files are still processed. `--format json`
 produces a stable report with diagnostic codes for use in CI, and lists a
 `path` and `error` for any file that could not be read or parsed. `--strict`
 accepts only input that needs no normalization at all.
+
+`check` and `inspect` take `--as <kind>` to also report what making the SVG
+into that kind of icon would find, exactly as `notification` or `adaptive`
+would, without writing anything. The kinds are `notification`,
+`adaptive-foreground` (a monochrome layer follows the same rules), and
+`adaptive-background`; `--fit <dp>` is the generator's fit and defaults to the
+whole canvas. The report's metrics describe the fitted result, and in JSON an
+`icon` object names the kind and fit. Compatibility and the exit code are
+unchanged: these findings are warnings and notes.
+
+```sh
+vdt inspect icons/ --as notification --format json
+vdt check logo.svg --as adaptive-foreground --fit 66
+```
 
 | Exit code | Meaning |
 | --- | --- |
@@ -84,10 +99,15 @@ vdt notification icons/ --fit 20 -o res/drawable/
 
 A gradient whose stops all share one opacity is only color, so it becomes solid
 white and the drawable no longer needs API 24; a gradient that fades is the
-shape of the icon, so it is kept with white stops. A note on stderr names the
-colors and gradients that were flattened. A warning names any icon that paints
-almost the whole canvas, since a solid plate tints into a filled square rather
-than a silhouette, and any icon with no painted content at all.
+shape of the icon, so it is kept with white stops. The findings carry
+diagnostic codes, so `inspect --as notification --format json` can report them
+before anything is written:
+
+| Code | Meaning |
+| --- | --- |
+| `SVGVD021` | Note naming the colors and gradients that were flattened to white. |
+| `SVGVD017` | Warning: the artwork paints almost the whole canvas, so a solid plate tints into a filled square rather than a silhouette. |
+| `SVGVD018` | Warning: the artwork has no painted content, so the icon is invisible. |
 
 Reference the result from the notification with
 `setSmallIcon(R.drawable.ic_stat_bell)`.
@@ -117,12 +137,17 @@ The files written are `mipmap-anydpi-v26/<name>.xml`,
 `drawable/<name>_background.xml` or `values/<name>_background.xml`, and
 `drawable/<name>_monochrome.xml` when a monochrome layer is given. Artwork is
 scaled uniformly and centered, so rendering is unchanged apart from placement;
-a background SVG always fills the whole layer. A warning names any foreground
-or monochrome layer whose content leaves the 66dp safe zone, since launcher
-masks may hide it, and any background that leaves part of the layer unpainted.
-Non-square background artwork is scaled to fit, not cropped, so it leaves
-transparent bands and triggers that warning, as do inset clips and holes. Every layer is converted before anything is written, and a
-layer that fails leaves the directory untouched.
+a background SVG always fills the whole layer. Placement findings carry
+diagnostic codes, so `inspect --as adaptive-foreground --fit 66` or
+`--as adaptive-background` can report them before anything is written:
+
+| Code | Meaning |
+| --- | --- |
+| `SVGVD019` | Warning: foreground or monochrome content leaves the 66dp safe zone, so launcher masks may hide it. |
+| `SVGVD020` | Warning: the background leaves part of the 108dp layer unpainted, which shows through launcher masks and parallax. Non-square artwork is scaled to fit, not cropped, so it leaves transparent bands, as do inset clips and holes. |
+
+Every layer is converted before anything is written, and a layer that fails
+leaves the directory untouched.
 Add `android:icon="@mipmap/<name>"` and `android:roundIcon="@mipmap/<name>_round"`
 to the `<application>` element of the manifest.
 

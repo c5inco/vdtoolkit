@@ -4,7 +4,9 @@ use std::process::ExitCode;
 
 use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
-use vdtoolkit::{Analysis, Asset, Compatibility, Error, Result, Severity};
+use vdtoolkit::{
+    Analysis, Asset, Compatibility, DiagnosticCode, Error, IconKind, Result, Severity,
+};
 use walkdir::WalkDir;
 
 #[derive(Parser)]
@@ -117,9 +119,46 @@ struct ReportArgs {
     /// Report format.
     #[arg(long, value_enum, default_value_t = Format::Human)]
     format: Format,
+    /// Also report what making the SVG into this kind of icon would find,
+    /// as `notification` or `adaptive` would, without writing anything.
+    /// A monochrome layer follows the adaptive-foreground rules.
+    #[arg(long = "as", value_enum, value_name = "KIND")]
+    as_kind: Option<IconKindArg>,
+    /// Size in dp of the centered square the artwork is scaled to fit on the
+    /// canvas of the kind given with --as. Defaults to the whole canvas: 24
+    /// for a notification icon and 108 for an adaptive layer.
+    #[arg(long, requires = "as_kind")]
+    fit: Option<f32>,
     /// Treat safe normalization as incompatible.
     #[arg(long)]
     strict: bool,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum IconKindArg {
+    /// White 24dp notification icon.
+    Notification,
+    /// Foreground or monochrome layer of an adaptive launcher icon.
+    AdaptiveForeground,
+    /// Background layer of an adaptive launcher icon.
+    AdaptiveBackground,
+}
+
+impl From<IconKindArg> for IconKind {
+    fn from(kind: IconKindArg) -> Self {
+        match kind {
+            IconKindArg::Notification => Self::Notification,
+            IconKindArg::AdaptiveForeground => Self::AdaptiveForeground,
+            IconKindArg::AdaptiveBackground => Self::AdaptiveBackground,
+        }
+    }
+}
+
+/// The icon a report was made for, when `--as` was given.
+#[derive(Clone, Copy, Serialize)]
+struct IconTarget {
+    kind: IconKind,
+    fit: f32,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -131,6 +170,8 @@ enum Format {
 #[derive(Serialize)]
 struct FileAnalysis<'a> {
     path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    icon: Option<IconTarget>,
     #[serde(flatten)]
     analysis: &'a Analysis,
 }
@@ -198,10 +239,6 @@ fn run(cli: Cli) -> Result<Outcome> {
     }
 }
 
-/// Fraction of the canvas above which a notification icon is more likely a
-/// solid plate than a silhouette.
-const NOTIFICATION_PLATE_COVERAGE: f32 = 0.9;
-
 fn notification(args: NotificationArgs) -> Result<Outcome> {
     let inputs = inputs(&args.input)?;
     if args.input.is_dir() && args.output.is_none() {
@@ -240,44 +277,8 @@ fn notification_one(args: &NotificationArgs, input: &Path) -> Result<()> {
             "requires normalization and was rejected by --strict".to_owned(),
         ));
     }
-    let flattening = asset.to_notification_icon(args.fit)?;
-    // Printed after the fit, which drops warnings about the source size that
-    // the 24dp canvas no longer has.
-    for diagnostic in &asset.analysis.diagnostics {
-        if matches!(diagnostic.severity, Severity::Warning) {
-            eprintln!(
-                "warning: {}: {}  {}",
-                input.display(),
-                diagnostic.code.as_str(),
-                diagnostic.message
-            );
-        }
-    }
-    if !flattening.is_empty() {
-        eprintln!(
-            "note: {}: flattened {} to white; Android tints the alpha channel only",
-            input.display(),
-            flattened(flattening)
-        );
-    }
-    let coverage = asset.painted_coverage();
-    if coverage >= NOTIFICATION_PLATE_COVERAGE {
-        eprintln!(
-            "warning: {}: artwork paints {:.0}% of the {}dp canvas; a notification icon \
-             should be a silhouette on transparency, or the system tints it into a \
-             filled square (see --fit)",
-            input.display(),
-            coverage * 100.0,
-            vdtoolkit::NOTIFICATION_ICON_SIZE
-        );
-    } else if coverage == 0.0 || asset.analysis.metrics.content_bounds.is_none() {
-        // Content bounds are measured before clipping, so artwork clipped
-        // away entirely still has bounds; only rendering shows it is empty.
-        eprintln!(
-            "warning: {}: no painted content, so the notification icon is invisible",
-            input.display()
-        );
-    }
+    asset.to_icon(IconKind::Notification, args.fit)?;
+    print_findings(input, &asset.analysis);
     if args.optimize {
         asset.optimize();
     }
@@ -289,18 +290,25 @@ fn notification_one(args: &NotificationArgs, input: &Path) -> Result<()> {
     Ok(())
 }
 
-/// What flattening changed, as `2 colors and 1 gradient`.
-fn flattened(flattening: vdtoolkit::Flattening) -> String {
-    let plural =
-        |count: usize, noun: &str| format!("{count} {noun}{}", if count == 1 { "" } else { "s" });
-    match (flattening.colors, flattening.gradients) {
-        (colors, 0) => plural(colors, "color"),
-        (0, gradients) => plural(gradients, "gradient"),
-        (colors, gradients) => format!(
-            "{} and {}",
-            plural(colors, "color"),
-            plural(gradients, "gradient")
-        ),
+/// Print a converted file's warnings, and the flattening note a notification
+/// icon carries, with their codes. Normalization notes stay with `inspect`.
+fn print_findings(input: &Path, analysis: &Analysis) {
+    for diagnostic in &analysis.diagnostics {
+        let label = match diagnostic.severity {
+            Severity::Warning => "warning",
+            Severity::Info
+                if diagnostic.code.as_str() == DiagnosticCode::PaintFlattened.as_str() =>
+            {
+                "note"
+            }
+            Severity::Info | Severity::Error => continue,
+        };
+        eprintln!(
+            "{label}: {}: {}  {}",
+            input.display(),
+            diagnostic.code.as_str(),
+            diagnostic.message
+        );
     }
 }
 
@@ -327,8 +335,12 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
 
     // Every layer is converted before anything is written, so a failing
     // layer leaves the resource directory untouched.
-    let Some(foreground) = adaptive_layer(&args, &args.foreground, args.fit, LayerRole::Artwork)
-    else {
+    let Some(foreground) = adaptive_layer(
+        &args,
+        &args.foreground,
+        args.fit,
+        IconKind::AdaptiveForeground,
+    ) else {
         return Ok(Outcome::Failed);
     };
     let mut files = vec![(
@@ -341,7 +353,7 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
                 &args,
                 path,
                 vdtoolkit::ADAPTIVE_ICON_SIZE,
-                LayerRole::Background,
+                IconKind::AdaptiveBackground,
             ) else {
                 return Ok(Outcome::Failed);
             };
@@ -368,7 +380,8 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
     };
     let monochrome_reference = match &args.monochrome {
         Some(monochrome) => {
-            let Some(layer) = adaptive_layer(&args, monochrome, args.fit, LayerRole::Artwork)
+            let Some(layer) =
+                adaptive_layer(&args, monochrome, args.fit, IconKind::AdaptiveForeground)
             else {
                 return Ok(Outcome::Failed);
             };
@@ -466,15 +479,6 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
     Ok(Outcome::Passed)
 }
 
-/// What a layer is for, which decides the placement warning it gets.
-#[derive(Clone, Copy)]
-enum LayerRole {
-    /// Foreground or monochrome artwork, which should stay in the safe zone.
-    Artwork,
-    /// A background, which should fill the whole layer.
-    Background,
-}
-
 /// Serialize a drawable, shortening its numbers first when asked.
 ///
 /// The asset itself stays exact: the legacy icon is composed from the fitted
@@ -490,10 +494,9 @@ fn drawable_xml(asset: &Asset, optimize: bool) -> String {
     }
 }
 
-/// Convert and fit one layer, or report the failure with its path and return
-/// `None`. Warns when artwork leaves the safe zone or a background does not
-/// fill the layer.
-fn adaptive_layer(args: &AdaptiveArgs, input: &Path, fit: f32, role: LayerRole) -> Option<Asset> {
+/// Convert and fit one layer as `kind`, printing its findings, or report the
+/// failure with its path and return `None`.
+fn adaptive_layer(args: &AdaptiveArgs, input: &Path, fit: f32, kind: IconKind) -> Option<Asset> {
     let layer = || -> Result<Asset> {
         let mut asset = vdtoolkit::convert_file(input)?;
         if args.strict && asset.analysis.compatibility != Compatibility::Exact {
@@ -501,44 +504,12 @@ fn adaptive_layer(args: &AdaptiveArgs, input: &Path, fit: f32, role: LayerRole) 
                 "requires normalization and was rejected by --strict".to_owned(),
             ));
         }
-        asset.fit_adaptive_layer(fit)?;
+        asset.to_icon(kind, fit)?;
         Ok(asset)
     };
     match layer() {
         Ok(asset) => {
-            match role {
-                LayerRole::Artwork => {
-                    if let Some(bounds) = asset.outside_adaptive_safe_zone() {
-                        eprintln!(
-                            "warning: {}: content spans {}, outside the {}dp safe zone; \
-                             launcher masks may hide it (see --fit)",
-                            input.display(),
-                            span(bounds),
-                            vdtoolkit::ADAPTIVE_ICON_SAFE_ZONE
-                        );
-                    }
-                }
-                LayerRole::Background if !asset.fills_adaptive_layer() => {
-                    let detail = match short_of_layer(&asset) {
-                        Some(bounds) => {
-                            format!("content spans {} and does not fill", span(bounds))
-                        }
-                        None if asset.analysis.metrics.content_bounds.is_none() => {
-                            "has no painted content, so it does not fill".to_owned()
-                        }
-                        None => "leaves unpainted pixels, from clipping, holes, or \
-                                 transparent paint, in"
-                            .to_owned(),
-                    };
-                    eprintln!(
-                        "warning: {}: background {detail} the {}dp layer; \
-                         uncovered areas show through launcher masks and parallax",
-                        input.display(),
-                        vdtoolkit::ADAPTIVE_ICON_SIZE
-                    );
-                }
-                LayerRole::Background => {}
-            }
+            print_findings(input, &asset.analysis);
             Some(asset)
         }
         Err(error) => {
@@ -546,31 +517,6 @@ fn adaptive_layer(args: &AdaptiveArgs, input: &Path, fit: f32, role: LayerRole) 
             None
         }
     }
-}
-
-/// Content bounds when they stop short of some edge of the 108dp layer.
-fn short_of_layer(asset: &Asset) -> Option<vdtoolkit::Bounds> {
-    let far = vdtoolkit::ADAPTIVE_ICON_SIZE - 1e-3;
-    asset.analysis.metrics.content_bounds.filter(|bounds| {
-        bounds.left > 1e-3 || bounds.top > 1e-3 || bounds.right < far || bounds.bottom < far
-    })
-}
-
-/// Bounds as `left..right × top..bottom` in dp.
-fn span(bounds: vdtoolkit::Bounds) -> String {
-    format!(
-        "{}..{} × {}..{}dp",
-        vdtoolkit_number(bounds.left),
-        vdtoolkit_number(bounds.right),
-        vdtoolkit_number(bounds.top),
-        vdtoolkit_number(bounds.bottom)
-    )
-}
-
-/// Short decimal for dp values in warnings.
-fn vdtoolkit_number(value: f32) -> String {
-    let text = format!("{value:.1}");
-    text.strip_suffix(".0").map(str::to_owned).unwrap_or(text)
 }
 
 fn validate_resource_name(name: &str) -> Result<()> {
@@ -684,11 +630,27 @@ fn convert_one(args: &ConvertArgs, input: &Path, optimize: bool) -> Result<()> {
 
 fn report(args: ReportArgs, inspect: bool) -> Result<Outcome> {
     let inputs = inputs(&args.input)?;
+    let icon = args.as_kind.map(|kind| IconTarget {
+        kind: kind.into(),
+        fit: args
+            .fit
+            .unwrap_or_else(|| IconKind::from(kind).default_fit()),
+    });
+    if let Some(icon) = icon.filter(|icon| !(icon.fit > 0.0 && icon.fit <= icon.kind.canvas())) {
+        return Err(Error::InvalidInput(format!(
+            "--fit must be between 0 and {} dp, got {}",
+            icon.kind.canvas(),
+            icon.fit
+        )));
+    }
     let mut reports = Vec::new();
     let mut passed = true;
     let mut failed = 0;
     for input in &inputs {
-        let result = vdtoolkit::analyze_file(input);
+        let result = match icon {
+            Some(icon) => vdtoolkit::analyze_file_as(input, icon.kind, icon.fit),
+            None => vdtoolkit::analyze_file(input),
+        };
         match &result {
             Ok(analysis) => {
                 passed &= if args.strict {
@@ -708,6 +670,7 @@ fn report(args: ReportArgs, inspect: bool) -> Result<Outcome> {
                 .map(|(path, result)| match result {
                     Ok(analysis) => ReportEntry::Analysis(FileAnalysis {
                         path: path.display().to_string(),
+                        icon,
                         analysis,
                     }),
                     Err(error) => ReportEntry::Failed(FileFailure {

@@ -8,6 +8,19 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- The findings of the generator commands carry diagnostic codes. `SVGVD017`
+  warns that a notification icon paints almost the whole canvas, `SVGVD018`
+  that it has no painted content, `SVGVD019` that adaptive foreground or
+  monochrome content leaves the 66dp safe zone, `SVGVD020` that an adaptive
+  background does not fill the layer, and the `SVGVD021` note names what was
+  flattened to white. `notification` and `adaptive` print them with their
+  codes on stderr, as `convert` prints its warnings.
+- `check --as <kind>` and `inspect --as <kind>` report those findings without
+  writing anything, for `notification`, `adaptive-foreground`, and
+  `adaptive-background`, with `--fit` as the generator's fit. The metrics
+  describe the fitted result, and the JSON report gains an `icon` object with
+  the kind and fit. The Rust API gains `IconKind`, `Asset::to_icon`,
+  `analyze_as`, and `analyze_file_as`.
 - `adaptive --optimize` shortens numbers in the foreground, background, and
   monochrome layer drawables and the legacy vector the way the `optimize`
   command does. Fitting a layer scales every coordinate by a non-round factor,

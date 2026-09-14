@@ -220,7 +220,9 @@ Decisions from the data:
   elliptical gradients and `mix-blend-mode`. It stays in the corpus as the
   ceiling: a rejected-by-filter file must never become approximate.
 
-The floors in `MINIMUM_CONVERTIBLE` pin the convertible counts above, so a
-lowering regression on illustration-scale input fails the suite rather than
-passing quietly. The suite is not a Cargo, CI, or packaging dependency; the
-`Material conformance` workflow can run it on demand.
+The floors in `MINIMUM_CONVERTIBLE` pin the convertible counts above, and a
+visual mismatch or an approximate result fails the run, so a lowering
+regression on illustration-scale input fails the suite rather than passing
+quietly. The suite is not a release gate: the `Material conformance` workflow
+runs it on demand with the full scope. It does add `resvg` as a
+dev-dependency and `examples/compare.rs`, which ordinary CI compiles.

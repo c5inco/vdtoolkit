@@ -18,9 +18,9 @@ import argparse
 import collections
 import concurrent.futures
 import hashlib
+import http.client
 import json
 import pathlib
-import re
 import shutil
 import subprocess
 import tempfile
@@ -100,7 +100,7 @@ def download(item: tuple[str, str, str, pathlib.Path]) -> None:
             with urllib.request.urlopen(url, timeout=60) as response:
                 data = response.read()
             break
-        except OSError:
+        except (OSError, http.client.HTTPException):
             if attempt == 2:
                 raise
     if hashlib.sha256(data).hexdigest() != digest:
@@ -125,20 +125,24 @@ def fetch_corpus(sources: pathlib.Path) -> dict[str, list[pathlib.Path]]:
 
 
 def inspect(binary: pathlib.Path, directory: pathlib.Path) -> list[dict]:
+    # Exit 2 means some files are incompatible and 1 that some failed to
+    # parse; both still carry a full report. Anything else, or no report at
+    # all, is a problem with the run itself, and stderr says which.
     result = subprocess.run(
         [binary, "inspect", directory, "--format", "json"],
         check=False,
         stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
     )
-    if result.returncode not in (0, 1, 2):
-        raise RuntimeError(f"inspect exited {result.returncode}")
+    if result.returncode not in (0, 1, 2) or not result.stdout.strip():
+        raise RuntimeError(f"{directory.name}: inspect exited {result.returncode} without a report")
     return json.loads(result.stdout)
 
 
 def compare(example: pathlib.Path, files: list[pathlib.Path]) -> list[dict]:
     comparisons = []
     for start in range(0, len(files), 50):
+        # A file that cannot be compared is reported on its own line, and
+        # the exit status only repeats that; the caller judges the lines.
         result = subprocess.run(
             [example, *files[start : start + 50]],
             check=False,
@@ -164,9 +168,8 @@ def main() -> None:
         sources.mkdir()
         by_source = fetch_corpus(sources)
 
-        subprocess.run([CARGO, "build", "--release", "--locked"], cwd=ROOT, check=True)
         subprocess.run(
-            [CARGO, "build", "--release", "--locked", "--example", "compare"],
+            [CARGO, "build", "--release", "--locked", "--bins", "--example", "compare"],
             cwd=ROOT,
             check=True,
         )
@@ -205,8 +208,14 @@ def main() -> None:
                 # Which constructs block the file, and which files a single
                 # construct would free: the data for deciding what to lower next.
                 blockers["+".join(codes)] += 1
-                for reason in {(d["code"], re.sub(r"\d+(\.\d+)?", "N", d["message"])) for d in errors}:
+                for reason in {(d["code"], d["message"]) for d in errors}:
                     reasons[reason] += 1
+            # Nothing may be approximate: a file that is rejected today, such
+            # as one with a blur filter, must never quietly become lossy.
+            if compatibility["approximate"] != 0:
+                raise AssertionError(
+                    f"{source}: {compatibility['approximate']} files became approximate"
+                )
             if len(convertible) < MINIMUM_CONVERTIBLE[source]:
                 raise AssertionError(
                     f"{source}: convertible files regressed from "
@@ -239,6 +248,7 @@ def main() -> None:
                 (c for c in comparisons if "error" in c or c["different_pixels"] > VISUAL_TOLERANCE),
                 key=lambda c: -c.get("different_pixels", 1.0),
             )
+            compared = [c for c in comparisons if "error" not in c]
             summary[source] = {
                 "total": len(files),
                 "compatibility": dict(compatibility),
@@ -251,11 +261,12 @@ def main() -> None:
                 "visual_matches": len(comparisons) - len(mismatches),
                 "mismatches": mismatches,
                 "mean_difference": (
-                    sum(c["mean_absolute_difference"] for c in comparisons if "error" not in c)
-                    / max(1, len(comparisons))
+                    sum(c["mean_absolute_difference"] for c in compared) / max(1, len(compared))
                 ),
             }
 
+    # Every check above raises on its own; the visual comparison is judged
+    # here, after the report, so the worst files are still listed.
     total = sum(s["total"] for s in summary.values())
     convertible = sum(s["convertible"] for s in summary.values())
     matches = sum(s["visual_matches"] for s in summary.values())
@@ -279,9 +290,11 @@ def main() -> None:
             for name, error in s["failed"][: arguments.examples]:
                 print(f"    {name}: {error}")
         for code, names in s["rejected_by_code"].items():
-            shown = ", ".join(names[: arguments.examples])
-            more = f", +{len(names) - arguments.examples} more" if len(names) > arguments.examples else ""
-            print(f"  rejected {code}: {len(names)} ({shown}{more})")
+            parts = names[: arguments.examples]
+            if parts and len(names) > len(parts):
+                parts.append(f"+{len(names) - len(parts)} more")
+            shown = f" ({', '.join(parts)})" if parts else ""
+            print(f"  rejected {code}: {len(names)}{shown}")
         for (code, message), count in s["reasons"]:
             print(f"    {count:4} {code} {message}")
         if s["blockers"]:
@@ -309,6 +322,12 @@ def main() -> None:
                     f"    {name}: {c['different_pixels']:.1%} of pixels differ, "
                     f"mean {c['mean_absolute_difference']:.2f}"
                 )
+
+    mismatched = sum(len(s["mismatches"]) for s in summary.values())
+    if mismatched:
+        raise AssertionError(
+            f"{mismatched} converted drawables do not render like their source"
+        )
 
 
 if __name__ == "__main__":

@@ -24,6 +24,12 @@ Android dependencies:
 - `build/vdtoolkit-renderer.apk`: generated drawable resources
 - `build/vdtoolkit-renderer-test.apk`: framework instrumentation pixel tests
 
+The script also runs `vdt notification` on `fixtures/notification/`, writing
+`ic_stat_bell` and `ic_stat_fade`. It picks the resource folder from
+`vdt inspect` on the source, which is a safe qualifier because `notification`
+never raises the minimum API, only lowers it when a gradient that was only
+color collapses to solid white.
+
 The script also fetches two Material Symbols from the pinned corpus commit and
 runs `vdt adaptive` on them (see `fixtures/adaptive/SOURCES.md`): `ic_launcher`
 uses the `stars` symbol fitted to the 66dp safe zone over a drawable
@@ -70,6 +76,20 @@ asserts that both foreground and background colors are visible inside the
 icon's bounds. Screenshots of the home screen, the app drawer, and the cropped
 icon are saved to the app's external files directory and pulled into
 `build/run/screenshots/` (via `--directories-to-pull` on emulator.wtf).
+
+`NotificationIconTest` checks the claim the command rests on: that the icon
+carries its shape in the alpha channel alone. It renders `ic_stat_bell` at 10
+pixels per dp and asserts that both source colors are gone, that every painted
+pixel is pure white, that the half-opaque square keeps its opacity, and that
+`setTint` recolors every painted pixel at its own alpha. `ic_stat_fade` keeps a
+fading gradient, so it needs API 24: below that the `drawable-v24` resource must
+be unavailable, and above it the alpha ramp must fall from opaque to clear
+across the icon while staying white. Finally it posts a real notification using
+the icon, opens the shade through `UiAutomation`, and asserts the notification
+is shown, saving a screenshot. That last test is the most environment-sensitive
+of the harness: the status bar icon is a few dp on a themed background, so it
+asserts presence rather than pixels, and the pixel truth stays in the tests
+above.
 
 The tests render at 10 pixels per viewport unit. Assertions are at least one
 viewport unit from an edge and allow a maximum channel error of 2 only for

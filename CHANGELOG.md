@@ -19,6 +19,11 @@ follow [Semantic Versioning](https://semver.org/).
   does, after the fit. The Rust API gains `Asset::to_notification_icon`,
   `Asset::painted_coverage`, `Flattening`, `NOTIFICATION_ICON_SIZE`, and
   `NOTIFICATION_ICON_LIVE_AREA`.
+- The Android renderer harness generates notification icons with
+  `vdt notification` and verifies on device that the artwork is pure white,
+  keeps its opacity, takes `setTint` at every painted pixel, and keeps a fading
+  gradient's alpha ramp on API 24+, then posts a notification and checks the
+  shade shows it.
 - `SVGVD016` warning for drawables larger than Android's recommended 200×200dp
   vector icon size. It does not change compatibility; `convert` and `optimize`
   print it to stderr, and `check` and `inspect` list it with other diagnostics.

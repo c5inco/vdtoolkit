@@ -164,12 +164,31 @@ jobs:
           done
 
           printf '%s' "$APPLE_API_KEY" | base64 --decode > "$work/api-key.p8"
+          head -1 "$work/api-key.p8" | LC_ALL=C tr -d '\r' \
+            | grep -qx -- '-----BEGIN PRIVATE KEY-----' || {
+            echo "APPLE_API_KEY must be the base64 of the AuthKey_*.p8 file" >&2
+            exit 1
+          }
+          [[ "$APPLE_API_KEY_ID" =~ ^[A-Z0-9]{10}$ ]] || {
+            echo "APPLE_API_KEY_ID must be the 10-character key ID with no whitespace" >&2
+            exit 1
+          }
+          [[ "$APPLE_API_ISSUER_ID" =~ ^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$ ]] || {
+            echo "APPLE_API_ISSUER_ID must be the issuer UUID with no whitespace" >&2
+            exit 1
+          }
+
           ditto -c -k --keepParent "$work/notarize" "$work/notarize.zip"
-          result=$(xcrun notarytool submit "$work/notarize.zip" \
+          xcrun notarytool submit "$work/notarize.zip" \
             --key "$work/api-key.p8" --key-id "$APPLE_API_KEY_ID" \
-            --issuer "$APPLE_API_ISSUER_ID" --wait --output-format json)
-          id=$(printf '%s' "$result" | jq -r .id)
-          status=$(printf '%s' "$result" | jq -r .status)
+            --issuer "$APPLE_API_ISSUER_ID" --wait --output-format json \
+            > "$work/notarize.json" || {
+            code=$?
+            echo "notarytool submit exited with $code" >&2
+            exit 1
+          }
+          id=$(jq -r .id "$work/notarize.json")
+          status=$(jq -r .status "$work/notarize.json")
           echo "notarization $id: $status"
           if [ "$status" != Accepted ]; then
             xcrun notarytool log "$id" --key "$work/api-key.p8" \

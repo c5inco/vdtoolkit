@@ -272,6 +272,13 @@ fn path_data(commands: &[PathCommand]) -> String {
     value
 }
 
+/// Format a number with at most six decimals.
+///
+/// Six fixed decimals can spell out binary noise for an `f32` above about 64,
+/// where the spacing between adjacent values is coarser than a millionth:
+/// `107.64` would print as `107.639999`. When the shortest decimal that reads
+/// back as the same `f32` is shorter, it is used instead. Both texts denote
+/// the same value, so this only drops digits that carry no information.
 pub(crate) fn number(value: f32) -> String {
     let value = if value.abs() < 0.000_000_5 {
         0.0
@@ -285,5 +292,10 @@ pub(crate) fn number(value: f32) -> String {
     if text.ends_with('.') {
         text.pop();
     }
-    text
+    let shortest = value.to_string();
+    if shortest.len() < text.len() && !shortest.contains(['e', 'E']) {
+        shortest
+    } else {
+        text
+    }
 }

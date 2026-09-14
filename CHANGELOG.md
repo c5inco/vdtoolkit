@@ -8,6 +8,13 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `adaptive --optimize` shortens numbers in the foreground, background, and
+  monochrome layer drawables and the legacy vector the way the `optimize`
+  command does. Fitting a layer scales every coordinate by a non-round factor,
+  which is exactly what produces long decimals, so the pass runs after the
+  fit. Legacy PNGs are rendered from the exact vector either way, since a
+  thousandth of a dp can still move an anti-aliased edge by one coverage step
+  at 96px and above.
 - `notification` command that converts SVGs to white 24dp notification icon
   drawables: every fill and stroke is flattened to white with its opacity kept,
   since Android tints the alpha channel alone, and the artwork is scaled
@@ -67,6 +74,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Numbers above about 64 in generated drawables no longer spell out binary
+  noise: `107.64` printed as `107.639999`, because six fixed decimals is finer
+  than an `f32` can resolve there. The writer now uses the shortest decimal
+  that reads back as the same value whenever that is shorter, which is what
+  made `optimize` ineffective on 108dp adaptive layers.
 - `convert`, `check`, and `inspect` no longer stop at the first failing file in
   a directory. Each failure is reported with its path, the remaining files are
   processed, and the command exits 1. JSON reports include an entry with the

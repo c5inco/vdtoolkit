@@ -110,6 +110,7 @@ vdt adaptive --foreground logo.svg --background bg.svg --monochrome logo.svg \
 | `--fit <dp>` | Square that the foreground and monochrome artwork is scaled to fit, centered on the 108dp layer. Defaults to 108 for artwork drawn on the full layer. For a plain logo, Android recommends 48 to 66; 66 is the safe zone that no launcher mask hides. |
 | `--name <name>` | Resource name, `ic_launcher` by default. Layers use it as a prefix. |
 | `--legacy` | Also write a legacy icon for devices below API 26, with the 72dp visible area on the 44dp circle keyline of a 48dp icon. It is a vector in `mipmap/`. When the art needs API 24, because of gradients, even-odd fills, or clips, it is a vector in `mipmap-anydpi-v24/` for API 24 and 25 plus PNGs rendered from that vector in `mipmap-mdpi/` through `mipmap-xxxhdpi/` for API 21 to 23. | Regenerating a name switches layouts cleanly: files of the layout no longer used are removed.
+| `--optimize` | Shorten numbers in every layer drawable and the legacy vector where it cannot change rendering, as the `optimize` command does. It runs after the fit, which is what introduces long decimals, so placement is unchanged. Legacy PNGs are rendered from the exact vector either way. |
 
 The files written are `mipmap-anydpi-v26/<name>.xml`,
 `mipmap-anydpi-v26/<name>_round.xml`, `drawable/<name>_foreground.xml`, either

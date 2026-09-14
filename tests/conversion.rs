@@ -2022,3 +2022,183 @@ fn cli_notification_optimize_shortens_numbers_without_moving_the_artwork() {
     assert!(optimized.contains("android:width=\"24dp\""));
     assert!(optimized.contains("android:fillColor=\"#FFFFFF\""));
 }
+
+#[test]
+fn cli_adaptive_optimize_shortens_every_drawable_and_keeps_pngs_identical() {
+    let temp = tempfile::tempdir().unwrap();
+    let foreground = temp.path().join("fg.svg");
+    let background = temp.path().join("bg.svg");
+    // Fitting 48 units into 66dp scales by 1.375, which turns these
+    // coordinates into long decimals in every layer.
+    fs::write(
+        &foreground,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48"><path d="M24.00001 4.333333L4.6666 43.99999h38.66666z" fill="#3DDC84"/></svg>"##,
+    )
+    .unwrap();
+    // A gradient needs API 24, so --legacy renders PNGs from the vector.
+    fs::write(
+        &background,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100">
+        <defs><linearGradient id="g" x1="0.3333" y1="0" x2="99.6667" y2="100" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#123456"/><stop offset="1" stop-color="#ABCDEF"/>
+        </linearGradient></defs>
+        <rect width="100" height="100" fill="url(#g)"/></svg>"##,
+    )
+    .unwrap();
+
+    let run = |res: &std::path::Path, extra: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_vdt"))
+            .args(["adaptive", "--foreground"])
+            .arg(&foreground)
+            .arg("--background")
+            .arg(&background)
+            .arg("--monochrome")
+            .arg(&foreground)
+            .args(["--fit", "66", "--legacy"])
+            .args(extra)
+            .arg("-o")
+            .arg(res)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        String::from_utf8(output.stdout).unwrap()
+    };
+    let plain = temp.path().join("plain");
+    let optimized = temp.path().join("optimized");
+    let again = temp.path().join("again");
+    run(&plain, &[]);
+    run(&optimized, &["--optimize"]);
+    run(&again, &["--optimize"]);
+
+    let read =
+        |res: &std::path::Path, relative: &str| fs::read_to_string(res.join(relative)).unwrap();
+    let plain_foreground = read(&plain, "drawable/ic_launcher_foreground.xml");
+    let foreground_xml = read(&optimized, "drawable/ic_launcher_foreground.xml");
+    assert!(
+        plain_foreground.contains("android:pathData=\"M54.00001,26.958332"),
+        "{plain_foreground}"
+    );
+    assert!(
+        foreground_xml.contains("android:pathData=\"M54,26.958 L27.417,81.5 L80.583,81.5 Z\""),
+        "{foreground_xml}"
+    );
+    assert!(foreground_xml.contains("android:width=\"108dp\""));
+    assert!(foreground_xml.len() < plain_foreground.len());
+    assert_eq!(
+        read(&optimized, "drawable/ic_launcher_monochrome.xml"),
+        foreground_xml
+    );
+    let background_xml = read(&optimized, "drawable/ic_launcher_background.xml");
+    assert!(
+        background_xml.contains("android:startX=\"0.36\""),
+        "{background_xml}"
+    );
+    assert!(
+        background_xml.contains("android:endX=\"107.64\""),
+        "{background_xml}"
+    );
+    assert!(background_xml.contains("android:pathData=\"M0,0 L108,0 L108,108 L0,108 Z\""));
+    let legacy = read(&optimized, "mipmap-anydpi-v24/ic_launcher.xml");
+    let plain_legacy = read(&plain, "mipmap-anydpi-v24/ic_launcher.xml");
+    assert!(
+        plain_legacy.contains("M24.000008,7.474537"),
+        "{plain_legacy}"
+    );
+    assert!(
+        plain_legacy.contains("M-9.000002,-9.000002"),
+        "{plain_legacy}"
+    );
+    assert!(legacy.contains("M-9,-9 L57,-9 L57,57 L-9,57 Z"), "{legacy}");
+    assert!(
+        legacy.contains("M24,7.475 L7.755,40.806 L40.245,40.806 Z"),
+        "{legacy}"
+    );
+    assert!(legacy.len() < plain_legacy.len());
+
+    // The PNGs are rendered from the exact legacy vector, so they come out
+    // byte-identical with and without --optimize, and the whole run is
+    // deterministic.
+    for (density, _) in vdtoolkit::LEGACY_ICON_DENSITIES {
+        for name in ["ic_launcher.png", "ic_launcher_round.png"] {
+            let relative = format!("mipmap-{density}/{name}");
+            let bytes = fs::read(optimized.join(&relative)).unwrap();
+            assert_eq!(
+                bytes,
+                fs::read(plain.join(&relative)).unwrap(),
+                "{relative}"
+            );
+            assert_eq!(
+                bytes,
+                fs::read(again.join(&relative)).unwrap(),
+                "{relative}"
+            );
+        }
+    }
+    for relative in [
+        "drawable/ic_launcher_foreground.xml",
+        "drawable/ic_launcher_background.xml",
+        "drawable/ic_launcher_monochrome.xml",
+        "mipmap-anydpi-v24/ic_launcher.xml",
+        "mipmap-anydpi-v24/ic_launcher_round.xml",
+        "mipmap-anydpi-v26/ic_launcher.xml",
+    ] {
+        assert_eq!(
+            read(&optimized, relative),
+            read(&again, relative),
+            "{relative}"
+        );
+    }
+    assert_eq!(
+        read(&optimized, "mipmap-anydpi-v26/ic_launcher.xml"),
+        read(&plain, "mipmap-anydpi-v26/ic_launcher.xml")
+    );
+}
+
+#[test]
+fn optimizing_a_legacy_icon_only_moves_edge_pixels_by_one_coverage_step() {
+    let foreground = br##"<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">
+        <path d="M24.00001 4.333333L4.6666 43.99999h38.66666z" fill="#3DDC84" fill-opacity="0.7"/>
+        <circle cx="24.3333" cy="27.6667" r="6.1111" fill="none" stroke="#123456" stroke-width="1.3333"/>
+    </svg>"##;
+    let background = br##"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100">
+        <defs><radialGradient id="g" cx="33.3333" cy="66.6667" r="70.7107" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#ABCDEF"/>
+        </radialGradient></defs>
+        <rect width="100" height="100" fill="url(#g)"/></svg>"##;
+
+    let mut foreground = vdtoolkit::convert(foreground).unwrap();
+    foreground
+        .fit_adaptive_layer(vdtoolkit::ADAPTIVE_ICON_SAFE_ZONE)
+        .unwrap();
+    let mut background = vdtoolkit::convert(background).unwrap();
+    background
+        .fit_adaptive_layer(vdtoolkit::ADAPTIVE_ICON_SIZE)
+        .unwrap();
+    let exact = vdtoolkit::Asset::legacy_launcher_icon(&background, &foreground);
+    let mut optimized = exact.clone();
+    optimized.optimize();
+    assert_ne!(exact.to_xml(), optimized.to_xml());
+
+    // Rounding to a thousandth of a dp is invisible, but it is not nothing at
+    // the raster level: from 96px up, an edge that lands within a rounding
+    // step of a supersample boundary can move by one coverage step. This is
+    // why `adaptive --optimize` renders its PNGs from the exact vector and
+    // optimizes only the XML it writes.
+    for (_, pixels) in vdtoolkit::LEGACY_ICON_DENSITIES {
+        let exact_pixels = exact.render_rgba(pixels, pixels).unwrap();
+        let optimized_pixels = optimized.render_rgba(pixels, pixels).unwrap();
+        let differences: Vec<i32> = exact_pixels
+            .iter()
+            .zip(&optimized_pixels)
+            .map(|(a, b)| (i32::from(*a) - i32::from(*b)).abs())
+            .filter(|difference| *difference != 0)
+            .collect();
+        let largest = differences.iter().copied().max().unwrap_or(0);
+        assert!(largest <= 16, "{pixels}px: a channel moved by {largest}");
+        assert!(
+            differences.len() * 1000 <= exact_pixels.len(),
+            "{pixels}px: {} channels differ",
+            differences.len()
+        );
+    }
+}

@@ -97,6 +97,11 @@ struct AdaptiveArgs {
     /// `mipmap-mdpi/` through `mipmap-xxxhdpi/`.
     #[arg(long)]
     legacy: bool,
+    /// Shorten numbers in every layer drawable and the legacy vector where it
+    /// cannot change rendering, as `optimize` does. It runs after the fit,
+    /// which is what introduces long decimals, so placement is unchanged.
+    #[arg(long)]
+    optimize: bool,
     /// Android `res/` directory to write into.
     #[arg(short, long, value_name = "RES_DIR")]
     output: PathBuf,
@@ -322,28 +327,27 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
 
     // Every layer is converted before anything is written, so a failing
     // layer leaves the resource directory untouched.
-    let Some(foreground) =
-        adaptive_layer(&args.foreground, args.fit, args.strict, LayerRole::Artwork)
+    let Some(foreground) = adaptive_layer(&args, &args.foreground, args.fit, LayerRole::Artwork)
     else {
         return Ok(Outcome::Failed);
     };
     let mut files = vec![(
         drawable_dir.join(&foreground_name).with_extension("xml"),
-        foreground.to_xml(),
+        drawable_xml(&foreground, args.optimize),
     )];
     let (background, background_reference) = match (&args.background, color) {
         (Some(path), _) => {
             let Some(layer) = adaptive_layer(
+                &args,
                 path,
                 vdtoolkit::ADAPTIVE_ICON_SIZE,
-                args.strict,
                 LayerRole::Background,
             ) else {
                 return Ok(Outcome::Failed);
             };
             files.push((
                 drawable_dir.join(&background_name).with_extension("xml"),
-                layer.to_xml(),
+                drawable_xml(&layer, args.optimize),
             ));
             (layer, format!("@drawable/{background_name}"))
         }
@@ -364,13 +368,13 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
     };
     let monochrome_reference = match &args.monochrome {
         Some(monochrome) => {
-            let Some(layer) = adaptive_layer(monochrome, args.fit, args.strict, LayerRole::Artwork)
+            let Some(layer) = adaptive_layer(&args, monochrome, args.fit, LayerRole::Artwork)
             else {
                 return Ok(Outcome::Failed);
             };
             files.push((
                 drawable_dir.join(&monochrome_name).with_extension("xml"),
-                layer.to_xml(),
+                drawable_xml(&layer, args.optimize),
             ));
             Some(format!("@drawable/{monochrome_name}"))
         }
@@ -394,7 +398,7 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
     let mut stale: Vec<PathBuf> = Vec::new();
     if args.legacy {
         let legacy = vdtoolkit::Asset::legacy_launcher_icon(&background, &foreground);
-        let xml = legacy.to_xml();
+        let xml = drawable_xml(&legacy, args.optimize);
         let names = [args.name.as_str(), round_name.as_str()];
         let plain: Vec<PathBuf> = names
             .iter()
@@ -471,13 +475,28 @@ enum LayerRole {
     Background,
 }
 
+/// Serialize a drawable, shortening its numbers first when asked.
+///
+/// The asset itself stays exact: the legacy icon is composed from the fitted
+/// layers and would otherwise be rounded twice, and the PNGs are rendered
+/// from whichever vector is written.
+fn drawable_xml(asset: &Asset, optimize: bool) -> String {
+    if optimize {
+        let mut asset = asset.clone();
+        asset.optimize();
+        asset.to_xml()
+    } else {
+        asset.to_xml()
+    }
+}
+
 /// Convert and fit one layer, or report the failure with its path and return
 /// `None`. Warns when artwork leaves the safe zone or a background does not
 /// fill the layer.
-fn adaptive_layer(input: &Path, fit: f32, strict: bool, role: LayerRole) -> Option<Asset> {
+fn adaptive_layer(args: &AdaptiveArgs, input: &Path, fit: f32, role: LayerRole) -> Option<Asset> {
     let layer = || -> Result<Asset> {
         let mut asset = vdtoolkit::convert_file(input)?;
-        if strict && asset.analysis.compatibility != Compatibility::Exact {
+        if args.strict && asset.analysis.compatibility != Compatibility::Exact {
             return Err(Error::InvalidInput(
                 "requires normalization and was rejected by --strict".to_owned(),
             ));

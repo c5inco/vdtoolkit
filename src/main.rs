@@ -235,6 +235,9 @@ fn notification_one(args: &NotificationArgs, input: &Path) -> Result<()> {
             "requires normalization and was rejected by --strict".to_owned(),
         ));
     }
+    let flattening = asset.to_notification_icon(args.fit)?;
+    // Printed after the fit, which drops warnings about the source size that
+    // the 24dp canvas no longer has.
     for diagnostic in &asset.analysis.diagnostics {
         if matches!(diagnostic.severity, Severity::Warning) {
             eprintln!(
@@ -245,7 +248,6 @@ fn notification_one(args: &NotificationArgs, input: &Path) -> Result<()> {
             );
         }
     }
-    let flattening = asset.to_notification_icon(args.fit)?;
     if !flattening.is_empty() {
         eprintln!(
             "note: {}: flattened {} to white; Android tints the alpha channel only",
@@ -263,7 +265,9 @@ fn notification_one(args: &NotificationArgs, input: &Path) -> Result<()> {
             coverage * 100.0,
             vdtoolkit::NOTIFICATION_ICON_SIZE
         );
-    } else if asset.analysis.metrics.content_bounds.is_none() {
+    } else if coverage == 0.0 || asset.analysis.metrics.content_bounds.is_none() {
+        // Content bounds are measured before clipping, so artwork clipped
+        // away entirely still has bounds; only rendering shows it is empty.
         eprintln!(
             "warning: {}: no painted content, so the notification icon is invisible",
             input.display()

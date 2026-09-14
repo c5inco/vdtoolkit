@@ -1950,6 +1950,43 @@ fn cli_notification_writes_white_icons_and_warns_about_plates() {
 }
 
 #[test]
+fn cli_notification_warns_about_the_output_not_the_source() {
+    let temp = tempfile::tempdir().unwrap();
+    // Content bounds come before clipping, so only rendering sees that this
+    // square is clipped away entirely.
+    let clipped = temp.path().join("clipped.svg");
+    fs::write(
+        &clipped,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><clipPath id="c"><rect x="40" y="40" width="4" height="4"/></clipPath><rect width="24" height="24" fill="#3DDC84" clip-path="url(#c)"/></svg>"##,
+    )
+    .unwrap();
+    // 500dp draws slowly as a source, but the icon is written at 24dp.
+    let large = temp.path().join("large.svg");
+    fs::write(
+        &large,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="500" height="500"><path d="M100 100H400V400H100Z" fill="#101010"/></svg>"##,
+    )
+    .unwrap();
+
+    let stderr = |icon: &std::path::Path| {
+        let output = Command::new(env!("CARGO_BIN_EXE_vdt"))
+            .arg("notification")
+            .arg(icon)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        String::from_utf8(output.stderr).unwrap()
+    };
+    let clipped = stderr(&clipped);
+    assert!(
+        clipped.contains("no painted content, so the notification icon is invisible"),
+        "{clipped}"
+    );
+    let large = stderr(&large);
+    assert!(!large.contains("SVGVD016"), "{large}");
+}
+
+#[test]
 fn cli_notification_optimize_shortens_numbers_without_moving_the_artwork() {
     let temp = tempfile::tempdir().unwrap();
     let icon = temp.path().join("bell.svg");

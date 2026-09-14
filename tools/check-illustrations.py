@@ -210,6 +210,14 @@ def main() -> None:
                 blockers["+".join(codes)] += 1
                 for reason in {(d["code"], d["message"]) for d in errors}:
                     reasons[reason] += 1
+            # Every pinned file must stay analyzable. A parse failure on a file
+            # that was already unsupported would otherwise drop out of every
+            # later check while the convertible floor still passes.
+            if failed:
+                raise AssertionError(
+                    f"{source}: {len(failed)} files could not be analyzed: "
+                    + "; ".join(f"{name}: {error}" for name, error in failed)
+                )
             # Nothing may be approximate: a file that is rejected today, such
             # as one with a blur filter, must never quietly become lossy.
             if compatibility["approximate"] != 0:

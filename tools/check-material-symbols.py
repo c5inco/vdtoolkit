@@ -341,8 +341,9 @@ def assert_adaptive_layer(
             raise AssertionError(f"{layer.name}: path {index} stroke width is not scaled")
 
 
-# Half a thousandth of a dp, the most `--optimize` moves a coordinate.
-OPTIMIZED_TOLERANCE = 5e-4 + 1e-6
+# Half a thousandth of a dp, the most `--optimize` moves a coordinate, plus
+# the f32 allowance the plain check already has.
+OPTIMIZED_TOLERANCE = 5e-4 + 1e-5
 
 
 def check_adaptive_icons(

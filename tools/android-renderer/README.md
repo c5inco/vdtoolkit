@@ -101,6 +101,55 @@ API 21 the single native clip is rendered while multi-clip and even-odd
 resources must be unavailable. On API 24+ all interior, exterior, intersection,
 scope, mask-region, ring, and hole pixels are checked.
 
+## Cross-renderer fidelity surface
+
+The harness also packages one pinned Material icon with a non-zero-origin SVG
+viewBox (`fixtures/fidelity/`). `MainActivity` places four equal Android
+surfaces in a grid: the original SVG in a WebView, then VectorDrawables emitted
+by vdtoolkit, Ashung's `svg2vectordrawable`, and the AOSP `svg2vector` CLI.
+`FidelitySurfaceTest` captures the actual Android display to the app's external
+screenshots directory. This checks the production Android renderer rather than
+translating a VectorDrawable back to SVG.
+
+The fixture XML is deliberately checked in: each competitor is an external
+tool and therefore should not be downloaded or silently changed during an
+Android conformance run. Regenerate it only as part of the documented benchmark
+procedure, retaining the source revision and command in the benchmark report.
+
+Use the normal `build.sh` followed by `run.sh` to capture it. For an interactive
+device, launch the app and take a display screenshot:
+
+```sh
+adb shell am start -n com.vdtoolkit.renderer/.MainActivity
+android screen capture --device="$ANDROID_SERIAL" -o fidelity-surfaces.png
+```
+
+The WebView is an independent SVG surface, not a claim that Android's
+VectorDrawable renderer supports SVG. A screenshot comparison must treat
+browser-versus-framework antialiasing as expected renderer variance; a blank or
+clipped VectorDrawable is a conversion failure, not a tolerance case.
+
+### Reproduce the 100-icon comparison
+
+`benchmark-fidelity.sh` downloads the pinned Material corpus and converter
+revisions, generates all three sets of XML, and builds the 25-icon/page APK.
+Its work directory defaults to `/tmp/vdtoolkit-android-fidelity`, so it does
+not alter the checkout. On an Android device it additionally captures 16
+screenshots: four pages for each source/renderer surface.
+
+```sh
+# Fresh Amp orb: .agents/setup installs the JDK, Maven, Android SDK, and adb.
+.agents/setup
+
+# After connecting an Android device (or emulator.wtf), run the complete flow.
+ANDROID_SERIAL=emulator-5554 tools/android-renderer/benchmark-fidelity.sh
+```
+
+Use `FIDELITY_WORKDIR=/some/cache/path` to retain downloaded sources and Maven
+dependencies between runs. The script pins Material Icons, Ashung, AOSP, and
+the Android SDK build-tools versions; it does not need the temporary benchmark
+directories used during development.
+
 ## Compose renderer
 
 `compose/` is a small Gradle project that loads the same generated drawables

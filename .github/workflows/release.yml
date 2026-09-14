@@ -4,6 +4,12 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      sign:
+        description: Sign and notarize the macOS binaries
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -59,73 +65,6 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       - run: cargo build --release --locked --target ${{ matrix.target }}
-      - name: Sign and notarize
-        if: runner.os == 'macOS'
-        shell: bash
-        env:
-          BINARY: target/${{ matrix.target }}/release/${{ matrix.executable }}
-          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
-          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
-        run: |
-          set -euo pipefail
-          if [ -z "$MACOS_CERTIFICATE" ] || [ -z "$APPLE_API_KEY" ]; then
-            if [ "$GITHUB_REF_TYPE" = tag ]; then
-              echo "macOS signing secrets are required for tagged releases" >&2
-              exit 1
-            fi
-            echo "::warning::macOS signing secrets are not set; leaving $BINARY unsigned"
-            exit 0
-          fi
-
-          work="$RUNNER_TEMP/signing"
-          keychain="$work/signing.keychain-db"
-          mkdir -p "$work"
-          keychain_password=$(openssl rand -base64 32)
-          echo "::add-mask::$keychain_password"
-
-          printf '%s' "$MACOS_CERTIFICATE" | base64 --decode > "$work/certificate.p12"
-          security create-keychain -p "$keychain_password" "$keychain"
-          security set-keychain-settings -lut 21600 "$keychain"
-          security unlock-keychain -p "$keychain_password" "$keychain"
-          security import "$work/certificate.p12" -k "$keychain" \
-            -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-          rm "$work/certificate.p12"
-          security set-key-partition-list -S apple-tool:,apple: -s \
-            -k "$keychain_password" "$keychain" > /dev/null
-          security list-keychains -d user -s "$keychain" login.keychain-db
-
-          identity=$(security find-identity -v -p codesigning "$keychain" \
-            | awk '/Developer ID Application/ { print $2; exit }')
-          test -n "$identity" || {
-            echo "no Developer ID Application identity in MACOS_CERTIFICATE" >&2
-            exit 1
-          }
-          codesign --force --options runtime --timestamp \
-            --keychain "$keychain" --sign "$identity" "$BINARY"
-          codesign --verify --strict --verbose=2 "$BINARY"
-
-          printf '%s' "$APPLE_API_KEY" | base64 --decode > "$work/api-key.p8"
-          ditto -c -k --keepParent "$BINARY" "$work/notarize.zip"
-          result=$(xcrun notarytool submit "$work/notarize.zip" \
-            --key "$work/api-key.p8" --key-id "$APPLE_API_KEY_ID" \
-            --issuer "$APPLE_API_ISSUER_ID" --wait --output-format json)
-          id=$(printf '%s' "$result" | jq -r .id)
-          status=$(printf '%s' "$result" | jq -r .status)
-          echo "notarization $id: $status"
-          if [ "$status" != Accepted ]; then
-            xcrun notarytool log "$id" --key "$work/api-key.p8" \
-              --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER_ID"
-            exit 1
-          fi
-      - name: Remove signing material
-        if: always() && runner.os == 'macOS'
-        shell: bash
-        run: |
-          security delete-keychain "$RUNNER_TEMP/signing/signing.keychain-db" 2>/dev/null || true
-          rm -rf "$RUNNER_TEMP/signing"
       - name: Package
         shell: bash
         run: |
@@ -146,9 +85,123 @@ jobs:
             vdtoolkit-*.tar.gz
             vdtoolkit-*.sha256
 
+  # Signing credentials live only in the protected macos-signing environment
+  # and are never present while project code is compiled.
+  sign-macos:
+    if: github.ref_type == 'tag' || inputs.sign
+    needs: build
+    runs-on: macos-15
+    environment: macos-signing
+    steps:
+      - name: Require signing secrets
+        shell: bash
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          missing=""
+          for name in MACOS_CERTIFICATE MACOS_CERTIFICATE_PASSWORD \
+            APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER_ID; do
+            [ -n "${!name}" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "missing macos-signing environment secrets:$missing" >&2
+            exit 1
+          fi
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: vdtoolkit-*-apple-darwin
+          path: dist
+      - name: Sign and notarize
+        shell: bash
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/signing"
+          keychain="$work/signing.keychain-db"
+          mkdir -p "$work/notarize"
+          keychain_password=$(openssl rand -base64 32)
+          echo "::add-mask::$keychain_password"
+
+          printf '%s' "$MACOS_CERTIFICATE" | base64 --decode > "$work/certificate.p12"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$work/certificate.p12" -k "$keychain" \
+            -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm "$work/certificate.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s \
+            -k "$keychain_password" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" login.keychain-db
+
+          identity=$(security find-identity -v -p codesigning "$keychain" \
+            | awk '/Developer ID Application/ { print $2; exit }')
+          test -n "$identity" || {
+            echo "no Developer ID Application identity in MACOS_CERTIFICATE" >&2
+            exit 1
+          }
+
+          archives=(dist/*/vdtoolkit-*.tar.gz)
+          test "${#archives[@]}" -eq 2 || {
+            echo "expected two macOS archives, found ${#archives[@]}" >&2
+            exit 1
+          }
+          for archive in "${archives[@]}"; do
+            name=$(basename "$archive" .tar.gz)
+            tar -xzf "$archive" -C "$work"
+            codesign --force --options runtime --timestamp \
+              --keychain "$keychain" --sign "$identity" "$work/$name/vdt"
+            codesign --verify --strict --verbose=2 "$work/$name/vdt"
+            cp "$work/$name/vdt" "$work/notarize/$name"
+          done
+
+          printf '%s' "$APPLE_API_KEY" | base64 --decode > "$work/api-key.p8"
+          ditto -c -k --keepParent "$work/notarize" "$work/notarize.zip"
+          result=$(xcrun notarytool submit "$work/notarize.zip" \
+            --key "$work/api-key.p8" --key-id "$APPLE_API_KEY_ID" \
+            --issuer "$APPLE_API_ISSUER_ID" --wait --output-format json)
+          id=$(printf '%s' "$result" | jq -r .id)
+          status=$(printf '%s' "$result" | jq -r .status)
+          echo "notarization $id: $status"
+          if [ "$status" != Accepted ]; then
+            xcrun notarytool log "$id" --key "$work/api-key.p8" \
+              --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER_ID"
+            exit 1
+          fi
+
+          for archive in "${archives[@]}"; do
+            name=$(basename "$archive" .tar.gz)
+            tar -czf "$archive" -C "$work" "$name"
+            (cd "$(dirname "$archive")" && shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256")
+          done
+      - name: Remove signing material
+        if: always()
+        shell: bash
+        run: |
+          security delete-keychain "$RUNNER_TEMP/signing/signing.keychain-db" 2>/dev/null || true
+          rm -rf "$RUNNER_TEMP/signing"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: vdtoolkit-x86_64-apple-darwin
+          path: dist/vdtoolkit-x86_64-apple-darwin/*
+          overwrite: true
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: vdtoolkit-aarch64-apple-darwin
+          path: dist/vdtoolkit-aarch64-apple-darwin/*
+          overwrite: true
+
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: [build, sign-macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write

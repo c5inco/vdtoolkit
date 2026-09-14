@@ -18,10 +18,12 @@ crates.io remains an explicit, separate maintainer action.
    `tools/android-renderer/RESULTS.md`.
 4. Push the release commit and manually run **Release binaries**. Confirm the
    exhaustive conformance job and all four native artifact builds pass. A manual
-   run never publishes a release.
+   run never publishes a release. Tick **Sign and notarize the macOS binaries**
+   to also exercise the signing job (see below).
 5. Create and push the exact tag `v<version>`. The workflow rejects a tag that
-   does not match `Cargo.toml`, rebuilds all artifacts, verifies conformance, and
-   creates the GitHub release with checksums.
+   does not match `Cargo.toml`, rebuilds all artifacts, verifies conformance,
+   waits for approval of the `macos-signing` environment, signs and notarizes
+   the macOS binaries, and creates the GitHub release with checksums.
 6. Inspect the release notes and archives, then publish to crates.io when ready:
 
    ```sh
@@ -39,16 +41,17 @@ crates.io remains an explicit, separate maintainer action.
 
 ## macOS signing and notarization
 
-The two macOS builds sign `vdt` with a Developer ID Application certificate
-using the hardened runtime and a secure timestamp, then submit it to Apple's
-notary service. The Linux and Windows archives are unaffected. A bare
-executable cannot carry a stapled ticket, so Gatekeeper confirms notarization
-online the first time the binary runs.
+After the four builds finish, the `sign-macos` job downloads the two macOS
+archives. It signs each `vdt` with a Developer ID Application certificate using
+the hardened runtime and a secure timestamp, and submits both to Apple's notary
+service. Then it repackages the archives, regenerates their checksums, and
+replaces the unsigned artifacts. The Linux and Windows archives are unaffected.
+A bare executable cannot carry a stapled ticket, so Gatekeeper confirms
+notarization online the first time the binary runs.
 
-Tagged releases fail if the signing secrets are missing. A manual run without
-them builds unsigned macOS binaries and prints a warning. With the secrets set,
-a manual run signs and notarizes, which is the way to test the setup before
-tagging.
+The job runs for every tag and for manual runs with **Sign and notarize the
+macOS binaries** ticked. It stops before signing, naming every missing secret,
+if any of the five is unset. A tag never publishes unsigned macOS binaries.
 
 ### One-time setup
 
@@ -59,33 +62,54 @@ tagging.
    Connect API**. Create a team key with the **Developer** role and download
    the `.p8` file. Apple lets you download it only once. Note the key ID and the
    issuer ID.
-3. Add these repository secrets under **Settings → Secrets and variables →
-   Actions**:
+3. Under **Settings → Environments**, create an environment named
+   `macos-signing`:
+   - Under **Required reviewers**, add yourself or another maintainer, and turn
+     on **Prevent self-review** if more than one maintainer can approve.
+   - Under **Deployment branches and tags**, choose **Selected branches and
+     tags** and add the tag rule `v*` and the branch rule `main`.
+   - Leave **Allow administrators to bypass configured protection rules** off.
+4. Add these as **environment secrets** of `macos-signing`, not as repository
+   secrets:
 
    | Secret | Value |
    | --- | --- |
-   | `MACOS_CERTIFICATE` | `base64 -i certificate.p12 \| pbcopy` |
+   | `MACOS_CERTIFICATE` | base64 of the `.p12` file |
    | `MACOS_CERTIFICATE_PASSWORD` | the `.p12` export password |
-   | `APPLE_API_KEY` | `base64 -i AuthKey_XXXXXXXXXX.p8 \| pbcopy` |
+   | `APPLE_API_KEY` | base64 of the `.p8` file |
    | `APPLE_API_KEY_ID` | the key ID |
    | `APPLE_API_ISSUER_ID` | the issuer ID |
 
-   Alternatively, `gh secret set MACOS_CERTIFICATE < <(base64 -i certificate.p12)`
-   sets a secret without using the clipboard.
-4. Delete the local `.p12` and `.p8` copies, or move them to a password
-   manager. Never commit them. The workflow decodes them only inside
-   `$RUNNER_TEMP`, imports the certificate into a temporary keychain, and
-   deletes both when the job ends, even if it fails.
+   `gh` sets them without the values touching the clipboard or shell history:
+
+   ```sh
+   gh secret set MACOS_CERTIFICATE --env macos-signing < <(base64 -i certificate.p12)
+   gh secret set MACOS_CERTIFICATE_PASSWORD --env macos-signing   # prompts
+   gh secret set APPLE_API_KEY --env macos-signing < <(base64 -i AuthKey_XXXXXXXXXX.p8)
+   gh secret set APPLE_API_KEY_ID --env macos-signing
+   gh secret set APPLE_API_ISSUER_ID --env macos-signing
+   ```
+
+5. Delete the local `.p12` and `.p8` copies, or move them to a password
+   manager. Never commit them.
+6. Under **Settings → Rules → Rulesets**, add a tag ruleset targeting `v*` that
+   restricts creation, update, and deletion to maintainers.
+7. Test the setup from `main` with a manual run that has signing ticked, approve
+   the `macos-signing` deployment, and check the downloaded macOS archives with
+   `codesign`. To test from another branch first, add that branch to the
+   environment's deployment rules temporarily and remove it afterwards.
 
 ### Keeping the secrets safe
 
-- The release workflow runs only on `v*` tag pushes and manual dispatch. It is
-  never triggered by pull requests, so workflows from forks cannot read these
-  secrets.
-- Anyone with write access can edit a workflow on a branch and read repository
-  secrets. For stricter control, move the five secrets to an environment that
-  only allows `v*` tags and requires a reviewer, and add `environment:` to the
-  build job.
+- Only the `sign-macos` job can read the secrets, and only after a reviewer
+  approves it for a `v*` tag or `main`. No other job, branch, or pull request can
+  read them, including workflows from forks. The job never compiles project
+  code. It receives the secrets only as step environment variables, decodes them
+  inside `$RUNNER_TEMP`, imports the certificate into a temporary keychain, and
+  deletes both when the job ends, even if it fails.
+- An approval runs whatever workflow is on the approved ref. Before approving,
+  check that the run's ref is the expected tag or `main` commit and that
+  `release.yml` there has not changed unexpectedly.
 - Rotate the API key in App Store Connect and revoke the certificate in the
   Developer account if either might have been exposed. Then update the secrets.
 - The Developer ID certificate expires after five years. Renew it and replace

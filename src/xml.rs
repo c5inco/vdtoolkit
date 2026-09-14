@@ -36,6 +36,26 @@ pub fn write(drawable: &VectorDrawable) -> String {
     xml
 }
 
+/// Remove formatting whitespace that appears only between XML tags or
+/// attributes. VectorDrawable XML contains no text nodes, so this preserves
+/// its parsed structure and every attribute value.
+pub fn compact(text: &str) -> String {
+    let mut compact = String::with_capacity(text.len());
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if compact.chars().last().is_some_and(|last| {
+            last != '>' && !matches!(line.as_bytes().first(), Some(b'>') | Some(b'/'))
+        }) {
+            compact.push(' ');
+        }
+        compact.push_str(line);
+    }
+    compact
+}
+
 fn write_nodes(xml: &mut String, nodes: &[VectorNode], depth: usize) {
     let indent = "    ".repeat(depth);
     let attribute_indent = "    ".repeat(depth + 1);

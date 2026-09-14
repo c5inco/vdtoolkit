@@ -43,6 +43,7 @@ vdt inspect bell.svg --as notification --format json  # would it make a good not
 vdt optimize icon.svg -o ic_icon.xml   # convert with smaller numbers, same rendering
 vdt adaptive --foreground fg.svg --background-color '#3DDC84' -o app/src/main/res
 vdt notification bell.svg -o res/drawable/ic_stat_bell.xml
+vdt convert icon.svg --pretty          # human-readable XML instead of the default compact format
 ```
 
 | Command | What it does |
@@ -59,6 +60,12 @@ is named on stderr and the remaining files are still processed. `--format json`
 produces a stable report with diagnostic codes for use in CI, and lists a
 `path` and `error` for any file that could not be read or parsed. `--strict`
 accepts only input that needs no normalization at all.
+
+Written XML is compact by default to reduce resource size without changing
+geometry or precision. Pass `--pretty` to `convert`, `optimize`, `notification`,
+or `adaptive` when reviewing or hand-editing the generated XML. The Rust API
+keeps its readable `Asset::to_xml()` output; use `Asset::to_compact_xml()` for
+the compact form.
 
 Written files get names Android accepts as resources: lowercase letters,
 digits, and underscores, not starting with a digit and not a Java keyword. A

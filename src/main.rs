@@ -48,6 +48,9 @@ struct ConvertArgs {
     /// Reject SVGs that require safe normalization.
     #[arg(long)]
     strict: bool,
+    /// Keep readable indentation and line breaks instead of compact XML.
+    #[arg(long)]
+    pretty: bool,
 }
 
 #[derive(Args)]
@@ -69,6 +72,9 @@ struct NotificationArgs {
     /// Reject SVGs that require safe normalization.
     #[arg(long)]
     strict: bool,
+    /// Keep readable indentation and line breaks instead of compact XML.
+    #[arg(long)]
+    pretty: bool,
 }
 
 #[derive(Args)]
@@ -116,6 +122,9 @@ struct AdaptiveArgs {
     /// Reject SVGs that require safe normalization.
     #[arg(long)]
     strict: bool,
+    /// Keep readable indentation and line breaks instead of compact XML.
+    #[arg(long)]
+    pretty: bool,
 }
 
 #[derive(Args)]
@@ -289,7 +298,7 @@ fn notification_one(args: &NotificationArgs, input: &Path, output: Option<Output
     if args.optimize {
         asset.optimize();
     }
-    let xml = asset.to_xml();
+    let xml = asset_xml(&asset, args.pretty);
     match output {
         Some(output) => output.write(input, &xml)?,
         None => print!("{xml}"),
@@ -352,7 +361,7 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
     };
     let mut files = vec![(
         drawable_dir.join(&foreground_name).with_extension("xml"),
-        drawable_xml(&foreground, args.optimize),
+        drawable_xml(&foreground, args.optimize, args.pretty),
     )];
     let (background, background_reference) = match (&args.background, color) {
         (Some(path), _) => {
@@ -366,7 +375,7 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
             };
             files.push((
                 drawable_dir.join(&background_name).with_extension("xml"),
-                drawable_xml(&layer, args.optimize),
+                drawable_xml(&layer, args.optimize, args.pretty),
             ));
             (layer, format!("@drawable/{background_name}"))
         }
@@ -376,7 +385,10 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
                     .join("values")
                     .join(&background_name)
                     .with_extension("xml"),
-                vdtoolkit::color_resource_xml(&background_name, &color),
+                format_xml(
+                    vdtoolkit::color_resource_xml(&background_name, &color),
+                    args.pretty,
+                ),
             ));
             (
                 vdtoolkit::Asset::solid_adaptive_layer(&color)?,
@@ -394,16 +406,19 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
             };
             files.push((
                 drawable_dir.join(&monochrome_name).with_extension("xml"),
-                drawable_xml(&layer, args.optimize),
+                drawable_xml(&layer, args.optimize, args.pretty),
             ));
             Some(format!("@drawable/{monochrome_name}"))
         }
         None => None,
     };
-    let icon = vdtoolkit::adaptive_icon_xml(
-        &background_reference,
-        &format!("@drawable/{foreground_name}"),
-        monochrome_reference.as_deref(),
+    let icon = format_xml(
+        vdtoolkit::adaptive_icon_xml(
+            &background_reference,
+            &format!("@drawable/{foreground_name}"),
+            monochrome_reference.as_deref(),
+        ),
+        args.pretty,
     );
     let round_name = format!("{}_round", args.name);
     files.push((
@@ -418,7 +433,7 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
     let mut stale: Vec<PathBuf> = Vec::new();
     if args.legacy {
         let legacy = vdtoolkit::Asset::legacy_launcher_icon(&background, &foreground);
-        let xml = drawable_xml(&legacy, args.optimize);
+        let xml = drawable_xml(&legacy, args.optimize, args.pretty);
         let names = [args.name.as_str(), round_name.as_str()];
         let plain: Vec<PathBuf> = names
             .iter()
@@ -491,13 +506,29 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
 /// The asset itself stays exact: the legacy icon is composed from the fitted
 /// layers and would otherwise be rounded twice, and the PNGs are rendered
 /// from whichever vector is written.
-fn drawable_xml(asset: &Asset, optimize: bool) -> String {
+fn drawable_xml(asset: &Asset, optimize: bool, pretty: bool) -> String {
     if optimize {
         let mut asset = asset.clone();
         asset.optimize();
+        asset_xml(&asset, pretty)
+    } else {
+        asset_xml(asset, pretty)
+    }
+}
+
+fn asset_xml(asset: &Asset, pretty: bool) -> String {
+    if pretty {
         asset.to_xml()
     } else {
-        asset.to_xml()
+        asset.to_compact_xml()
+    }
+}
+
+fn format_xml(xml: String, pretty: bool) -> String {
+    if pretty {
+        xml
+    } else {
+        vdtoolkit::compact_xml(&xml)
     }
 }
 
@@ -750,11 +781,11 @@ fn convert_one(
             "hint: pass --size {DEFAULT_ICON_SIZE} to draw it at {DEFAULT_ICON_SIZE}dp; the drawing is unchanged"
         );
     }
-    let generated_bytes = asset.to_xml().len();
+    let generated_bytes = asset_xml(&asset, args.pretty).len();
     if optimize {
         asset.optimize();
     }
-    let xml = asset.to_xml();
+    let xml = asset_xml(&asset, args.pretty);
     if optimize {
         let original_bytes = std::fs::metadata(input)
             .map(|metadata| metadata.len())

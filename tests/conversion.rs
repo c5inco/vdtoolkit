@@ -400,6 +400,41 @@ fn output_is_deterministic() {
 }
 
 #[test]
+fn compact_xml_preserves_the_pretty_drawable_structure() {
+    const ANDROID: &str = "http://schemas.android.com/apk/res/android";
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <path d="M1 2H23V22H1Z" fill="#123456" fill-opacity=".5"/>
+    </svg>"##;
+    let asset = vdtoolkit::convert(source).unwrap();
+    let pretty = asset.to_xml();
+    let compact = asset.to_compact_xml();
+
+    assert!(compact.len() < pretty.len());
+    assert!(!compact.contains('\n'));
+    let pretty = roxmltree::Document::parse(&pretty).unwrap();
+    let compact = roxmltree::Document::parse(&compact).unwrap();
+    assert_eq!(
+        pretty.root_element().attribute((ANDROID, "viewportWidth")),
+        compact.root_element().attribute((ANDROID, "viewportWidth"))
+    );
+    let pretty_path = pretty
+        .descendants()
+        .find(|node| node.has_tag_name("path"))
+        .unwrap();
+    let compact_path = compact
+        .descendants()
+        .find(|node| node.has_tag_name("path"))
+        .unwrap();
+    for attribute in ["pathData", "fillColor", "fillAlpha"] {
+        assert_eq!(
+            pretty_path.attribute((ANDROID, attribute)),
+            compact_path.attribute((ANDROID, attribute)),
+            "android:{attribute}"
+        );
+    }
+}
+
+#[test]
 fn embedding_api_serializes_and_optimizes_an_asset() {
     let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
         <path d="M1.234567 2.345678L20.987654 21.876543" fill="#123456"/>
@@ -1677,7 +1712,10 @@ fn cli_adaptive_writes_layers_icon_and_color_resource() {
     assert!(output.status.success(), "{output:?}");
     assert_eq!(
         fs::read_to_string(res.join("values/ic_app_background.xml")).unwrap(),
-        vdtoolkit::color_resource_xml("ic_app_background", "#3DDC84")
+        vdtoolkit::compact_xml(&vdtoolkit::color_resource_xml(
+            "ic_app_background",
+            "#3DDC84"
+        ))
     );
     let icon = fs::read_to_string(res.join("mipmap-anydpi-v26/ic_app.xml")).unwrap();
     assert!(icon.contains("<background android:drawable=\"@color/ic_app_background\"/>"));
@@ -2013,7 +2051,10 @@ fn cli_notification_optimize_shortens_numbers_without_moving_the_artwork() {
     };
     let plain = run(&[]);
     let optimized = run(&["--optimize"]);
+    let pretty = run(&["--pretty"]);
 
+    assert!(!plain.contains('\n'));
+    assert!(pretty.contains('\n'));
     assert!(
         plain.contains("android:pathData=\"M12.000005,2.166667"),
         "{plain}"

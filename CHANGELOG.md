@@ -15,7 +15,8 @@ follow [Semantic Versioning](https://semver.org/).
   uniform stop opacity collapses to solid white, which drops the minimum API
   back to 21; a fading gradient is kept with white stops. Stderr names what was
   flattened, and warns about artwork that covers almost the whole canvas or
-  paints nothing. The Rust API gains `Asset::to_notification_icon`,
+  paints nothing. `--optimize` shortens numbers the way the `optimize` command
+  does, after the fit. The Rust API gains `Asset::to_notification_icon`,
   `Asset::painted_coverage`, `Flattening`, `NOTIFICATION_ICON_SIZE`, and
   `NOTIFICATION_ICON_LIVE_AREA`.
 - `SVGVD016` warning for drawables larger than Android's recommended 200×200dp

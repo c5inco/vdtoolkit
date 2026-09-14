@@ -79,6 +79,7 @@ vdt notification icons/ --fit 20 -o res/drawable/
 | Option | Meaning |
 | --- | --- |
 | `--fit <dp>` | Square that the artwork is scaled to fit, centered on the 24dp canvas. Defaults to 24, which keeps artwork that already carries its own padding, such as a Material system icon, at its drawn size. Use 20 for artwork drawn edge to edge, which leaves the 2dp of padding a system icon has. |
+| `--optimize` | Shorten numbers where it cannot change rendering, as the `optimize` command does. It runs after the fit, so placement is unchanged. |
 | `--strict` | Reject input that needs safe normalization, as elsewhere. |
 
 A gradient whose stops all share one opacity is only color, so it becomes solid

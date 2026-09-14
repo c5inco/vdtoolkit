@@ -55,6 +55,9 @@ struct NotificationArgs {
     /// for artwork drawn edge to edge.
     #[arg(long, default_value_t = vdtoolkit::NOTIFICATION_ICON_SIZE)]
     fit: f32,
+    /// Shorten numbers where it cannot change rendering, as `optimize` does.
+    #[arg(long)]
+    optimize: bool,
     /// Reject SVGs that require safe normalization.
     #[arg(long)]
     strict: bool,
@@ -265,6 +268,9 @@ fn notification_one(args: &NotificationArgs, input: &Path) -> Result<()> {
             "warning: {}: no painted content, so the notification icon is invisible",
             input.display()
         );
+    }
+    if args.optimize {
+        asset.optimize();
     }
     let xml = asset.to_xml();
     match output_path(&args.input, input, args.output.as_deref()) {

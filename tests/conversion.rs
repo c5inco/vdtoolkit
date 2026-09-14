@@ -1948,3 +1948,40 @@ fn cli_notification_writes_white_icons_and_warns_about_plates() {
             .contains("directory conversion requires an output directory")
     );
 }
+
+#[test]
+fn cli_notification_optimize_shortens_numbers_without_moving_the_artwork() {
+    let temp = tempfile::tempdir().unwrap();
+    let icon = temp.path().join("bell.svg");
+    fs::write(
+        &icon,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48"><path d="M24.00001 4.333333L4.6666 43.99999h38.66666z" fill="#3DDC84"/></svg>"##,
+    )
+    .unwrap();
+
+    let run = |extra: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_vdt"))
+            .arg("notification")
+            .arg(&icon)
+            .args(extra)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        String::from_utf8(output.stdout).unwrap()
+    };
+    let plain = run(&[]);
+    let optimized = run(&["--optimize"]);
+
+    assert!(
+        plain.contains("android:pathData=\"M12.000005,2.166667"),
+        "{plain}"
+    );
+    assert!(
+        optimized.contains("android:pathData=\"M12,2.167 L2.333,22 L21.667,22 Z\""),
+        "{optimized}"
+    );
+    assert!(optimized.len() < plain.len());
+    // Optimizing runs after the fit, so the canvas and the white paint stand.
+    assert!(optimized.contains("android:width=\"24dp\""));
+    assert!(optimized.contains("android:fillColor=\"#FFFFFF\""));
+}

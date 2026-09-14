@@ -26,6 +26,8 @@ enum Command {
     Optimize(ConvertArgs),
     /// Generate an adaptive launcher icon and its layer drawables.
     Adaptive(AdaptiveArgs),
+    /// Convert SVG files to white 24dp notification icon drawables.
+    Notification(NotificationArgs),
 }
 
 #[derive(Args)]
@@ -35,6 +37,27 @@ struct ConvertArgs {
     /// Output XML file or directory. Required for directory input.
     #[arg(short, long)]
     output: Option<PathBuf>,
+    /// Reject SVGs that require safe normalization.
+    #[arg(long)]
+    strict: bool,
+}
+
+#[derive(Args)]
+struct NotificationArgs {
+    /// SVG file or directory to convert.
+    input: PathBuf,
+    /// Output XML file or directory. Required for directory input.
+    #[arg(short, long)]
+    output: Option<PathBuf>,
+    /// Size in dp of the centered square the artwork is scaled to fit on the
+    /// 24dp canvas. 24, the default, keeps artwork that already carries its
+    /// own padding, such as a Material system icon, at its drawn size; use 20
+    /// for artwork drawn edge to edge.
+    #[arg(long, default_value_t = vdtoolkit::NOTIFICATION_ICON_SIZE)]
+    fit: f32,
+    /// Shorten numbers where it cannot change rendering, as `optimize` does.
+    #[arg(long)]
+    optimize: bool,
     /// Reject SVGs that require safe normalization.
     #[arg(long)]
     strict: bool,
@@ -150,7 +173,7 @@ fn normalized_args() -> Vec<OsString> {
         .is_some_and(|first| {
             !matches!(
                 first,
-                "convert" | "check" | "inspect" | "optimize" | "adaptive"
+                "convert" | "check" | "inspect" | "optimize" | "adaptive" | "notification"
             ) && !first.starts_with('-')
         })
     {
@@ -166,6 +189,113 @@ fn run(cli: Cli) -> Result<Outcome> {
         Command::Check(args) => report(args, false),
         Command::Inspect(args) => report(args, true),
         Command::Adaptive(args) => adaptive(args),
+        Command::Notification(args) => notification(args),
+    }
+}
+
+/// Fraction of the canvas above which a notification icon is more likely a
+/// solid plate than a silhouette.
+const NOTIFICATION_PLATE_COVERAGE: f32 = 0.9;
+
+fn notification(args: NotificationArgs) -> Result<Outcome> {
+    let inputs = inputs(&args.input)?;
+    if args.input.is_dir() && args.output.is_none() {
+        return Err(Error::InvalidInput(
+            "directory conversion requires an output directory".to_owned(),
+        ));
+    }
+    if !(args.fit > 0.0 && args.fit <= vdtoolkit::NOTIFICATION_ICON_SIZE) {
+        return Err(Error::InvalidInput(format!(
+            "--fit must be between 0 and {} dp, got {}",
+            vdtoolkit::NOTIFICATION_ICON_SIZE,
+            args.fit
+        )));
+    }
+    let mut failures = 0;
+    for input in &inputs {
+        if let Err(error) = notification_one(&args, input) {
+            print_error(Some(input), &error);
+            failures += 1;
+        }
+    }
+    if failures > 0 && inputs.len() > 1 {
+        eprintln!("{failures} of {} SVGs failed", inputs.len());
+    }
+    Ok(if failures == 0 {
+        Outcome::Passed
+    } else {
+        Outcome::Failed
+    })
+}
+
+fn notification_one(args: &NotificationArgs, input: &Path) -> Result<()> {
+    let mut asset = vdtoolkit::convert_file(input)?;
+    if args.strict && asset.analysis.compatibility != Compatibility::Exact {
+        return Err(Error::InvalidInput(
+            "requires normalization and was rejected by --strict".to_owned(),
+        ));
+    }
+    let flattening = asset.to_notification_icon(args.fit)?;
+    // Printed after the fit, which drops warnings about the source size that
+    // the 24dp canvas no longer has.
+    for diagnostic in &asset.analysis.diagnostics {
+        if matches!(diagnostic.severity, Severity::Warning) {
+            eprintln!(
+                "warning: {}: {}  {}",
+                input.display(),
+                diagnostic.code.as_str(),
+                diagnostic.message
+            );
+        }
+    }
+    if !flattening.is_empty() {
+        eprintln!(
+            "note: {}: flattened {} to white; Android tints the alpha channel only",
+            input.display(),
+            flattened(flattening)
+        );
+    }
+    let coverage = asset.painted_coverage();
+    if coverage >= NOTIFICATION_PLATE_COVERAGE {
+        eprintln!(
+            "warning: {}: artwork paints {:.0}% of the {}dp canvas; a notification icon \
+             should be a silhouette on transparency, or the system tints it into a \
+             filled square (see --fit)",
+            input.display(),
+            coverage * 100.0,
+            vdtoolkit::NOTIFICATION_ICON_SIZE
+        );
+    } else if coverage == 0.0 || asset.analysis.metrics.content_bounds.is_none() {
+        // Content bounds are measured before clipping, so artwork clipped
+        // away entirely still has bounds; only rendering shows it is empty.
+        eprintln!(
+            "warning: {}: no painted content, so the notification icon is invisible",
+            input.display()
+        );
+    }
+    if args.optimize {
+        asset.optimize();
+    }
+    let xml = asset.to_xml();
+    match output_path(&args.input, input, args.output.as_deref()) {
+        Some(output) => write_file(&output, &xml)?,
+        None => print!("{xml}"),
+    }
+    Ok(())
+}
+
+/// What flattening changed, as `2 colors and 1 gradient`.
+fn flattened(flattening: vdtoolkit::Flattening) -> String {
+    let plural =
+        |count: usize, noun: &str| format!("{count} {noun}{}", if count == 1 { "" } else { "s" });
+    match (flattening.colors, flattening.gradients) {
+        (colors, 0) => plural(colors, "color"),
+        (0, gradients) => plural(gradients, "gradient"),
+        (colors, gradients) => format!(
+            "{} and {}",
+            plural(colors, "color"),
+            plural(gradients, "gradient")
+        ),
     }
 }
 

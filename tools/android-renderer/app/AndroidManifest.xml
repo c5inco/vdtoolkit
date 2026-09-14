@@ -2,6 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.vdtoolkit.renderer">
     <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="35" />
+    <!-- NotificationIconTest posts a notification; granted by the test on API 33+. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <application
         android:label="vdt icon"
         android:icon="@mipmap/ic_launcher"

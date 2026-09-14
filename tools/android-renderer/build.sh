@@ -60,6 +60,24 @@ for fixture in "$HARNESS"/fixtures/*.svg; do
     --output "$BUILD/generated/res/$qualifier/$name.xml"
 done
 
+# Notification icons: white 24dp silhouettes. `notification` never raises the
+# minimum API above what the source needs -- it can only lower it, by
+# collapsing a gradient that was only color -- so inspecting the source is a
+# safe qualifier, at worst one folder more cautious than needed. Reporting the
+# generated icon's own minimum API is c5inco/vdtoolkit#6.
+for fixture in "$HARNESS"/fixtures/notification/*.svg; do
+  name=$(basename "$fixture" .svg)
+  report=$("$ROOT/target/debug/vdt" inspect "$fixture" --format json)
+  minimum_api=$(python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["minimum_api"])' <<<"$report")
+  case "$minimum_api" in
+    21) qualifier=drawable ;;
+    24) qualifier=drawable-v24 ;;
+    *) echo "unexpected minimum API $minimum_api for $fixture" >&2; exit 1 ;;
+  esac
+  "$ROOT/target/debug/vdt" notification "$fixture" \
+    --output "$BUILD/generated/res/$qualifier/ic_stat_$name.xml"
+done
+
 # Adaptive launcher icon: Material Symbols layers fitted to the 66dp safe zone
 # over a drawable background, plus a variant with a solid color background.
 mkdir -p "$BUILD/adaptive-src"

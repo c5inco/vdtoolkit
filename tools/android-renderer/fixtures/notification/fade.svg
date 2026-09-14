@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <!-- A gradient that fades is the shape of the icon, not its color, so
+       notification keeps it with white stops. Needs API 24. -->
+  <defs>
+    <linearGradient id="fade" x1="4" y1="0" x2="20" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#123456" stop-opacity="1"/>
+      <stop offset="1" stop-color="#123456" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <path d="M4 4H20V20H4Z" fill="url(#fade)"/>
+</svg>

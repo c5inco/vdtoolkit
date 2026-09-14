@@ -1772,3 +1772,253 @@ fn cli_adaptive_rejects_bad_input_without_writing() {
     }
     assert!(!res.exists());
 }
+
+#[test]
+fn notification_icons_flatten_paint_to_white_and_keep_opacity() {
+    let source =
+        br##"<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">
+        <path d="M8 8H40V40H8Z" fill="#FF0000" fill-opacity="0.5"/>
+        <path d="M16 16H32V32H16Z" fill="none" stroke="#00FF00" stroke-width="4"/>
+    </svg>"##;
+
+    let mut asset = vdtoolkit::convert(source).unwrap();
+    let flattening = asset
+        .to_notification_icon(vdtoolkit::NOTIFICATION_ICON_SIZE)
+        .unwrap();
+    let xml = asset.to_xml();
+
+    assert_eq!(flattening.colors, 2);
+    assert_eq!(flattening.gradients, 0);
+    assert!(!flattening.is_empty());
+    assert!(xml.contains("android:width=\"24dp\""));
+    assert!(xml.contains("android:height=\"24dp\""));
+    assert!(xml.contains("android:viewportWidth=\"24\""));
+    assert!(!xml.contains("#FF0000"));
+    assert!(!xml.contains("#00FF00"));
+    assert_eq!(xml.matches("\"#FFFFFF\"").count(), 2);
+    assert!(xml.contains("android:fillAlpha=\"0.5\""));
+    // 48 units fit into 24dp: scale 0.5, no offset. Stroke width scales too.
+    assert!(xml.contains("android:pathData=\"M4,4 L20,4 L20,20 L4,20 Z\""));
+    assert!(xml.contains("android:strokeWidth=\"2\""));
+    assert_eq!(asset.analysis.metrics.estimated_xml_bytes, xml.len());
+    assert_eq!(asset.analysis.minimum_api, Some(21));
+}
+
+#[test]
+fn notification_icons_fit_smaller_squares_and_reject_other_sizes() {
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <path d="M0 0H24V24H0Z" fill="#000000"/>
+    </svg>"##;
+
+    let mut asset = vdtoolkit::convert(source).unwrap();
+    asset
+        .to_notification_icon(vdtoolkit::NOTIFICATION_ICON_LIVE_AREA)
+        .unwrap();
+
+    // 24 units into a centered 20dp square: scale 0.833, offset 2 on each side.
+    assert!(
+        asset
+            .to_xml()
+            .contains("android:pathData=\"M2,2 L22,2 L22,22 L2,22 Z\"")
+    );
+    let bounds = asset.analysis.metrics.content_bounds.unwrap();
+    assert_eq!((bounds.left, bounds.right), (2.0, 22.0));
+
+    assert!(matches!(
+        asset.to_notification_icon(0.0),
+        Err(Error::InvalidInput(_))
+    ));
+    assert!(matches!(
+        asset.to_notification_icon(25.0),
+        Err(Error::InvalidInput(_))
+    ));
+}
+
+#[test]
+fn notification_icons_flatten_gradients_and_keep_varying_opacity() {
+    let uniform = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <defs><linearGradient id="g" x1="0" y1="0" x2="24" y2="0" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#123456"/><stop offset="1" stop-color="#ABCDEF"/>
+        </linearGradient></defs>
+        <path d="M4 4H20V20H4Z" fill="url(#g)" fill-opacity="0.5"/>
+    </svg>"##;
+
+    let mut asset = vdtoolkit::convert(uniform).unwrap();
+    assert_eq!(asset.analysis.minimum_api, Some(24));
+    let flattening = asset
+        .to_notification_icon(vdtoolkit::NOTIFICATION_ICON_SIZE)
+        .unwrap();
+    let xml = asset.to_xml();
+
+    // Every stop is opaque, so the gradient is only color: it becomes solid
+    // white, and the drawable no longer needs API 24.
+    assert_eq!((flattening.colors, flattening.gradients), (2, 1));
+    assert!(!xml.contains("aapt:attr"));
+    assert!(xml.contains("android:fillColor=\"#FFFFFF\""));
+    assert!(xml.contains("android:fillAlpha=\"0.5\""));
+    assert_eq!(asset.analysis.minimum_api, Some(21));
+
+    let fading = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <defs><linearGradient id="g" x1="0" y1="0" x2="24" y2="0" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#123456" stop-opacity="1"/>
+            <stop offset="1" stop-color="#123456" stop-opacity="0"/>
+        </linearGradient></defs>
+        <path d="M4 4H20V20H4Z" fill="url(#g)"/>
+    </svg>"##;
+
+    let mut asset = vdtoolkit::convert(fading).unwrap();
+    asset
+        .to_notification_icon(vdtoolkit::NOTIFICATION_ICON_SIZE)
+        .unwrap();
+    let xml = asset.to_xml();
+
+    // The opacity ramp is what the icon is made of, so the gradient stays,
+    // with white stops.
+    assert!(xml.contains("aapt:attr"));
+    assert!(!xml.contains("#123456"));
+    assert!(xml.contains("android:color=\"#FFFFFF\""));
+    assert!(xml.contains("android:color=\"#00FFFFFF\""));
+    assert_eq!(asset.analysis.minimum_api, Some(24));
+}
+
+#[test]
+fn painted_coverage_separates_silhouettes_from_plates() {
+    let plate = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <path d="M0 0H24V24H0Z" fill="#101010"/>
+    </svg>"##;
+    let silhouette = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <path d="M10 10H14V14H10Z" fill="#101010"/>
+    </svg>"##;
+    let empty = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"></svg>"##;
+
+    assert_eq!(vdtoolkit::convert(plate).unwrap().painted_coverage(), 1.0);
+    let coverage = vdtoolkit::convert(silhouette).unwrap().painted_coverage();
+    assert!((coverage - 16.0 / 576.0).abs() < 1e-6, "{coverage}");
+    assert_eq!(vdtoolkit::convert(empty).unwrap().painted_coverage(), 0.0);
+}
+
+#[test]
+fn cli_notification_writes_white_icons_and_warns_about_plates() {
+    let temp = tempfile::tempdir().unwrap();
+    let icons = temp.path().join("icons");
+    fs::create_dir(&icons).unwrap();
+    fs::write(
+        icons.join("bell.svg"),
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M12 2L2 22h20z" fill="#3DDC84"/></svg>"##,
+    )
+    .unwrap();
+    fs::write(
+        icons.join("plate.svg"),
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><rect width="24" height="24" fill="#101010"/></svg>"##,
+    )
+    .unwrap();
+    let drawable = temp.path().join("res/drawable");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_vdt"))
+        .arg("notification")
+        .arg(&icons)
+        .arg("-o")
+        .arg(&drawable)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("flattened 1 color to white"), "{stderr}");
+    assert!(
+        stderr.contains("plate.svg: artwork paints 100% of the 24dp canvas"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("bell.svg: artwork paints"), "{stderr}");
+
+    let bell = fs::read_to_string(drawable.join("bell.xml")).unwrap();
+    assert!(bell.contains("android:width=\"24dp\""));
+    assert!(bell.contains("android:fillColor=\"#FFFFFF\""));
+    assert!(!bell.contains("#3DDC84"));
+
+    // A directory of icons needs somewhere to write them.
+    let missing = Command::new(env!("CARGO_BIN_EXE_vdt"))
+        .arg("notification")
+        .arg(&icons)
+        .output()
+        .unwrap();
+    assert_eq!(missing.status.code(), Some(1));
+    assert!(
+        String::from_utf8(missing.stderr)
+            .unwrap()
+            .contains("directory conversion requires an output directory")
+    );
+}
+
+#[test]
+fn cli_notification_warns_about_the_output_not_the_source() {
+    let temp = tempfile::tempdir().unwrap();
+    // Content bounds come before clipping, so only rendering sees that this
+    // square is clipped away entirely.
+    let clipped = temp.path().join("clipped.svg");
+    fs::write(
+        &clipped,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><clipPath id="c"><rect x="40" y="40" width="4" height="4"/></clipPath><rect width="24" height="24" fill="#3DDC84" clip-path="url(#c)"/></svg>"##,
+    )
+    .unwrap();
+    // 500dp draws slowly as a source, but the icon is written at 24dp.
+    let large = temp.path().join("large.svg");
+    fs::write(
+        &large,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="500" height="500"><path d="M100 100H400V400H100Z" fill="#101010"/></svg>"##,
+    )
+    .unwrap();
+
+    let stderr = |icon: &std::path::Path| {
+        let output = Command::new(env!("CARGO_BIN_EXE_vdt"))
+            .arg("notification")
+            .arg(icon)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        String::from_utf8(output.stderr).unwrap()
+    };
+    let clipped = stderr(&clipped);
+    assert!(
+        clipped.contains("no painted content, so the notification icon is invisible"),
+        "{clipped}"
+    );
+    let large = stderr(&large);
+    assert!(!large.contains("SVGVD016"), "{large}");
+}
+
+#[test]
+fn cli_notification_optimize_shortens_numbers_without_moving_the_artwork() {
+    let temp = tempfile::tempdir().unwrap();
+    let icon = temp.path().join("bell.svg");
+    fs::write(
+        &icon,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48"><path d="M24.00001 4.333333L4.6666 43.99999h38.66666z" fill="#3DDC84"/></svg>"##,
+    )
+    .unwrap();
+
+    let run = |extra: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_vdt"))
+            .arg("notification")
+            .arg(&icon)
+            .args(extra)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        String::from_utf8(output.stdout).unwrap()
+    };
+    let plain = run(&[]);
+    let optimized = run(&["--optimize"]);
+
+    assert!(
+        plain.contains("android:pathData=\"M12.000005,2.166667"),
+        "{plain}"
+    );
+    assert!(
+        optimized.contains("android:pathData=\"M12,2.167 L2.333,22 L21.667,22 Z\""),
+        "{optimized}"
+    );
+    assert!(optimized.len() < plain.len());
+    // Optimizing runs after the fit, so the canvas and the white paint stand.
+    assert!(optimized.contains("android:width=\"24dp\""));
+    assert!(optimized.contains("android:fillColor=\"#FFFFFF\""));
+}

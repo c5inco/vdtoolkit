@@ -41,6 +41,7 @@ vdt check icon.svg                     # is it convertible? (no output written)
 vdt inspect icon.svg --format json     # diagnostics, min API, metrics
 vdt optimize icon.svg -o ic_icon.xml   # convert with smaller numbers, same rendering
 vdt adaptive --foreground fg.svg --background-color '#3DDC84' -o app/src/main/res
+vdt notification bell.svg -o res/drawable/ic_stat_bell.xml
 ```
 
 | Command | What it does |
@@ -50,6 +51,7 @@ vdt adaptive --foreground fg.svg --background-color '#3DDC84' -o app/src/main/re
 | `inspect` | Report compatibility, diagnostics, minimum Android API, content bounds, and metrics. |
 | `optimize` | Convert, then shorten numbers where it cannot change rendering. |
 | `adaptive` | Generate an adaptive launcher icon and its layer drawables into a `res/` directory. |
+| `notification` | Convert to a white 24dp notification icon drawable. |
 
 Every command except `adaptive` accepts a file or a directory. In a directory, a file that fails
 is named on stderr and the remaining files are still processed. `--format json`
@@ -62,6 +64,33 @@ accepts only input that needs no normalization at all.
 | 0 | Every input converted, or is convertible. |
 | 1 | At least one file was malformed, unreadable, or failed to convert. |
 | 2 | `check`/`inspect` only: at least one input is incompatible. |
+
+### Notification icons
+
+Android draws a status bar and notification icon from its alpha channel alone
+and tints it with the system color, so `notification` flattens every fill and
+stroke to white, keeps opacity, and writes the artwork onto a 24dp canvas:
+
+```sh
+vdt notification bell.svg -o res/drawable/ic_stat_bell.xml
+vdt notification icons/ --fit 20 -o res/drawable/
+```
+
+| Option | Meaning |
+| --- | --- |
+| `--fit <dp>` | Square that the artwork is scaled to fit, centered on the 24dp canvas. Defaults to 24, which keeps artwork that already carries its own padding, such as a Material system icon, at its drawn size. Use 20 for artwork drawn edge to edge, which leaves the 2dp of padding a system icon has. |
+| `--optimize` | Shorten numbers where it cannot change rendering, as the `optimize` command does. It runs after the fit, so placement is unchanged. |
+| `--strict` | Reject input that needs safe normalization, as elsewhere. |
+
+A gradient whose stops all share one opacity is only color, so it becomes solid
+white and the drawable no longer needs API 24; a gradient that fades is the
+shape of the icon, so it is kept with white stops. A note on stderr names the
+colors and gradients that were flattened. A warning names any icon that paints
+almost the whole canvas, since a solid plate tints into a filled square rather
+than a silhouette, and any icon with no painted content at all.
+
+Reference the result from the notification with
+`setSmallIcon(R.drawable.ic_stat_bell)`.
 
 ### Adaptive icons
 

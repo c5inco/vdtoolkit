@@ -22,8 +22,8 @@ crates.io remains an explicit, separate maintainer action.
    to also exercise the signing job (see below).
 5. Create and push the exact tag `v<version>`. The workflow rejects a tag that
    does not match `Cargo.toml`, rebuilds all artifacts, verifies conformance,
-   waits for approval of the `macos-signing` environment, signs and notarizes
-   the macOS binaries, and creates the GitHub release with checksums.
+   signs and notarizes the macOS binaries, and creates the GitHub release with
+   checksums.
 6. Inspect the release notes and archives, then publish to crates.io when ready:
 
    ```sh
@@ -61,14 +61,10 @@ if any of the five is unset. A tag never publishes unsigned macOS binaries.
 2. In App Store Connect, go to **Users and Access → Integrations → App Store
    Connect API**. Create a team key with the **Developer** role and download
    the `.p8` file. Apple lets you download it only once. Note the key ID and the
-   issuer ID.
+   issuer ID shown above the team key list.
 3. Under **Settings → Environments**, create an environment named
-   `macos-signing`:
-   - Under **Required reviewers**, add yourself or another maintainer, and turn
-     on **Prevent self-review** if more than one maintainer can approve.
-   - Under **Deployment branches and tags**, choose **Selected branches and
-     tags** and add the tag rule `v*` and the branch rule `main`.
-   - Leave **Allow administrators to bypass configured protection rules** off.
+   `macos-signing`. Under **Deployment branches and tags**, choose **Selected
+   branches and tags** and add the tag rule `v*` and the branch rule `main`.
 4. Add these as **environment secrets** of `macos-signing`, not as repository
    secrets:
 
@@ -92,24 +88,22 @@ if any of the five is unset. A tag never publishes unsigned macOS binaries.
 
 5. Delete the local `.p12` and `.p8` copies, or move them to a password
    manager. Never commit them.
-6. Under **Settings → Rules → Rulesets**, add a tag ruleset targeting `v*` that
-   restricts creation, update, and deletion to maintainers.
-7. Test the setup from `main` with a manual run that has signing ticked, approve
-   the `macos-signing` deployment, and check the downloaded macOS archives with
-   `codesign`. To test from another branch first, add that branch to the
-   environment's deployment rules temporarily and remove it afterwards.
+6. Test the setup from `main` with a manual run that has signing ticked, and
+   check the downloaded macOS archives with `codesign`. To test from another
+   branch first, add that branch to the environment's deployment rules
+   temporarily and remove it afterwards.
 
 ### Keeping the secrets safe
 
-- Only the `sign-macos` job can read the secrets, and only after a reviewer
-  approves it for a `v*` tag or `main`. No other job, branch, or pull request can
-  read them, including workflows from forks. The job never compiles project
-  code. It receives the secrets only as step environment variables, decodes them
-  inside `$RUNNER_TEMP`, imports the certificate into a temporary keychain, and
-  deletes both when the job ends, even if it fails.
-- An approval runs whatever workflow is on the approved ref. Before approving,
-  check that the run's ref is the expected tag or `main` commit and that
-  `release.yml` there has not changed unexpectedly.
+- Only the `sign-macos` job can read the secrets, and only on `main` or a `v*`
+  tag. Other branches and pull requests, including workflows from forks, cannot
+  read them. The job never compiles project code. It receives the secrets only
+  as step environment variables, decodes them inside `$RUNNER_TEMP`, imports the
+  certificate into a temporary keychain, and deletes both when the job ends,
+  even if it fails.
+- If collaborators with write access join the repository, add a required
+  reviewer to `macos-signing`, since they could otherwise change the workflow
+  on `main` or push a `v*` tag.
 - Rotate the API key in App Store Connect and revoke the certificate in the
   Developer account if either might have been exposed. Then update the secrets.
 - The Developer ID certificate expires after five years. Renew it and replace

@@ -92,6 +92,15 @@ follow [Semantic Versioning](https://semver.org/).
   Compose's VectorDrawable parser. It records one Compose divergence: a
   `</group>` closes enclosing clip paths, so a sibling after a nested group
   renders unclipped in Compose while the platform clips it correctly.
+- Optional complex-illustration corpus, `tools/check-illustrations.py`: 637
+  SVGs from four openly licensed sources, pinned by commit and content hash in
+  `tests/illustrations.txt`, covering many-path scenes, nested clips, masks,
+  gradients on most paths, and group opacity. It reports compatibility and
+  the rejection reasons per source, checks determinism and that every file
+  pinned in `tests/illustrations-convertible.txt` still converts, and compares each converted drawable against a resvg
+  render of its source, by differing pixels and by mean channel difference
+  over painted pixels, through the new `examples/compare.rs`, which adds
+  `resvg` as a dev-dependency. Findings are in `docs/research.md`.
 - Optional Rune Icons stress suite, `tools/check-runeicons.py`, covering 908
   icons in five styles from a pinned commit. It checks per-style coverage
   floors and repeated-output determinism.

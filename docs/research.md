@@ -145,3 +145,89 @@ plain `mipmap-v24` folder would lose to the density folders. The PNGs are
 rendered from the emitted vector, not the source SVG, so both share geometry,
 mask, and gradients. The renderer harness verified the selection and the
 gradient colors on emulator.wtf Pixel 7 at API 21, 23, 24, 25, 26, and 36.
+
+## Complex-illustration corpus
+
+_Figures below are from the pinned commits in `tests/illustrations.txt` on
+2026-09-14 and do not drift._
+
+The icon corpora say nothing about larger illustrations: many paths, nested
+groups with clips and masks, gradients on fills and strokes, opacity on groups,
+and assets exported from Figma or Illustrator. `tools/check-illustrations.py`
+covers that with 637 files from four openly licensed sources, each pinned by
+repository commit and per-file content hash and downloaded on demand:
+
+| Source | License | Files | What it is |
+| --- | --- | --- | --- |
+| `realvjy/illlustrations` | MIT | 130, all | Flat scene illustrations exported from Figma |
+| `themesberg/flowbite-illustrations` | MIT | 107, all | 3D-style illustrations, light and dark variants, gradient on nearly every path |
+| `microsoft/fluentui-emoji` (Color) | MIT | 200 of 3145, by hash | Gradient-heavy Illustrator exports with blur filters |
+| `googlefonts/noto-emoji` | OFL-1.1 | 200 of 3731, by hash | Gradients and clip paths |
+
+The suite reports compatibility, the rejection codes and reasons, which code
+combinations block each file, repeated-output determinism, and a visual
+comparison: `examples/compare.rs` renders the source through resvg and the
+converted drawable through the library's VectorDrawable renderer at 256px. A
+file fails when more than 0.5% of pixels have a channel difference above 32, or
+when the mean channel difference over painted pixels exceeds 1 / 255, which
+catches a small shift in color or opacity across all the artwork.
+
+| Source | Convertible | Byte-identical on repeat | Renders like resvg |
+| --- | --- | --- | --- |
+| illlustrations | 50 / 130 | 50 / 50 | 50 / 50 |
+| flowbite | 86 / 107 | 86 / 86 | 86 / 86 |
+| fluent | 1 / 200 | 1 / 1 | 1 / 1 |
+| noto | 118 / 200 | 118 / 118 | 118 / 118 |
+
+Nothing is approximate, and every converted file renders like its source: the
+mean channel difference over painted pixels is at most 0.22 / 255 for any
+single file, from anti-aliasing. The
+converted flowbite set alone carries 1366 gradients across 5339 paths, so the
+gradient lowering from #1 is now exercised on real Figma-exported artwork
+rather than fixtures, and the 33 clip paths and 529 groups in the converted
+Noto set cover the clip-scope lowering at illustration scale. The converted
+illlustrations average 69 KiB of XML and 140 paths each, well past icon size,
+and every flowbite file trips the `SVGVD016` large-dimensions warning at
+400 to 770dp.
+
+What blocks the rest, by the constructs that reject a file on their own:
+
+| Construct | Code | Files it alone blocks | Where |
+| --- | --- | --- | --- |
+| Group opacity over overlapping children | `SVGVD013` | 69 | illlustrations (69 of 80 rejected), 1 flowbite, 1 noto |
+| Elliptical or skewed radial gradients | `SVGVD003` | 95 | noto (81 of 82 rejected), 9 fluent, 5 flowbite |
+| Masks that are not one opaque white shape | `SVGVD001` | 13 | flowbite (13 of 21 rejected); a further 6 illlustrations alongside filters |
+| Filters | `SVGVD002` | 190 with the two above | fluent (190 of 199 rejected), 6 illlustrations |
+| Text, patterns, images, dashes, `mix-blend-mode` | `SVGVD006`, `SVGVD008`, `SVGVD007`, `SVGVD013` | 2 to 11 each | scattered |
+
+Decisions from the data:
+
+- **Elliptical radial gradients are worth lowering next.** They are the sole
+  blocker for 95 files and the whole of the Noto gap. VectorDrawable's radial
+  gradient is circular, but `<group>` takes `scaleX` and `scaleY`, so a
+  gradient with distinct radii can be emitted as a circular gradient inside a
+  group scaled by the radii ratio, with the path geometry counter-scaled. The
+  cost is a group per elliptical gradient and API 24 for the gradient itself,
+  which the file already needs.
+- **Group opacity is the largest single gap on flat illustrations**, 69 of
+  the 80 rejected illlustrations, and it is the construct Figma exports for
+  any layer with an opacity slider. It cannot be lowered exactly where
+  children overlap, which is why it is rejected today. Two partial routes are
+  worth measuring on this corpus before choosing: lowering when the children
+  provably do not overlap, and an explicit opt-in approximation that pushes
+  the opacity onto each child. Neither is implemented here.
+- **Masks are the flowbite gap**, 13 files, each a soft or multi-shape mask.
+  Only the one-opaque-white-shape case is exact, and these are not that.
+- **Fluent Emoji is out of reach by design.** 190 of the 200 files use blur
+  filters, which no VectorDrawable can draw, and 184 of those also use
+  elliptical gradients and `mix-blend-mode`. It stays in the corpus as the
+  ceiling: a rejected-by-filter file must never become approximate.
+
+`tests/illustrations-convertible.txt` pins which files convert, file by file,
+so a file that stops converting fails the run even when another in the same
+source starts. A visual mismatch or an approximate result also fails it, so a
+lowering regression on illustration-scale input fails the suite rather than
+passing quietly. A file that newly converts is reported, and
+`--update-convertible` records it. The suite is not a release gate: the `Material conformance` workflow
+runs it on demand with the full scope. It does add `resvg` as a
+dev-dependency and `examples/compare.rs`, which ordinary CI compiles.

@@ -51,17 +51,24 @@ notarization online the first time the binary runs.
 
 The job runs for every tag and for manual runs with **Sign and notarize the
 macOS binaries** ticked. It stops before signing, naming every missing secret,
-if any of the five is unset. A tag never publishes unsigned macOS binaries.
+if any required secret is unset. A tag never publishes unsigned macOS binaries.
 
 ### One-time setup
 
 1. In the Apple Developer account, create a **Developer ID Application**
    certificate. Export it with its private key from Keychain Access as a `.p12`
    file protected by a strong password.
-2. In App Store Connect, go to **Users and Access → Integrations → App Store
-   Connect API**. Create a team key with the **Developer** role and download
-   the `.p8` file. Apple lets you download it only once. Note the key ID and the
-   issuer ID shown above the team key list.
+2. Create an App Store Connect API key and download its `.p8` file. Apple lets
+   you download it only once. The key ID is in the file name,
+   `AuthKey_<key ID>.p8`. Use either kind of key:
+   - **Team key (recommended):** in App Store Connect, go to **Users and Access
+     → Integrations → App Store Connect API → Team Keys** and create a key with
+     the **Developer** role. Its access is limited to that role, and it can be
+     revoked without affecting your account. Note the issuer ID shown above the
+     list.
+   - **Individual key:** click your name, choose **Edit Profile**, and generate
+     an **Individual API Key**. It has no issuer ID and carries all of your
+     account's permissions.
 3. Under **Settings → Environments**, create an environment named
    `macos-signing`. Under **Deployment branches and tags**, choose **Selected
    branches and tags** and add the tag rule `v*` and the branch rule `main`.
@@ -74,7 +81,10 @@ if any of the five is unset. A tag never publishes unsigned macOS binaries.
    | `MACOS_CERTIFICATE_PASSWORD` | the `.p12` export password |
    | `APPLE_API_KEY` | base64 of the `.p8` file |
    | `APPLE_API_KEY_ID` | the key ID |
-   | `APPLE_API_ISSUER_ID` | the issuer ID |
+   | `APPLE_API_ISSUER_ID` | the issuer ID, for team keys only |
+
+   Leave `APPLE_API_ISSUER_ID` unset for an individual key. Apple rejects an
+   individual key sent with an issuer ID as unauthenticated (HTTP 401).
 
    `gh` sets them without the values touching the clipboard or shell history:
 
@@ -83,7 +93,7 @@ if any of the five is unset. A tag never publishes unsigned macOS binaries.
    gh secret set MACOS_CERTIFICATE_PASSWORD --env macos-signing   # prompts
    gh secret set APPLE_API_KEY --env macos-signing < <(base64 -i AuthKey_XXXXXXXXXX.p8)
    gh secret set APPLE_API_KEY_ID --env macos-signing
-   gh secret set APPLE_API_ISSUER_ID --env macos-signing
+   gh secret set APPLE_API_ISSUER_ID --env macos-signing   # team keys only
    ```
 
 5. Delete the local `.p12` and `.p8` copies, or move them to a password

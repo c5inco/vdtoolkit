@@ -16,6 +16,13 @@ follow [Semantic Versioning](https://semver.org/).
   as converting a dashed stroke to filled outlines or copying referenced content
   into the SVG. `check` and `inspect` print it under the diagnostic, as the JSON
   report and the Figma plugin already did.
+- A drawable that needs API 24 carries an `SVGVD004` note naming why:
+  gradients, even-odd fills (`android:fillType`), or more than one clip path,
+  with a suggestion for staying on API 21. `inspect` and `check` list it and
+  the JSON report includes it; it is informational, so compatibility, exit
+  codes, and `convert` output are unchanged. The code was defined but never
+  emitted before. A notification icon whose gradients flatten to white drops
+  the note along with the API 24 requirement.
 
 ## [0.2.0] - 2026-09-14
 

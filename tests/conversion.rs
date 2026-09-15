@@ -21,6 +21,86 @@ fn converts_viewbox_geometry_colors_and_fill_rule() {
     assert!(xml.contains("android:fillAlpha=\"0.25\""));
     assert!(xml.contains("android:fillType=\"evenOdd\""));
     assert_eq!(asset.analysis.minimum_api, Some(24));
+    let [note] = asset.analysis.diagnostics.as_slice() else {
+        panic!("expected one diagnostic: {:?}", asset.analysis.diagnostics);
+    };
+    assert_eq!(
+        note.code.as_str(),
+        DiagnosticCode::ApiLevelRequirement.as_str()
+    );
+    assert!(matches!(note.severity, Severity::Info));
+    assert_eq!(
+        note.message,
+        "needs API 24 for even-odd fills (android:fillType)"
+    );
+}
+
+#[test]
+fn api_level_note_names_every_api_24_feature_without_changing_exit_codes() {
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <defs>
+            <linearGradient id="g" x1="0" y1="0" x2="24" y2="0" gradientUnits="userSpaceOnUse">
+                <stop offset="0" stop-color="#123456"/><stop offset="1" stop-color="#ABCDEF"/>
+            </linearGradient>
+            <clipPath id="a"><path d="M0 0H20V20H0Z"/></clipPath>
+            <clipPath id="b"><path d="M4 4H24V24H4Z"/></clipPath>
+        </defs>
+        <g clip-path="url(#a)"><g clip-path="url(#b)">
+            <path d="M0 0H24V24H0Z M6 6V18H18V6Z" fill="url(#g)" fill-rule="evenodd"/>
+        </g></g>
+    </svg>"##;
+
+    let asset = vdtoolkit::convert(source).unwrap();
+    assert_eq!(asset.analysis.minimum_api, Some(24));
+    let note = asset
+        .analysis
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code.as_str() == "SVGVD004")
+        .expect("API level note");
+    assert!(matches!(note.severity, Severity::Info));
+    assert_eq!(
+        note.message,
+        "needs API 24 for gradients, even-odd fills (android:fillType), more than one clip path"
+    );
+    assert_eq!(
+        note.suggestion.as_deref(),
+        Some(
+            "Use it with minSdk 24 or higher; to support API 21, use solid colors instead of \
+             gradients; draw holes with reversed path direction under the nonzero fill \
+             rule; combine the clips into a single clip path."
+        )
+    );
+
+    let plain = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <path d="M2 2H22V22H2Z" fill="#123456"/>
+    </svg>"##;
+    assert!(
+        vdtoolkit::convert(plain)
+            .unwrap()
+            .analysis
+            .diagnostics
+            .is_empty()
+    );
+
+    let temp = tempfile::tempdir().unwrap();
+    let input = temp.path().join("gradient.svg");
+    fs::write(&input, source).unwrap();
+    let vdt = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_vdt"))
+            .args(args)
+            .arg(&input)
+            .output()
+            .unwrap()
+    };
+    for args in [&["check"][..], &["inspect", "--format", "json"]] {
+        let output = vdt(args);
+        assert_eq!(output.status.code(), Some(0), "{output:?}");
+        assert!(String::from_utf8_lossy(&output.stdout).contains("SVGVD004"));
+    }
+    let converted = vdt(&["convert"]);
+    assert!(converted.status.success(), "{converted:?}");
+    assert!(!String::from_utf8_lossy(&converted.stderr).contains("SVGVD004"));
 }
 
 #[test]
@@ -1895,6 +1975,15 @@ fn notification_icons_flatten_gradients_and_keep_varying_opacity() {
     assert!(xml.contains("android:fillColor=\"#FFFFFF\""));
     assert!(xml.contains("android:fillAlpha=\"0.5\""));
     assert_eq!(asset.analysis.minimum_api, Some(21));
+    assert!(
+        !asset
+            .analysis
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code.as_str() == "SVGVD004"),
+        "{:?}",
+        asset.analysis.diagnostics
+    );
 
     let fading = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
         <defs><linearGradient id="g" x1="0" y1="0" x2="24" y2="0" gradientUnits="userSpaceOnUse">
@@ -1917,6 +2006,14 @@ fn notification_icons_flatten_gradients_and_keep_varying_opacity() {
     assert!(xml.contains("android:color=\"#FFFFFF\""));
     assert!(xml.contains("android:color=\"#00FFFFFF\""));
     assert_eq!(asset.analysis.minimum_api, Some(24));
+    let notes: Vec<&str> = asset
+        .analysis
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code.as_str() == "SVGVD004")
+        .map(|diagnostic| diagnostic.message.as_str())
+        .collect();
+    assert_eq!(notes, ["needs API 24 for gradients"]);
 }
 
 #[test]

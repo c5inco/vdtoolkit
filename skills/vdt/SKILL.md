@@ -150,7 +150,8 @@ convention and reference them with `setSmallIcon(R.drawable.ic_stat_bell)`.
   printed: `Arrow-Left.svg` becomes `arrow_left.xml`. Use the printed name when
   you reference the resource in code.
 - `minimum_api` is 24 when the drawable uses gradients, even-odd fills, or
-  several clips. If it is above the module's `minSdk`, tell the user.
+  several clips, and an `SVGVD004` note names which. If it is above the
+  module's `minSdk`, tell the user and pass on the note's suggestion.
 
 ## Diagnostics
 
@@ -165,7 +166,8 @@ follow it. As a rule:
 - `warning` means the file converts but will look wrong, for example an icon
   outside the safe zone or a notification icon that tints into a solid square.
   These are usually fixed with an option such as `--fit` or `--size`.
-- `info` needs no action.
+- `info` needs no action, except `SVGVD004` when the module's `minSdk` is
+  below 24.
 
 Most errors are fixed in the design tool that produced the SVG. When the fix
 is a mechanical SVG edit that does not change the look (inlining a `<use>`,

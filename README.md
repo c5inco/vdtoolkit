@@ -226,7 +226,10 @@ the first two, and `--strict` accepts only `exact`.
 
 The reported minimum API comes from the emitted drawable, not a fixed constant.
 Plain paths and a single clip target API 21. Drawables that need multiple clips,
-`android:fillType`, or gradients target API 24. Gradients are written inline
+`android:fillType`, or gradients target API 24, and `inspect` then adds an
+`SVGVD004` note naming which of those raised it, with how to stay on API 21.
+The note is informational: it does not change compatibility, the exit code, or
+what `convert` prints. Gradients are written inline
 with the `aapt` namespace, which the Android build tools compile into color
 resources. See [docs/research.md](docs/research.md)
 for the renderer findings behind those levels.

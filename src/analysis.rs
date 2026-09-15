@@ -127,6 +127,9 @@ pub enum DiagnosticCode {
     UnsupportedFilter,
     #[serde(rename = "SVGVD003")]
     UnsupportedGradient,
+    /// A convertible drawable needs API 24 for gradients, even-odd fills, or
+    /// more than one clip path. Informational: it mirrors `minimum_api` and
+    /// names what raised it.
     #[serde(rename = "SVGVD004")]
     ApiLevelRequirement,
     #[serde(rename = "SVGVD005")]

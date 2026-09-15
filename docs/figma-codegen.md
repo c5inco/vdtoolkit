@@ -25,7 +25,9 @@ The development plugin has two entry points and makes no network requests:
   selection, since fixing a layer usually means selecting it), keeps anything
   the user unchecked, and drops layers that were deleted. One
   checked drawable downloads as `.xml`; several download as
-  `vector-drawables.zip`.
+  `vector-drawables.zip`. Downloaded drawables are optimized and compact, with
+  path data in its shortest form and no indentation; the Code panel shows the
+  same drawable with readable line breaks.
 
 The plugin checks `figma.mode`: `"codegen"` keeps the hidden converter used by
 the Code panel, and any other mode opens the export dialog.

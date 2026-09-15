@@ -18,7 +18,8 @@ const wasmReady: Promise<unknown> = init({ module_or_path: wasmBytes }).then(
 window.onmessage = async (event: MessageEvent<{ pluginMessage?: ConvertRequest | ReviewRequest }>) => {
   const request = event.data.pluginMessage;
   if (request?.type === "convert" && typeof request.id === "string") {
-    const convert = converter(await wasmReady);
+    // The Code panel is read by people, so it keeps readable XML; exported files are compact.
+    const convert = converter(await wasmReady, undefined, true);
     const response: ConvertResponse = { type: "converted", id: request.id, result: convert(request.source) };
     post(response);
   } else if (request?.type === "review" && Array.isArray(request.candidates)) {
@@ -33,11 +34,11 @@ window.onmessage = async (event: MessageEvent<{ pluginMessage?: ConvertRequest |
 if (document.body) renderPreparing();
 else document.addEventListener("DOMContentLoaded", renderPreparing, { once: true });
 
-function converter(initError: unknown, maxSizeDp?: number): (source: Uint8Array) => ConvertResult {
+function converter(initError: unknown, maxSizeDp?: number, pretty = false): (source: Uint8Array) => ConvertResult {
   return (source) => {
     try {
       if (initError !== undefined) throw initError;
-      return convertSvg(new Uint8Array(source), true, maxSizeDp);
+      return convertSvg(new Uint8Array(source), true, maxSizeDp, pretty);
     } catch (error) {
       return {
         ok: false,

@@ -40,8 +40,12 @@ test("optimization is effective and output is deterministic", () => {
   const plain = convertSvg(decimals, false);
   const optimized = convertSvg(decimals, true);
   assert.ok(optimized.xml.length < plain.xml.length);
-  assert.match(optimized.xml, /M1\.235,2\.346/);
-  assert.equal(optimized.analysis.metrics.estimated_xml_bytes, optimized.xml.length);
+  assert.match(optimized.xml, /android:pathData="M1\.235 2\.346/);
+  // The estimate measures the readable XML, which `pretty` returns.
+  const pretty = convertSvg(decimals, true, undefined, true);
+  assert.equal(optimized.analysis.metrics.estimated_xml_bytes, pretty.xml.length);
+  assert.ok(pretty.xml.includes("\n"));
+  assert.ok(!optimized.xml.includes("\n"));
   assert.deepEqual(convertSvg(exact, false), convertSvg(exact, false));
 });
 

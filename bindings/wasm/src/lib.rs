@@ -94,17 +94,29 @@ pub fn analyze_svg(source: &[u8]) -> JsValue {
     serialize(&analyze_result(source))
 }
 
-/// Convert SVG bytes to VectorDrawable XML, optionally optimizing path data and
-/// scaling the drawable down so neither side exceeds `max_size_dp`.
+/// Convert SVG bytes to VectorDrawable XML, optionally optimizing numbers and
+/// path data and scaling the drawable down so neither side exceeds
+/// `max_size_dp`. The XML is compact, like the command-line interface's,
+/// unless `pretty` asks for readable indentation and line breaks.
 #[wasm_bindgen(js_name = convertSvg, skip_typescript)]
-pub fn convert_svg(source: &[u8], optimize: bool, max_size_dp: Option<f32>) -> JsValue {
-    serialize(&convert_result(source, optimize, max_size_dp))
+pub fn convert_svg(
+    source: &[u8],
+    optimize: bool,
+    max_size_dp: Option<f32>,
+    pretty: Option<bool>,
+) -> JsValue {
+    serialize(&convert_result(
+        source,
+        optimize,
+        max_size_dp,
+        pretty.unwrap_or(false),
+    ))
 }
 
 #[wasm_bindgen(typescript_custom_section)]
 const TYPESCRIPT_FUNCTIONS: &'static str = r#"
 export function analyzeSvg(source: Uint8Array): AnalyzeResult;
-export function convertSvg(source: Uint8Array, optimize: boolean, maxSizeDp?: number): ConvertResult;
+export function convertSvg(source: Uint8Array, optimize: boolean, maxSizeDp?: number, pretty?: boolean): ConvertResult;
 "#;
 
 fn analyze_result(source: &[u8]) -> OperationResult {
@@ -118,7 +130,12 @@ fn analyze_result(source: &[u8]) -> OperationResult {
     }
 }
 
-fn convert_result(source: &[u8], optimize: bool, max_size_dp: Option<f32>) -> OperationResult {
+fn convert_result(
+    source: &[u8],
+    optimize: bool,
+    max_size_dp: Option<f32>,
+    pretty: bool,
+) -> OperationResult {
     match vdtoolkit::convert(source) {
         Ok(mut asset) => {
             if optimize {
@@ -129,7 +146,11 @@ fn convert_result(source: &[u8], optimize: bool, max_size_dp: Option<f32>) -> Op
             }
             OperationResult::Success {
                 ok: true,
-                xml: Some(asset.to_xml()),
+                xml: Some(if pretty {
+                    asset.to_xml()
+                } else {
+                    asset.to_compact_xml()
+                }),
                 analysis: asset.analysis,
             }
         }
@@ -191,7 +212,7 @@ mod tests {
             let native_asset = vdtoolkit::convert(source).unwrap();
 
             let analyzed = json(&analyze_result(source));
-            let converted = json(&convert_result(source, false, None));
+            let converted = json(&convert_result(source, false, None, false));
 
             assert_eq!(
                 analyzed["analysis"],
@@ -201,21 +222,21 @@ mod tests {
                 converted["analysis"],
                 serde_json::to_value(&native_asset.analysis).unwrap()
             );
-            assert_eq!(converted["xml"], native_asset.to_xml());
+            assert_eq!(converted["xml"], native_asset.to_compact_xml());
         }
     }
 
     #[test]
     fn unsupported_and_malformed_errors_preserve_native_information() {
         let unsupported_analysis = vdtoolkit::analyze(UNSUPPORTED).unwrap();
-        let unsupported = json(&convert_result(UNSUPPORTED, false, None));
+        let unsupported = json(&convert_result(UNSUPPORTED, false, None, false));
         assert_eq!(unsupported["error"]["kind"], "unsupported");
         assert_eq!(
             unsupported["error"]["analysis"],
             serde_json::to_value(unsupported_analysis).unwrap()
         );
 
-        let malformed = json(&convert_result(MALFORMED, false, None));
+        let malformed = json(&convert_result(MALFORMED, false, None, false));
         assert_eq!(malformed["error"]["kind"], "xml");
         assert!(malformed["error"].get("analysis").is_none());
     }
@@ -224,29 +245,41 @@ mod tests {
     fn optimization_and_determinism_match_the_native_api() {
         let mut native = vdtoolkit::convert(DECIMALS).unwrap();
         native.optimize();
-        let optimized = json(&convert_result(DECIMALS, true, None));
-        assert_eq!(optimized["xml"], native.to_xml());
+        let optimized = json(&convert_result(DECIMALS, true, None, false));
+        assert_eq!(optimized["xml"], native.to_compact_xml());
         assert_eq!(
             optimized["analysis"],
             serde_json::to_value(native.analysis).unwrap()
         );
 
         assert_eq!(
-            json(&convert_result(EXACT, false, None)),
-            json(&convert_result(EXACT, false, None))
+            json(&convert_result(EXACT, false, None, false)),
+            json(&convert_result(EXACT, false, None, false))
+        );
+    }
+
+    #[test]
+    fn pretty_output_matches_the_readable_native_xml() {
+        let mut native = vdtoolkit::convert(DECIMALS).unwrap();
+        native.optimize();
+        let pretty = json(&convert_result(DECIMALS, true, None, true));
+        assert_eq!(pretty["xml"], native.to_xml());
+        assert_eq!(
+            json(&convert_result(DECIMALS, true, None, false))["xml"],
+            vdtoolkit::compact_xml(&native.to_xml())
         );
     }
 
     #[test]
     fn size_cap_matches_the_native_api() {
-        let uncapped = json(&convert_result(LARGE, false, None));
+        let uncapped = json(&convert_result(LARGE, false, None, false));
         assert_eq!(uncapped["analysis"]["diagnostics"][0]["code"], "SVGVD016");
         assert_eq!(uncapped["analysis"]["diagnostics"][0]["severity"], "warning");
 
         let mut native = vdtoolkit::convert(LARGE).unwrap();
         assert!(native.fit_within(200.0));
-        let capped = json(&convert_result(LARGE, false, Some(200.0)));
-        assert_eq!(capped["xml"], native.to_xml());
+        let capped = json(&convert_result(LARGE, false, Some(200.0), false));
+        assert_eq!(capped["xml"], native.to_compact_xml());
         assert_eq!(
             capped["analysis"],
             serde_json::to_value(&native.analysis).unwrap()

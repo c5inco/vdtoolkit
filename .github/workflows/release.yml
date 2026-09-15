@@ -4,6 +4,12 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      sign:
+        description: Sign and notarize the macOS binaries
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -79,9 +85,161 @@ jobs:
             vdtoolkit-*.tar.gz
             vdtoolkit-*.sha256
 
+  # Signing credentials live only in the protected macos-signing environment
+  # and are never present while project code is compiled.
+  sign-macos:
+    if: github.ref_type == 'tag' || inputs.sign
+    needs: build
+    # macos-15's default Xcode 16.4 ships notarytool 1.0.0, which crashed before contacting Apple
+    # with a 12-character API key ID; macos-26 defaults to Xcode 26 and notarytool 1.1.
+    runs-on: macos-26
+    environment: macos-signing
+    steps:
+      - name: Require signing secrets
+        shell: bash
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          missing=""
+          # APPLE_API_ISSUER_ID is optional: only team API keys have one.
+          for name in MACOS_CERTIFICATE MACOS_CERTIFICATE_PASSWORD \
+            APPLE_API_KEY APPLE_API_KEY_ID; do
+            [ -n "${!name}" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "missing macos-signing environment secrets:$missing" >&2
+            exit 1
+          fi
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: vdtoolkit-*-apple-darwin
+          path: dist
+      - name: Sign and notarize
+        shell: bash
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/signing"
+          keychain="$work/signing.keychain-db"
+          mkdir -p "$work/notarize"
+          keychain_password=$(openssl rand -base64 32)
+          echo "::add-mask::$keychain_password"
+
+          printf '%s' "$MACOS_CERTIFICATE" | base64 --decode > "$work/certificate.p12"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$work/certificate.p12" -k "$keychain" \
+            -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm "$work/certificate.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s \
+            -k "$keychain_password" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" login.keychain-db
+
+          identity=$(security find-identity -v -p codesigning "$keychain" \
+            | awk '/Developer ID Application/ { print $2; exit }')
+          test -n "$identity" || {
+            echo "no Developer ID Application identity in MACOS_CERTIFICATE" >&2
+            exit 1
+          }
+
+          archives=(dist/*/vdtoolkit-*.tar.gz)
+          test "${#archives[@]}" -eq 2 || {
+            echo "expected two macOS archives, found ${#archives[@]}" >&2
+            exit 1
+          }
+          for archive in "${archives[@]}"; do
+            name=$(basename "$archive" .tar.gz)
+            tar -xzf "$archive" -C "$work"
+            codesign --force --options runtime --timestamp \
+              --keychain "$keychain" --sign "$identity" "$work/$name/vdt"
+            codesign --verify --strict --verbose=2 "$work/$name/vdt"
+            cp "$work/$name/vdt" "$work/notarize/$name"
+          done
+
+          printf '%s' "$APPLE_API_KEY" | base64 --decode > "$work/api-key.p8"
+          head -1 "$work/api-key.p8" | LC_ALL=C tr -d '\r' \
+            | grep -qx -- '-----BEGIN PRIVATE KEY-----' || {
+            echo "APPLE_API_KEY must be the base64 of the AuthKey_*.p8 file" >&2
+            exit 1
+          }
+          # Tolerate pasted whitespace and a copied AuthKey_<id>.p8 file name.
+          uuid='^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$'
+          APPLE_API_KEY_ID=$(printf '%s' "$APPLE_API_KEY_ID" | tr -d '[:space:]')
+          APPLE_API_KEY_ID=${APPLE_API_KEY_ID#AuthKey_}
+          APPLE_API_KEY_ID=${APPLE_API_KEY_ID%.p8}
+          APPLE_API_ISSUER_ID=$(printf '%s' "$APPLE_API_ISSUER_ID" | tr -d '[:space:]')
+          [[ "$APPLE_API_KEY_ID" =~ $uuid ]] && {
+            echo "APPLE_API_KEY_ID looks like the issuer ID; use the key ID, as in AuthKey_<key ID>.p8" >&2
+            exit 1
+          }
+          [[ "$APPLE_API_KEY_ID" =~ ^[A-Za-z0-9]+$ ]] || {
+            echo "APPLE_API_KEY_ID must be only the letters and digits of the key ID, as in AuthKey_<key ID>.p8" >&2
+            exit 1
+          }
+          # Team keys need the issuer ID; Apple answers 401 if an individual key sends one.
+          auth=(--key "$work/api-key.p8" --key-id "$APPLE_API_KEY_ID")
+          if [ -n "$APPLE_API_ISSUER_ID" ]; then
+            [[ "$APPLE_API_ISSUER_ID" =~ $uuid ]] || {
+              echo "APPLE_API_ISSUER_ID must be the issuer ID shown above the Team Keys list" >&2
+              echo "  it has ${#APPLE_API_ISSUER_ID} characters after removing whitespace; expected 36" >&2
+              exit 1
+            }
+            auth+=(--issuer "$APPLE_API_ISSUER_ID")
+          fi
+
+          ditto -c -k --keepParent "$work/notarize" "$work/notarize.zip"
+          xcrun notarytool submit "$work/notarize.zip" "${auth[@]}" --wait --output-format json \
+            > "$work/notarize.json" || {
+            code=$?
+            echo "notarytool $(xcrun notarytool --version) submit exited with $code" >&2
+            if [ -n "$APPLE_API_ISSUER_ID" ]; then
+              echo "if APPLE_API_KEY is an individual key, delete APPLE_API_ISSUER_ID" >&2
+            fi
+            exit 1
+          }
+          id=$(jq -r .id "$work/notarize.json")
+          status=$(jq -r .status "$work/notarize.json")
+          echo "notarization $id: $status"
+          if [ "$status" != Accepted ]; then
+            xcrun notarytool log "$id" "${auth[@]}"
+            exit 1
+          fi
+
+          for archive in "${archives[@]}"; do
+            name=$(basename "$archive" .tar.gz)
+            tar -czf "$archive" -C "$work" "$name"
+            (cd "$(dirname "$archive")" && shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256")
+          done
+      - name: Remove signing material
+        if: always()
+        shell: bash
+        run: |
+          security delete-keychain "$RUNNER_TEMP/signing/signing.keychain-db" 2>/dev/null || true
+          rm -rf "$RUNNER_TEMP/signing"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: vdtoolkit-x86_64-apple-darwin
+          path: dist/vdtoolkit-x86_64-apple-darwin/*
+          overwrite: true
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: vdtoolkit-aarch64-apple-darwin
+          path: dist/vdtoolkit-aarch64-apple-darwin/*
+          overwrite: true
+
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: [build, sign-macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write

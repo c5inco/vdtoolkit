@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-14
+
 ### Added
 
 - `convert`, `optimize`, and `notification` write valid Android resource names.
@@ -119,6 +121,12 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- The project is renamed from `svg2vd` to `vdtoolkit`. The installed command is
+  now `vdt`, and release archives are named `vdtoolkit-v<version>-<target>`.
+  Scripts that call `svg2vd` need to call `vdt` instead; its commands and
+  options are otherwise unchanged.
+- The macOS release binaries are signed with a Developer ID certificate and
+  notarized by Apple.
 - `optimize`, and `--optimize` on `notification` and `adaptive`, write path data
   in its shortest form: each command absolute or relative, whichever is shorter,
   `H` and `V` for horizontal and vertical lines, and no repeated command letters,
@@ -148,5 +156,6 @@ follow [Semantic Versioning](https://semver.org/).
 - Paired Material corpus conformance, Studio Icons stress coverage, release
   packaging, and optional Android pixel-renderer verification.
 
-[Unreleased]: https://github.com/c5inco/vdtoolkit/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/c5inco/vdtoolkit/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/c5inco/vdtoolkit/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/c5inco/vdtoolkit/releases/tag/v0.1.0

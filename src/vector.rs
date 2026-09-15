@@ -150,14 +150,26 @@ pub enum LineJoin {
 
 impl VectorDrawable {
     pub fn minimum_api(&self) -> u32 {
-        if contains_even_odd(&self.children)
-            || count_clip_paths(&self.children) > 1
-            || self.uses_gradients()
-        {
-            24
-        } else {
+        if self.api_24_features().is_empty() {
             21
+        } else {
+            24
         }
+    }
+
+    /// What the drawable uses that API 21 cannot render, in a stable order.
+    fn api_24_features(&self) -> Vec<Api24Feature> {
+        let mut features = Vec::new();
+        if self.uses_gradients() {
+            features.push(Api24Feature::Gradient);
+        }
+        if contains_even_odd(&self.children) {
+            features.push(Api24Feature::EvenOddFill);
+        }
+        if count_clip_paths(&self.children) > 1 {
+            features.push(Api24Feature::MultipleClips);
+        }
+        features
     }
 
     pub fn uses_gradients(&self) -> bool {
@@ -842,6 +854,46 @@ pub(crate) fn large_dimensions_warning(width_dp: f32, height_dp: f32) -> Option<
             "Reduce android:width and android:height and keep the viewport, or use a raster image for large artwork."
                 .to_owned(),
         ),
+    })
+}
+
+#[derive(Clone, Copy)]
+enum Api24Feature {
+    Gradient,
+    EvenOddFill,
+    MultipleClips,
+}
+
+/// `SVGVD004` note naming what raises a drawable's minimum API to 24, or
+/// `None` when it renders on API 21.
+pub(crate) fn api_level_note(drawable: &VectorDrawable) -> Option<Diagnostic> {
+    let features = drawable.api_24_features();
+    if features.is_empty() {
+        return None;
+    }
+    let (causes, fixes): (Vec<&str>, Vec<&str>) = features
+        .iter()
+        .map(|feature| match feature {
+            Api24Feature::Gradient => ("gradients", "use solid colors instead of gradients"),
+            Api24Feature::EvenOddFill => (
+                "even-odd fills (android:fillType)",
+                "draw holes with reversed path direction under the nonzero fill rule",
+            ),
+            Api24Feature::MultipleClips => (
+                "more than one clip path",
+                "combine the clips into a single clip path",
+            ),
+        })
+        .unzip();
+    Some(Diagnostic {
+        code: DiagnosticCode::ApiLevelRequirement,
+        severity: Severity::Info,
+        message: format!("needs API 24 for {}", causes.join(", ")),
+        location: None,
+        suggestion: Some(format!(
+            "Use it with minSdk 24 or higher; to support API 21, {}.",
+            fixes.join("; ")
+        )),
     })
 }
 

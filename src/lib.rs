@@ -184,6 +184,14 @@ impl Asset {
             .analysis
             .minimum_api
             .map(|_| self.drawable.minimum_api());
+        self.analysis.diagnostics.retain(|diagnostic| {
+            diagnostic.code.as_str() != DiagnosticCode::ApiLevelRequirement.as_str()
+        });
+        if self.analysis.minimum_api.is_some() {
+            self.analysis
+                .diagnostics
+                .extend(vector::api_level_note(&self.drawable));
+        }
         self.analysis.metrics.estimated_xml_bytes = self.to_xml().len();
         Ok(flattening)
     }
@@ -374,12 +382,13 @@ impl Asset {
             .filter(|node| matches!(node, vector::VectorNode::Group(_)))
             .count();
         let minimum_api = Some(drawable.minimum_api());
+        let diagnostics = vector::api_level_note(&drawable).into_iter().collect();
         let mut asset = Asset {
             drawable,
             analysis: Analysis {
                 compatibility,
                 minimum_api,
-                diagnostics: Vec::new(),
+                diagnostics,
                 metrics,
             },
             declared_size: true,

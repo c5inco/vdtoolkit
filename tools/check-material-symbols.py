@@ -7,6 +7,7 @@ import math
 import pathlib
 import re
 import shutil
+import struct
 import subprocess
 import tempfile
 import urllib.request
@@ -37,10 +38,19 @@ def download(item: tuple[str, pathlib.Path]) -> None:
         destination.write_bytes(response.read())
 
 
+def f32(value: float) -> float:
+    return struct.unpack("f", struct.pack("f", value))[0]
+
+
 def canonical_path(
     data: str, simplify: bool = True
 ) -> list[tuple[str, tuple[float, ...]]]:
-    """Expand relative and shorthand path commands without using vdtoolkit code."""
+    """Expand relative and shorthand path commands without using vdtoolkit code.
+
+    Values are read and relative ones added up in float32, as Android's
+    PathParser does: `--optimize` picks relative spellings that land exactly on
+    the rounded point in float32, which float64 sums would miss by a few millionths.
+    """
     tokens = TOKEN.findall(data.replace(",", " "))
     output: list[tuple[str, tuple[float, ...]]] = []
     index = 0
@@ -68,29 +78,29 @@ def canonical_path(
         arity = ARITY[upper]
         if index + arity > len(tokens) or tokens[index].isalpha():
             raise ValueError(f"incomplete {command} command: {data}")
-        values = [float(value) for value in tokens[index : index + arity]]
+        values = [f32(float(value)) for value in tokens[index : index + arity]]
         index += arity
         relative = command.islower()
         x, y = current
 
         if upper == "M":
-            point = (values[0] + x, values[1] + y) if relative else tuple(values)
+            point = (f32(values[0] + x), f32(values[1] + y)) if relative else tuple(values)
             output.append(("M", point))
             current = start = point
             command = "l" if relative else "L"
         elif upper == "L":
-            point = (values[0] + x, values[1] + y) if relative else tuple(values)
+            point = (f32(values[0] + x), f32(values[1] + y)) if relative else tuple(values)
             output.append(("L", point))
             current = point
         elif upper == "H":
-            current = (values[0] + x if relative else values[0], y)
+            current = (f32(values[0] + x) if relative else values[0], y)
             output.append(("L", current))
         elif upper == "V":
-            current = (x, values[0] + y if relative else values[0])
+            current = (x, f32(values[0] + y) if relative else values[0])
             output.append(("L", current))
         elif upper == "Q":
-            control = (values[0] + x, values[1] + y) if relative else tuple(values[:2])
-            point = (values[2] + x, values[3] + y) if relative else tuple(values[2:])
+            control = (f32(values[0] + x), f32(values[1] + y)) if relative else tuple(values[:2])
+            point = (f32(values[2] + x), f32(values[3] + y)) if relative else tuple(values[2:])
             output.append(("Q", control + point))
             quad_control, current = control, point
         elif upper == "T":
@@ -99,13 +109,13 @@ def canonical_path(
                 if previous in ("Q", "T") and quad_control is not None
                 else current
             )
-            point = (values[0] + x, values[1] + y) if relative else tuple(values)
+            point = (f32(values[0] + x), f32(values[1] + y)) if relative else tuple(values)
             output.append(("Q", control + point))
             quad_control, current = control, point
         elif upper == "C":
-            first = (values[0] + x, values[1] + y) if relative else tuple(values[:2])
-            second = (values[2] + x, values[3] + y) if relative else tuple(values[2:4])
-            point = (values[4] + x, values[5] + y) if relative else tuple(values[4:])
+            first = (f32(values[0] + x), f32(values[1] + y)) if relative else tuple(values[:2])
+            second = (f32(values[2] + x), f32(values[3] + y)) if relative else tuple(values[2:4])
+            point = (f32(values[4] + x), f32(values[5] + y)) if relative else tuple(values[4:])
             output.append(("C", first + second + point))
             cubic_control, current = second, point
         elif upper == "S":
@@ -114,12 +124,12 @@ def canonical_path(
                 if previous in ("C", "S") and cubic_control is not None
                 else current
             )
-            second = (values[0] + x, values[1] + y) if relative else tuple(values[:2])
-            point = (values[2] + x, values[3] + y) if relative else tuple(values[2:])
+            second = (f32(values[0] + x), f32(values[1] + y)) if relative else tuple(values[:2])
+            point = (f32(values[2] + x), f32(values[3] + y)) if relative else tuple(values[2:])
             output.append(("C", first + second + point))
             cubic_control, current = second, point
         elif upper == "A":
-            point = (values[5] + x, values[6] + y) if relative else tuple(values[5:])
+            point = (f32(values[5] + x), f32(values[6] + y)) if relative else tuple(values[5:])
             output.append(("A", tuple(values[:5]) + point))
             current = point
 

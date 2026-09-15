@@ -1398,7 +1398,10 @@ fn cli_adaptive_warns_when_background_does_not_fill_the_layer() {
         ),
         "{stderr}"
     );
-    assert!(res.join("drawable/ic_launcher_background.xml").is_file());
+    assert!(
+        res.join("drawable-anydpi/ic_launcher_background.xml")
+            .is_file()
+    );
 }
 
 #[test]
@@ -1762,14 +1765,14 @@ fn cli_adaptive_writes_layers_icon_and_color_resource() {
     );
 
     let foreground_xml =
-        fs::read_to_string(res.join("drawable/ic_launcher_foreground.xml")).unwrap();
+        fs::read_to_string(res.join("drawable-anydpi/ic_launcher_foreground.xml")).unwrap();
     assert!(foreground_xml.contains("android:width=\"108dp\""));
     assert!(foreground_xml.contains("android:pathData=\"M54,26.5 L26.5,81.5 L81.5,81.5 Z\""));
     let background_xml =
-        fs::read_to_string(res.join("drawable/ic_launcher_background.xml")).unwrap();
+        fs::read_to_string(res.join("drawable-anydpi/ic_launcher_background.xml")).unwrap();
     assert!(background_xml.contains("android:pathData=\"M0,0 L108,0 L108,108 L0,108 Z\""));
     assert_eq!(
-        fs::read_to_string(res.join("drawable/ic_launcher_monochrome.xml")).unwrap(),
+        fs::read_to_string(res.join("drawable-anydpi/ic_launcher_monochrome.xml")).unwrap(),
         foreground_xml
     );
     let icon = fs::read_to_string(res.join("mipmap-anydpi-v26/ic_launcher.xml")).unwrap();
@@ -1801,8 +1804,8 @@ fn cli_adaptive_writes_layers_icon_and_color_resource() {
     assert!(icon.contains("<background android:drawable=\"@color/ic_app_background\"/>"));
     assert!(icon.contains("<foreground android:drawable=\"@drawable/ic_app_foreground\"/>"));
     assert!(!icon.contains("monochrome"));
-    assert!(res.join("drawable/ic_app_foreground.xml").is_file());
-    assert!(!res.join("drawable/ic_app_background.xml").exists());
+    assert!(res.join("drawable-anydpi/ic_app_foreground.xml").is_file());
+    assert!(!res.join("drawable-anydpi/ic_app_background.xml").exists());
     assert!(!res.join("mipmap").exists());
 
     // The default fit leaves a plain logo outside the safe zone; --legacy
@@ -2215,8 +2218,8 @@ fn cli_adaptive_optimize_shortens_every_drawable_and_keeps_pngs_identical() {
 
     let read =
         |res: &std::path::Path, relative: &str| fs::read_to_string(res.join(relative)).unwrap();
-    let plain_foreground = read(&plain, "drawable/ic_launcher_foreground.xml");
-    let foreground_xml = read(&optimized, "drawable/ic_launcher_foreground.xml");
+    let plain_foreground = read(&plain, "drawable-anydpi/ic_launcher_foreground.xml");
+    let foreground_xml = read(&optimized, "drawable-anydpi/ic_launcher_foreground.xml");
     assert!(
         plain_foreground.contains("android:pathData=\"M54.00001,26.958332"),
         "{plain_foreground}"
@@ -2228,10 +2231,10 @@ fn cli_adaptive_optimize_shortens_every_drawable_and_keeps_pngs_identical() {
     assert!(foreground_xml.contains("android:width=\"108dp\""));
     assert!(foreground_xml.len() < plain_foreground.len());
     assert_eq!(
-        read(&optimized, "drawable/ic_launcher_monochrome.xml"),
+        read(&optimized, "drawable-anydpi/ic_launcher_monochrome.xml"),
         foreground_xml
     );
-    let background_xml = read(&optimized, "drawable/ic_launcher_background.xml");
+    let background_xml = read(&optimized, "drawable-anydpi/ic_launcher_background.xml");
     assert!(
         background_xml.contains("android:startX=\"0.36\""),
         "{background_xml}"
@@ -2278,9 +2281,9 @@ fn cli_adaptive_optimize_shortens_every_drawable_and_keeps_pngs_identical() {
         }
     }
     for relative in [
-        "drawable/ic_launcher_foreground.xml",
-        "drawable/ic_launcher_background.xml",
-        "drawable/ic_launcher_monochrome.xml",
+        "drawable-anydpi/ic_launcher_foreground.xml",
+        "drawable-anydpi/ic_launcher_background.xml",
+        "drawable-anydpi/ic_launcher_monochrome.xml",
         "mipmap-anydpi-v24/ic_launcher.xml",
         "mipmap-anydpi-v24/ic_launcher_round.xml",
         "mipmap-anydpi-v26/ic_launcher.xml",

@@ -32,16 +32,19 @@ VectorDrawable XML, or make iOS or web assets.
 
 | The user wants | Command |
 | --- | --- |
-| A drawable from an SVG (`R.drawable.x`, `painterResource`) | `vdt convert icon.svg -o res/drawable/ic_icon.xml` |
-| The same, as small as possible | `vdt optimize icon.svg -o res/drawable/ic_icon.xml` |
+| A drawable from an SVG (`R.drawable.x`, `painterResource`) | `vdt convert icon.svg -o res/drawable-anydpi/ic_icon.xml` |
+| The same, as small as possible | `vdt optimize icon.svg -o res/drawable-anydpi/ic_icon.xml` |
 | An app or launcher icon | `vdt adaptive --foreground logo.svg --background-color '#FFFFFF' -o res` |
-| A notification or status bar icon | `vdt notification bell.svg -o res/drawable/ic_stat_bell.xml` |
+| A notification or status bar icon | `vdt notification bell.svg -o res/drawable-anydpi/ic_stat_bell.xml` |
 | To know if an SVG will convert, without writing | `vdt check icon.svg` |
 | Details: diagnostics, minimum API, bounds, size | `vdt inspect icon.svg --format json` |
 
 `vdt icon.svg -o out.xml` is shorthand for `convert`. Every command except
 `adaptive` accepts a directory as input; a directory needs `-o`, keeps its
 tree, and a file that fails is named on stderr while the rest still convert.
+Use `drawable-anydpi/` when `minSdk` is 21 or newer so vectors outrank
+same-named density-specific bitmaps. Use plain `drawable/` when AndroidX
+VectorDrawableCompat must load them below API 21, where `anydpi` is unavailable.
 
 ## Workflow: inspect, fix, generate, wire up
 
@@ -128,8 +131,8 @@ Then make sure the `<application>` element in `AndroidManifest.xml` has
 ## Notification icons: `notification`
 
 ```sh
-vdt notification bell.svg -o app/src/main/res/drawable/ic_stat_bell.xml
-vdt notification icons/ --fit 20 -o app/src/main/res/drawable/
+vdt notification bell.svg -o app/src/main/res/drawable-anydpi/ic_stat_bell.xml
+vdt notification icons/ --fit 20 -o app/src/main/res/drawable-anydpi/
 ```
 
 Android draws these from the alpha channel only, so every color becomes white

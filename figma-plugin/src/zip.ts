@@ -6,6 +6,10 @@ export interface ZipEntry {
   data: Uint8Array;
 }
 
+export function createDrawableZip(drawables: ZipEntry[]): Uint8Array {
+  return createZip(drawables.map((drawable) => ({ ...drawable, path: `drawable-anydpi/${drawable.path}` })));
+}
+
 // 1980-01-01, the earliest valid ZIP date; a zero date field reads as invalid in some tools.
 const DOS_DATE = (1 << 5) | 1;
 

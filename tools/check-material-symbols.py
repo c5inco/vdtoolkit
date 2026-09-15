@@ -397,7 +397,7 @@ def check_adaptive_icons(
                 stdout=subprocess.DEVNULL,
             )
         written = [
-            f"drawable/{name}_foreground.xml",
+            f"drawable-anydpi/{name}_foreground.xml",
             f"values/{name}_background.xml",
             f"mipmap-anydpi-v26/{name}.xml",
             f"mipmap-anydpi-v26/{name}_round.xml",

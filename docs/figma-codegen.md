@@ -23,9 +23,10 @@ The development plugin has two entry points and makes no network requests:
   Esc closes the dialog (clearing a typed filter first).
   **Refresh** re-checks the layers the dialog opened with (not the current
   selection, since fixing a layer usually means selecting it), keeps anything
-  the user unchecked, and drops layers that were deleted. One
-  checked drawable downloads as `.xml`; several download as
-  `vector-drawables.zip`. Downloaded drawables are optimized and compact, with
+  the user unchecked, and drops layers that were deleted. Checked drawables
+  download as `vector-drawables.zip`, with the XML files in
+  `drawable-anydpi/` so the archive can be extracted directly into `res/`.
+  Downloaded drawables are optimized and compact, with
   path data in its shortest form and no indentation; the Code panel shows the
   same drawable with readable line breaks.
 

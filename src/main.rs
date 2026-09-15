@@ -342,7 +342,7 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
         .as_deref()
         .map(normalize_color)
         .transpose()?;
-    let drawable_dir = args.output.join("drawable");
+    let drawable_dir = args.output.join("drawable-anydpi");
     let mipmap_dir = args.output.join("mipmap-anydpi-v26");
 
     let foreground_name = format!("{}_foreground", args.name);

@@ -12,7 +12,7 @@ const bundled = await build({
     contents: [
       'export { matchesFilter, reviewCandidates } from "./src/export-review.ts";',
       'export { resourceName, uniqueResourceNames } from "./src/resource-names.ts";',
-      'export { createZip, crc32 } from "./src/zip.ts";',
+      'export { createDrawableZip, crc32 } from "./src/zip.ts";',
     ].join("\n"),
     resolveDir: new URL("..", import.meta.url).pathname,
     loader: "ts",
@@ -21,7 +21,7 @@ const bundled = await build({
   format: "esm",
   write: false,
 });
-const { matchesFilter, reviewCandidates, resourceName, uniqueResourceNames, createZip, crc32 } = await import(
+const { matchesFilter, reviewCandidates, resourceName, uniqueResourceNames, createDrawableZip, crc32 } = await import(
   `data:text/javascript;base64,${Buffer.from(bundled.outputFiles[0].text).toString("base64")}`
 );
 
@@ -234,12 +234,14 @@ test("layer names become valid Android resource names", () => {
 test("ZIP archive has one stored entry per drawable", () => {
   assert.equal(crc32(new TextEncoder().encode("123456789")), 0xcbf43926);
   const data = new TextEncoder().encode("<vector/>");
-  const zip = createZip([
+  const zip = createDrawableZip([
     { path: "a.xml", data },
     { path: "b.xml", data },
   ]);
   const view = new DataView(zip.buffer);
   assert.equal(view.getUint32(0, true), 0x04034b50);
+  const firstNameLength = view.getUint16(26, true);
+  assert.equal(new TextDecoder().decode(zip.subarray(30, 30 + firstNameLength)), "drawable-anydpi/a.xml");
   const end = zip.length - 22;
   assert.equal(view.getUint32(end, true), 0x06054b50);
   assert.equal(view.getUint16(end + 10, true), 2);

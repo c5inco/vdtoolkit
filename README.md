@@ -41,13 +41,13 @@ cargo install --path . --locked
 
 ```sh
 vdt icon.svg -o ic_icon.xml            # shorthand for `convert`
-vdt convert icons/ -o res/drawable/    # directories work; tree is preserved
+vdt convert icons/ -o res/drawable-anydpi/ # directories work; tree is preserved
 vdt check icon.svg                     # is it convertible? (no output written)
 vdt inspect icon.svg --format json     # diagnostics, min API, metrics
 vdt inspect bell.svg --as notification --format json  # would it make a good notification icon?
 vdt optimize icon.svg -o ic_icon.xml   # convert with shorter numbers and path data, same rendering
 vdt adaptive --foreground fg.svg --background-color '#3DDC84' -o app/src/main/res
-vdt notification bell.svg -o res/drawable/ic_stat_bell.xml
+vdt notification bell.svg -o res/drawable-anydpi/ic_stat_bell.xml
 vdt convert icon.svg --pretty          # human-readable XML instead of the default compact format
 ```
 
@@ -72,6 +72,11 @@ or `adaptive` when reviewing or hand-editing the generated XML. The Rust API
 keeps its readable `Asset::to_xml()` output; use `Asset::to_compact_xml()` for
 the compact form.
 
+The examples put vectors in `drawable-anydpi/`, which makes them win resource
+selection over same-named density-specific bitmaps. The `anydpi` qualifier and
+framework VectorDrawable both require API 21. Use plain `drawable/` instead
+when AndroidX VectorDrawableCompat must load the resource below API 21.
+
 Written files get names Android accepts as resources: lowercase letters,
 digits, and underscores, not starting with a digit and not a Java keyword. A
 valid name is kept. Any other name is rewritten and the new name is printed:
@@ -89,7 +94,7 @@ a viewBox larger than 200 is drawn at 24dp: a Material Symbols download on its
 960-unit grid becomes a 24dp icon, not a 960dp one.
 
 ```sh
-vdt convert hero.svg --size 24 -o res/drawable/ic_hero.xml
+vdt convert hero.svg --size 24 -o res/drawable-anydpi/ic_hero.xml
 ```
 
 `check` and `inspect` take `--as <kind>` to also report what making the SVG
@@ -119,8 +124,8 @@ and tints it with the system color, so `notification` flattens every fill and
 stroke to white, keeps opacity, and writes the artwork onto a 24dp canvas:
 
 ```sh
-vdt notification bell.svg -o res/drawable/ic_stat_bell.xml
-vdt notification icons/ --fit 20 -o res/drawable/
+vdt notification bell.svg -o res/drawable-anydpi/ic_stat_bell.xml
+vdt notification icons/ --fit 20 -o res/drawable-anydpi/
 ```
 
 | Option | Meaning |
@@ -165,9 +170,9 @@ vdt adaptive --foreground logo.svg --background bg.svg --monochrome logo.svg \
 | `--optimize` | Shorten numbers and path data in every layer drawable and the legacy vector where it cannot change rendering, as the `optimize` command does. It runs after the fit, which is what introduces long decimals, so placement is unchanged. Legacy PNGs are rendered from the exact vector either way. |
 
 The files written are `mipmap-anydpi-v26/<name>.xml`,
-`mipmap-anydpi-v26/<name>_round.xml`, `drawable/<name>_foreground.xml`, either
-`drawable/<name>_background.xml` or `values/<name>_background.xml`, and
-`drawable/<name>_monochrome.xml` when a monochrome layer is given. Artwork is
+`mipmap-anydpi-v26/<name>_round.xml`, `drawable-anydpi/<name>_foreground.xml`, either
+`drawable-anydpi/<name>_background.xml` or `values/<name>_background.xml`, and
+`drawable-anydpi/<name>_monochrome.xml` when a monochrome layer is given. Artwork is
 scaled uniformly and centered, so rendering is unchanged apart from placement;
 a background SVG always fills the whole layer. Placement findings carry
 diagnostic codes, so `inspect --as adaptive-foreground --fit 66` or

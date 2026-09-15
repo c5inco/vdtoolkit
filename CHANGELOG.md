@@ -6,6 +6,12 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Vector drawables packaged by the Figma exporter and adaptive icon layers
+  now use `drawable-anydpi/`. CLI examples recommend the same directory for
+  caller-selected `convert`, `optimize`, and `notification` outputs.
+
 ## [0.3.0] - 2026-09-15
 
 ### Added

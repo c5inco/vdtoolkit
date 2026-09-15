@@ -1,7 +1,7 @@
 import { matchesFilter } from "./export-review";
 import type { BlockedRow, Issue, ReadyRow, ReviewRow } from "./export-review";
 import type { SandboxMessage } from "./messages";
-import { createZip } from "./zip";
+import { createDrawableZip } from "./zip";
 
 type Post = (message: SandboxMessage) => void;
 
@@ -336,19 +336,12 @@ function issueList(issues: Issue[], kind: "warning" | "error"): HTMLElement {
   );
 }
 
-// One drawable downloads as plain XML; several are bundled so the browser asks only once.
+// Keep the Android resource directory in the download, including for one drawable.
 function download(rows: ReadyRow[]): void {
   const encoder = new TextEncoder();
-  const [fileName, bytes, type] =
-    rows.length === 1
-      ? [rows[0].fileName, encoder.encode(rows[0].xml), "application/xml"]
-      : [
-          "vector-drawables.zip",
-          createZip(rows.map((row) => ({ path: row.fileName, data: encoder.encode(row.xml) }))),
-          "application/zip",
-        ];
-  const url = URL.createObjectURL(new Blob([bytes as Uint8Array<ArrayBuffer>], { type }));
-  const link = element("a", { href: url, download: fileName });
+  const bytes = createDrawableZip(rows.map((row) => ({ path: row.fileName, data: encoder.encode(row.xml) })));
+  const url = URL.createObjectURL(new Blob([bytes as Uint8Array<ArrayBuffer>], { type: "application/zip" }));
+  const link = element("a", { href: url, download: "vector-drawables.zip" });
   document.body.append(link);
   link.click();
   link.remove();

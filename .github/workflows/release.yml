@@ -140,6 +140,7 @@ jobs:
           rm "$work/certificate.p12"
           security set-key-partition-list -S apple-tool:,apple: -s \
             -k "$keychain_password" "$keychain" > /dev/null
+          read -r -a original_keychains <<< "$(security list-keychains -d user | tr -d '"' | xargs)"
           security list-keychains -d user -s "$keychain" login.keychain-db
 
           identity=$(security find-identity -v -p codesigning "$keychain" \
@@ -162,6 +163,8 @@ jobs:
             codesign --verify --strict --verbose=2 "$work/$name/vdt"
             cp "$work/$name/vdt" "$work/notarize/$name"
           done
+          # notarytool can crash when the user keychain search list is replaced.
+          security list-keychains -d user -s "${original_keychains[@]}"
 
           printf '%s' "$APPLE_API_KEY" | base64 --decode > "$work/api-key.p8"
           head -1 "$work/api-key.p8" | LC_ALL=C tr -d '\r' \
@@ -195,7 +198,14 @@ jobs:
             --issuer "$APPLE_API_ISSUER_ID" --wait --output-format json \
             > "$work/notarize.json" || {
             code=$?
-            echo "notarytool submit exited with $code" >&2
+            echo "notarytool $(xcrun notarytool --version) submit exited with $code" >&2
+            report=$(find ~/Library/Logs/DiagnosticReports -name 'notarytool*' \
+              -newer "$work/notarize.zip" 2>/dev/null | head -1 || true)
+            if [ -n "$report" ]; then
+              echo "::group::notarytool crash report" >&2
+              head -150 "$report" >&2
+              echo "::endgroup::" >&2
+            fi
             exit 1
           }
           id=$(jq -r .id "$work/notarize.json")

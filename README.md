@@ -231,6 +231,15 @@ with the `aapt` namespace, which the Android build tools compile into color
 resources. See [docs/research.md](docs/research.md)
 for the renderer findings behind those levels.
 
+## Using with AI agents
+
+[`skills/vdt/SKILL.md`](skills/vdt/SKILL.md) is a skill for coding agents such
+as Claude Code and Codex. With it installed, an agent asked for an app icon,
+notification icon, or drawable reaches for `vdt` instead of writing
+VectorDrawable XML by hand, inspects the SVG before generating anything, picks
+options such as `--fit` for the kind of icon, and knows how to act on what the
+diagnostics report. Install `vdt` itself first.
+
 ## Rust API (experimental)
 
 Rust programs can embed the same analyzer and converter without launching a
@@ -278,6 +287,10 @@ Behavior is checked against AOSP's `Svg2Vector` as a reference, not a
 dependency; see [docs/research.md](docs/research.md). Optional corpus
 comparisons, the Android renderer harness, and the full release gate are
 described in [docs/v1-acceptance.md](docs/v1-acceptance.md).
+
+When a command or flag changes, update the agent skill in
+[skills/vdt/SKILL.md](skills/vdt/SKILL.md); `cargo test` fails while the skill
+names anything `vdt` does not have.
 
 Release notes are in the [changelog](CHANGELOG.md); maintainers follow the
 [release checklist](docs/releasing.md).

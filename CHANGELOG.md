@@ -8,6 +8,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- An agent skill, `skills/vdt/SKILL.md`, teaches coding agents such as Claude
+  Code and Codex when to use `vdt`, which order to run its commands in, and how
+  to act on its diagnostics. A test fails when the skill names a command or
+  flag that `vdt` does not have.
 - Every error and warning diagnostic carries a suggestion naming the fix, such
   as converting a dashed stroke to filled outlines or copying referenced content
   into the SVG. `check` and `inspect` print it under the diagnostic, as the JSON

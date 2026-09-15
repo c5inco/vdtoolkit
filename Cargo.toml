@@ -19,6 +19,7 @@ include = [
     "/LICENSE-MIT",
     "/LICENSE-APACHE",
     "/tests/**",
+    "/skills/**",
 ]
 
 [[bin]]

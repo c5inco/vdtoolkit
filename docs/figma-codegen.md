@@ -9,8 +9,18 @@ The development plugin has two entry points and makes no network requests:
   Selection as Vector Drawables…** opens a dialog listing every selected layer.
   Layers that convert are checked by default and show the Android file name
   they will be saved as; layers that can't convert (unsupported effects, other
-  node types, component sets) are listed with their `SVGVDnnn` issues and can't
-  be checked. **Show** zooms to a layer without changing the selection.
+  node types, component sets) are listed with the issues to fix (without diagnostic codes) and can't
+  be checked. Each row shows a thumbnail of Figma's SVG export, its file name,
+  and its size on a third line, such as `24×24dp`. A scaled-down layer shows
+  its exported size, such as `200×133dp`, followed by "Resized to recommended
+  maximum"; hovering the line shows the original Figma size. A
+  filter box narrows the list by layer or file name; **Export** and select-all
+  only act on the rows it shows. Layers larger
+  than 200dp stay exportable: the dialog scales them down so the longest side
+  is 200dp, keeping proportions. Size is never listed as a reason a layer
+  can't be exported. The crosshair button that appears when hovering a row zooms to a
+  layer without changing the selection.
+  Esc closes the dialog (clearing a typed filter first).
   **Refresh** re-checks the layers the dialog opened with (not the current
   selection, since fixing a layer usually means selecting it), keeps anything
   the user unchecked, and drops layers that were deleted. One
@@ -91,10 +101,13 @@ not be committed unless the repository adopts a shared registered plugin.
    **Warnings** block shows `SVGVD016`.
 7. Switch to Design Mode and select several frames, including one with a blur,
    one larger than 200×200, and a group. Run **Export Selection as Vector
-   Drawables…**. The clean frame and the large frame (with an `SVGVD016`
-   warning) are checked; the blurred frame and the group are listed under
-   **Needs fixes in Figma** without a checkbox.
-8. Uncheck one ready layer and click **Export**. The download contains only the
+   Drawables…**. Every row has a thumbnail. The clean frame and the large frame
+   are checked, and the large frame's size line reads "Resized to recommended
+   maximum"; the blurred frame and the group are listed under
+   **Needs fixes in Figma** with unchecked, disabled checkboxes.
+8. Type part of a layer name in the filter. Only matching rows stay, section
+   counts read "N of M", and **Export** counts only checked rows still shown.
+   Clear the filter, uncheck one ready layer, and click **Export**. The download contains only the
    remaining checked drawables, and a toast confirms the count.
 9. With the dialog open, select the blurred frame, remove its blur, and click
    **Refresh**. It moves to **Ready to export**, checked, and the layer you

@@ -82,20 +82,24 @@ function isSceneNode(node: BaseNode | null): node is SceneNode {
   return node !== null && !node.removed && node.type !== "PAGE" && node.type !== "DOCUMENT";
 }
 
+// Layers that can't be converted are still exported as SVG so the dialog can show what they are.
 async function exportCandidate(node: SceneNode): Promise<ExportCandidate> {
-  const candidate = { nodeId: node.id, name: node.name };
-  if (node.type === "COMPONENT_SET") {
-    return { ...candidate, skipReason: "Component sets can't be exported as one drawable. Select the variants instead." };
-  }
-  if (!isConvertible(node)) {
-    return { ...candidate, skipReason: "Only frames, components, and instances can be exported." };
-  }
+  const candidate: ExportCandidate = { nodeId: node.id, name: node.name };
+  if ("width" in node) Object.assign(candidate, { width: node.width, height: node.height });
+  let exportError: string | undefined;
   try {
-    return { ...candidate, source: await node.exportAsync({ format: "SVG" }) };
+    candidate.source = await node.exportAsync({ format: "SVG" });
   } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    return { ...candidate, skipReason: `Figma couldn't export this layer as SVG: ${reason}` };
+    exportError = error instanceof Error ? error.message : String(error);
   }
+  if (node.type === "COMPONENT_SET") {
+    candidate.skipReason = "Component sets can't be exported as one drawable. Select the variants instead.";
+  } else if (!isConvertible(node)) {
+    candidate.skipReason = "Only frames, components, and instances can be exported.";
+  } else if (exportError !== undefined) {
+    candidate.skipReason = `Figma couldn't export this layer as SVG: ${exportError}`;
+  }
+  return candidate;
 }
 
 // Zooms without changing the selection, so the user can fix a layer and refresh the dialog.

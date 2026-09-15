@@ -2,7 +2,7 @@ import init, { convertSvg } from "../vendor/vdtoolkit-wasm/vdtoolkit_wasm.js";
 import wasmBytes from "../vendor/vdtoolkit-wasm/vdtoolkit_wasm_bg.wasm";
 import type { ConvertResult } from "../vendor/vdtoolkit-wasm/vdtoolkit_wasm";
 import { renderExportDialog, renderPreparing } from "./export-dialog";
-import { reviewCandidates } from "./export-review";
+import { MAX_EXPORT_DP, reviewCandidates } from "./export-review";
 import type { ConvertRequest, ConvertResponse, ReviewRequest, SandboxMessage } from "./messages";
 
 declare const parent: Window;
@@ -22,7 +22,7 @@ window.onmessage = async (event: MessageEvent<{ pluginMessage?: ConvertRequest |
     const response: ConvertResponse = { type: "converted", id: request.id, result: convert(request.source) };
     post(response);
   } else if (request?.type === "review" && Array.isArray(request.candidates)) {
-    const convert = converter(await wasmReady);
+    const convert = converter(await wasmReady, MAX_EXPORT_DP);
     renderExportDialog(reviewCandidates(request.candidates, convert), post);
   }
 };
@@ -33,11 +33,11 @@ window.onmessage = async (event: MessageEvent<{ pluginMessage?: ConvertRequest |
 if (document.body) renderPreparing();
 else document.addEventListener("DOMContentLoaded", renderPreparing, { once: true });
 
-function converter(initError: unknown): (source: Uint8Array) => ConvertResult {
+function converter(initError: unknown, maxSizeDp?: number): (source: Uint8Array) => ConvertResult {
   return (source) => {
     try {
       if (initError !== undefined) throw initError;
-      return convertSvg(new Uint8Array(source), true);
+      return convertSvg(new Uint8Array(source), true, maxSizeDp);
     } catch (error) {
       return {
         ok: false,

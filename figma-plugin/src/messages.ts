@@ -12,11 +12,14 @@ export interface ConvertResponse {
   result: ConvertResult;
 }
 
-// One selected layer offered for batch export. `source` is absent when the layer
-// isn't a frame, component, or instance, or when Figma's SVG export failed.
+// One selected layer offered for batch export. `source` is Figma's SVG export, shown as
+// the thumbnail and converted unless `skipReason` says the layer can't be exported.
 export interface ExportCandidate {
   nodeId: string;
   name: string;
+  // The layer's size in Figma, which its SVG export keeps as the drawable's dp size.
+  width?: number;
+  height?: number;
   source?: Uint8Array;
   skipReason?: string;
 }

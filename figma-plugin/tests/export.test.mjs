@@ -10,7 +10,7 @@ const code = await readFile(new URL("../dist/code.js", import.meta.url), "utf8")
 const bundled = await build({
   stdin: {
     contents: [
-      'export { reviewCandidates } from "./src/export-review.ts";',
+      'export { matchesFilter, reviewCandidates } from "./src/export-review.ts";',
       'export { resourceName, uniqueResourceNames } from "./src/resource-names.ts";',
       'export { createZip, crc32 } from "./src/zip.ts";',
     ].join("\n"),
@@ -21,7 +21,7 @@ const bundled = await build({
   format: "esm",
   write: false,
 });
-const { reviewCandidates, resourceName, uniqueResourceNames, createZip, crc32 } = await import(
+const { matchesFilter, reviewCandidates, resourceName, uniqueResourceNames, createZip, crc32 } = await import(
   `data:text/javascript;base64,${Buffer.from(bundled.outputFiles[0].text).toString("base64")}`
 );
 
@@ -61,9 +61,17 @@ test("export command without a selection explains what to select", () => {
 
 test("export command sends every selected layer to the dialog, explaining skipped ones", async () => {
   const selection = [
-    { id: "1", name: "Arrow", type: "FRAME", absoluteBoundingBox: {}, exportAsync: async () => new Uint8Array([1]) },
-    { id: "2", name: "Box", type: "RECTANGLE", absoluteBoundingBox: {} },
-    { id: "3", name: "Buttons", type: "COMPONENT_SET", absoluteBoundingBox: {} },
+    {
+      id: "1",
+      name: "Arrow",
+      type: "FRAME",
+      width: 24,
+      height: 24,
+      absoluteBoundingBox: {},
+      exportAsync: async () => new Uint8Array([1]),
+    },
+    { id: "2", name: "Box", type: "RECTANGLE", absoluteBoundingBox: {}, exportAsync: async () => new Uint8Array([2]) },
+    { id: "3", name: "Buttons", type: "COMPONENT_SET", absoluteBoundingBox: {}, exportAsync: async () => new Uint8Array([3]) },
     {
       id: "4",
       name: "Broken",
@@ -82,14 +90,21 @@ test("export command sends every selected layer to the dialog, explaining skippe
   const [review] = calls.posted;
   assert.equal(review.type, "review");
   assert.deepEqual(
-    Array.from(review.candidates, (candidate) => [candidate.nodeId, candidate.source ? "source" : candidate.skipReason]),
+    // Skipped layers keep their SVG so the dialog can show a thumbnail.
+    Array.from(review.candidates, (candidate) => [
+      candidate.nodeId,
+      candidate.source?.[0],
+      candidate.skipReason,
+    ]),
     [
-      ["1", "source"],
-      ["2", "Only frames, components, and instances can be exported."],
-      ["3", "Component sets can't be exported as one drawable. Select the variants instead."],
-      ["4", "Figma couldn't export this layer as SVG: export failed"],
+      ["1", 1, undefined],
+      ["2", 2, "Only frames, components, and instances can be exported."],
+      ["3", 3, "Component sets can't be exported as one drawable. Select the variants instead."],
+      ["4", undefined, "Figma couldn't export this layer as SVG: export failed"],
     ],
   );
+
+  assert.deepEqual([review.candidates[0].width, review.candidates[0].height], [24, 24]);
 
   await figma.ui.onmessage({ type: "focus", nodeId: "4" });
   assert.deepEqual(calls.zoomed, ["4"]);
@@ -135,7 +150,12 @@ test("review marks convertible layers ready and lists blockers for the rest", ()
         name: "Blurred",
         source: svg('<filter id="b"><feGaussianBlur stdDeviation="2"/></filter><rect width="24" height="24" filter="url(#b)"/>'),
       },
-      { nodeId: "3", name: "Group", skipReason: "Only frames, components, and instances can be exported." },
+      {
+        nodeId: "3",
+        name: "Group",
+        source: svg('<rect width="24" height="24"/>'),
+        skipReason: "Only frames, components, and instances can be exported.",
+      },
       { nodeId: "4", name: "arrow-left", source: svg('<rect width="24" height="24"/>') },
     ],
     convert,
@@ -151,11 +171,56 @@ test("review marks convertible layers ready and lists blockers for the rest", ()
     ],
   );
   assert.match(rows[0].xml, /<vector xmlns:android=/);
+  assert.deepEqual([rows[0].exportWidth, rows[0].exportHeight], [24, 24]);
+  assert.equal(rows[0].resized, false);
+  assert.ok(rows.every((row) => row.preview instanceof Uint8Array), "every exported layer keeps its SVG preview");
   assert.ok(rows[1].issues.length > 0);
   const codes = rows[1].issues.map((issue) => issue.code);
   assert.ok(codes.every((code) => /^SVGVD\d{3}$/.test(code)));
   assert.equal(new Set(codes).size, codes.length, "each issue code is listed once");
   assert.deepEqual(rows[2].issues, [{ message: "Only frames, components, and instances can be exported." }]);
+});
+
+test("review exports large frames capped at 200dp and says so", () => {
+  const hero = new TextEncoder().encode(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="480" height="320" viewBox="0 0 480 320"><rect width="480" height="320"/></svg>',
+  );
+  const [row] = reviewCandidates(
+    [{ nodeId: "1", name: "Hero", source: hero, width: 480, height: 320 }],
+    (source) => wasm.convertSvg(source, true, 200),
+  );
+  assert.equal(row.status, "ready");
+  assert.deepEqual([row.width, row.height, row.exportWidth, row.exportHeight], [480, 320, 200, 133]);
+  assert.match(row.xml, /android:width="200dp"/);
+  assert.match(row.xml, /android:height="133dp"/);
+  assert.equal(row.resized, true);
+  assert.deepEqual(row.warnings, []);
+});
+
+test("size is never listed as a reason a large layer can't be exported", () => {
+  const blurredHero = new TextEncoder().encode(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="480" height="320" viewBox="0 0 480 320">' +
+      '<filter id="b"><feGaussianBlur stdDeviation="2"/></filter><rect width="480" height="320" filter="url(#b)"/></svg>',
+  );
+  const [row] = reviewCandidates(
+    [{ nodeId: "1", name: "Hero", source: blurredHero, width: 480, height: 320 }],
+    (source) => wasm.convertSvg(source, true, 200),
+  );
+  assert.equal(row.status, "blocked");
+  const codes = row.issues.map((issue) => issue.code);
+  assert.ok(codes.includes("SVGVD002"), "the real blocker is listed");
+  assert.ok(!codes.includes("SVGVD016"), "the size warning is not");
+});
+
+test("filter matches layer and file names, ignoring case and surrounding spaces", () => {
+  const ready = { status: "ready", name: "Theme = Light", fileName: "folder_light.xml" };
+  const blocked = { status: "blocked", name: "Blurred badge" };
+  assert.equal(matchesFilter(ready, ""), true);
+  assert.equal(matchesFilter(ready, "  theme = LIGHT "), true);
+  assert.equal(matchesFilter(ready, "folder"), true);
+  assert.equal(matchesFilter(ready, "dark"), false);
+  assert.equal(matchesFilter(blocked, "BADGE"), true);
+  assert.equal(matchesFilter(blocked, ".xml"), false);
 });
 
 test("layer names become valid Android resource names", () => {

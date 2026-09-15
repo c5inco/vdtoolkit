@@ -99,7 +99,11 @@ impl Asset {
                         message: "no painted content, so the notification icon is invisible"
                             .to_owned(),
                         location: None,
-                        suggestion: None,
+                        suggestion: Some(
+                            "Give the artwork a visible fill or stroke, and check that no clip or \
+                             mask hides it."
+                                .to_owned(),
+                        ),
                     });
                 }
             }

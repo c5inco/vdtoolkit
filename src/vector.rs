@@ -263,6 +263,7 @@ fn visit_group(
             diagnostics,
             DiagnosticCode::UnsupportedPaint,
             "group opacity cannot be represented without changing overlap semantics",
+            "Merge the group's shapes into one path, or set the opacity on each shape if darker overlaps are acceptable.",
         );
     }
     let inherited_alpha = inherited_alpha * group_alpha;
@@ -275,6 +276,7 @@ fn visit_group(
             diagnostics,
             DiagnosticCode::UnsupportedPaint,
             "the normalized tree requires unsupported masking, filtering, or compositing",
+            "Flatten masks, filters, and blend modes into plain paths in the source design tool.",
         );
     }
     let mut children = Vec::new();
@@ -317,6 +319,7 @@ fn visit_group(
                             diagnostics,
                             DiagnosticCode::UnsupportedPaint,
                             "dashed strokes cannot be represented by VectorDrawable",
+                            "Convert the dashed stroke to filled outlines.",
                         );
                     }
                     if stroke.linejoin() == usvg::LineJoin::MiterClip {
@@ -325,6 +328,7 @@ fn visit_group(
                             diagnostics,
                             DiagnosticCode::UnsupportedPaint,
                             "miter-clip stroke joins cannot be represented by VectorDrawable",
+                            "Use a miter, round, or bevel stroke join.",
                         );
                     }
                     lower_paint(
@@ -354,6 +358,7 @@ fn visit_group(
                         diagnostics,
                         DiagnosticCode::UnsupportedPaint,
                         "stroke-before-fill paint order cannot be represented by VectorDrawable",
+                        "Convert the stroke to a filled outline placed below the fill.",
                     );
                 }
                 // Only geometry that paints pixels counts toward content bounds:
@@ -402,6 +407,7 @@ fn visit_group(
                     diagnostics,
                     DiagnosticCode::UnsupportedPaint,
                     "normalized SVG contains a non-vector node",
+                    "Convert text to paths and replace images with vector geometry.",
                 );
             }
         }
@@ -418,6 +424,7 @@ fn visit_group(
                 diagnostics,
                 DiagnosticCode::UnsupportedClipPath,
                 "clip path requires unsupported union, nesting, or even-odd semantics",
+                "Merge the clip into one path with the nonzero fill rule.",
             ),
         }
     }
@@ -435,6 +442,7 @@ fn visit_group(
                 diagnostics,
                 DiagnosticCode::UnsupportedMask,
                 "mask requires alpha, luminance, subtraction, nesting, or effects VectorDrawable cannot represent",
+                "Replace alpha, grayscale, or subtractive masking with outlined geometry.",
             ),
         }
     }
@@ -607,6 +615,7 @@ fn lower_paint(
                 diagnostics,
                 DiagnosticCode::UnsupportedPaint,
                 "pattern paint cannot be represented by VectorDrawable",
+                "Replace the pattern with the shapes it repeats.",
             );
             None
         }
@@ -647,6 +656,7 @@ fn lower_linear_gradient(
             diagnostics,
             DiagnosticCode::UnsupportedGradient,
             "gradient transform is not invertible",
+            "Fix the gradient transform; a zero scale collapses the gradient.",
         );
         return None;
     };
@@ -728,6 +738,7 @@ fn lower_radial_gradient(
             diagnostics,
             DiagnosticCode::UnsupportedGradient,
             "radial gradients with a focal point cannot be represented by VectorDrawable",
+            "Remove the focal point and focal radius so the gradient is centered.",
         );
         return None;
     }
@@ -737,6 +748,7 @@ fn lower_radial_gradient(
             diagnostics,
             DiagnosticCode::UnsupportedGradient,
             "elliptical or skewed radial gradients cannot be represented by VectorDrawable",
+            "Make the radial gradient circular, without skew or uneven scale.",
         );
         return None;
     };
@@ -921,6 +933,7 @@ fn stroke_scale(
             diagnostics,
             DiagnosticCode::UnsupportedStrokeTransform,
             "a stroked path has a non-uniform or skew transform",
+            "Convert the stroke to a filled outline, or remove the skew or uneven scale.",
         );
     }
     x
@@ -931,6 +944,7 @@ fn unsupported(
     diagnostics: &mut Vec<Diagnostic>,
     code: DiagnosticCode,
     message: &str,
+    suggestion: &str,
 ) {
     compatibility.worsen(Compatibility::Unsupported);
     if !diagnostics
@@ -942,7 +956,7 @@ fn unsupported(
             severity: Severity::Error,
             message: message.to_owned(),
             location: None,
-            suggestion: None,
+            suggestion: Some(suggestion.to_owned()),
         });
     }
 }

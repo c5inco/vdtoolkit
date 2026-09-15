@@ -85,7 +85,7 @@ fn preflight(document: &roxmltree::Document<'_>) -> (Compatibility, Vec<Diagnost
                         DiagnosticCode::UnsupportedDimensions,
                         "percentage dimensions depend on an external SVG viewport",
                         location(),
-                        Some("Use absolute width and height values for an asset."),
+                        "Use absolute width and height values for an asset.",
                     );
                 } else if width.is_none() || height.is_none() {
                     if width.is_none() && height.is_none() && node.has_attribute("viewBox") {
@@ -97,7 +97,7 @@ fn preflight(document: &roxmltree::Document<'_>) -> (Compatibility, Vec<Diagnost
                             DiagnosticCode::UnsupportedDimensions,
                             "both width and height are required unless viewBox supplies both",
                             location(),
-                            Some("Set width and height or provide a viewBox."),
+                            "Set width and height or provide a viewBox.",
                         );
                     }
                 }
@@ -111,7 +111,7 @@ fn preflight(document: &roxmltree::Document<'_>) -> (Compatibility, Vec<Diagnost
                 DiagnosticCode::UnsupportedMask,
                 "only one fully opaque white mask shape can be lowered exactly",
                 location(),
-                Some("Replace alpha, grayscale, or subtractive masking with outlined geometry."),
+                "Replace alpha, grayscale, or subtractive masking with outlined geometry.",
             ),
             "filter"
                 if node
@@ -124,7 +124,7 @@ fn preflight(document: &roxmltree::Document<'_>) -> (Compatibility, Vec<Diagnost
                     DiagnosticCode::UnsupportedFilter,
                     "SVG filters cannot be represented by VectorDrawable",
                     location(),
-                    None,
+                    "Remove the filter, or draw its effect, such as a shadow, as shapes.",
                 )
             }
             value if value.starts_with("fe") => push_unsupported(
@@ -133,7 +133,7 @@ fn preflight(document: &roxmltree::Document<'_>) -> (Compatibility, Vec<Diagnost
                 DiagnosticCode::UnsupportedFilter,
                 "SVG filter primitives cannot be represented by VectorDrawable",
                 location(),
-                None,
+                "Remove the filter, or draw its effect, such as a shadow, as shapes.",
             ),
             "text" | "textPath" | "tspan" => push_unsupported(
                 &mut compatibility,
@@ -141,7 +141,7 @@ fn preflight(document: &roxmltree::Document<'_>) -> (Compatibility, Vec<Diagnost
                 DiagnosticCode::TextNotOutlined,
                 "text must be converted to outlines before conversion",
                 location(),
-                Some("Convert text to paths in the source design tool."),
+                "Convert text to paths in the source design tool.",
             ),
             "image" => {
                 let href = href(&node).unwrap_or_default();
@@ -162,7 +162,7 @@ fn preflight(document: &roxmltree::Document<'_>) -> (Compatibility, Vec<Diagnost
                     code,
                     message,
                     location(),
-                    Some("Replace the image with vector path geometry."),
+                    "Replace the image with vector path geometry.",
                 );
             }
             "pattern" => push_unsupported(
@@ -171,7 +171,7 @@ fn preflight(document: &roxmltree::Document<'_>) -> (Compatibility, Vec<Diagnost
                 DiagnosticCode::UnsupportedPattern,
                 "patterns cannot be represented by VectorDrawable",
                 location(),
-                None,
+                "Replace the pattern with the shapes it repeats.",
             ),
             "animate" | "animateColor" | "animateMotion" | "animateTransform" | "set" => {
                 push_unsupported(
@@ -180,7 +180,7 @@ fn preflight(document: &roxmltree::Document<'_>) -> (Compatibility, Vec<Diagnost
                     DiagnosticCode::UnsupportedAnimation,
                     "SVG animation is outside the VectorDrawable compatibility profile",
                     location(),
-                    None,
+                    "Remove the animation, and animate the drawable with an AnimatedVectorDrawable instead.",
                 )
             }
             "foreignObject" | "switch" | "script" => push_unsupported(
@@ -189,7 +189,7 @@ fn preflight(document: &roxmltree::Document<'_>) -> (Compatibility, Vec<Diagnost
                 DiagnosticCode::UnsupportedPaint,
                 "this SVG container has no reliable VectorDrawable equivalent",
                 location(),
-                None,
+                "Remove the element, or replace its content with plain SVG shapes.",
             ),
             "rect" | "circle" | "ellipse" | "line" | "polyline" | "polygon" | "use" | "style"
             | "marker" | "symbol" | "a" => {
@@ -211,7 +211,7 @@ fn preflight(document: &roxmltree::Document<'_>) -> (Compatibility, Vec<Diagnost
                 DiagnosticCode::UnsupportedFilter,
                 "filter usage cannot be represented by VectorDrawable",
                 location(),
-                None,
+                "Remove the filter, or draw its effect, such as a shadow, as shapes.",
             );
         }
         if node
@@ -225,7 +225,7 @@ fn preflight(document: &roxmltree::Document<'_>) -> (Compatibility, Vec<Diagnost
                 DiagnosticCode::UnsupportedStrokeTransform,
                 "non-scaling strokes cannot be represented by VectorDrawable",
                 location(),
-                None,
+                "Remove vector-effect, or convert the stroke to a filled outline.",
             );
         }
         if style_contains(&node, "mix-blend-mode:")
@@ -244,7 +244,7 @@ fn preflight(document: &roxmltree::Document<'_>) -> (Compatibility, Vec<Diagnost
                 DiagnosticCode::UnsupportedPaint,
                 "filtering or compositing styles cannot be represented by VectorDrawable",
                 location(),
-                None,
+                "Remove filters, blend modes, and isolation from the styles, or flatten the artwork in the source design tool.",
             );
         }
         if name != "image"
@@ -256,7 +256,7 @@ fn preflight(document: &roxmltree::Document<'_>) -> (Compatibility, Vec<Diagnost
                 DiagnosticCode::ExternalReference,
                 "external references are unsupported and are never loaded",
                 location(),
-                None,
+                "Copy the referenced content into this SVG.",
             );
         }
         if node
@@ -270,7 +270,7 @@ fn preflight(document: &roxmltree::Document<'_>) -> (Compatibility, Vec<Diagnost
                 DiagnosticCode::ExternalReference,
                 "external URL references are unsupported and are never loaded",
                 location(),
-                None,
+                "Copy the referenced content into this SVG.",
             );
         }
     }
@@ -419,7 +419,7 @@ fn push_unsupported(
     code: DiagnosticCode,
     message: &str,
     location: Option<ElementLocation>,
-    suggestion: Option<&str>,
+    suggestion: &str,
 ) {
     compatibility.worsen(Compatibility::Unsupported);
     diagnostics.push(Diagnostic {
@@ -427,7 +427,7 @@ fn push_unsupported(
         severity: Severity::Error,
         message: message.to_owned(),
         location,
-        suggestion: suggestion.map(str::to_owned),
+        suggestion: Some(suggestion.to_owned()),
     });
 }
 

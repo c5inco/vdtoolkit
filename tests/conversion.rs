@@ -2663,3 +2663,83 @@ fn dimension(xml: &str, name: &str) -> f32 {
     let end = xml[start..].find("dp\"").unwrap() + start;
     xml[start..end].parse().unwrap()
 }
+
+#[test]
+fn every_error_suggests_a_fix() {
+    let inputs: [(&str, &str); 10] = [
+        (
+            "filter",
+            r##"<defs><filter id="f"><feGaussianBlur stdDeviation="1"/></filter></defs><path d="M0 0H24V24Z" filter="url(#f)"/>"##,
+        ),
+        (
+            "pattern",
+            r##"<defs><pattern id="p" width="4" height="4"><path d="M0 0H2V2Z"/></pattern></defs><path d="M0 0H24V24Z" fill="url(#p)"/>"##,
+        ),
+        (
+            "dashes",
+            r##"<path d="M2 12H22" stroke="#000" stroke-dasharray="2 2"/>"##,
+        ),
+        (
+            "animation",
+            r##"<path d="M0 0H24V24Z"><animate attributeName="opacity" from="1" to="0" dur="1s"/></path>"##,
+        ),
+        ("external", r##"<use href="other.svg#a"/>"##),
+        (
+            "focal",
+            r##"<defs><radialGradient id="g" fx="0.2"><stop offset="0" stop-color="#000"/><stop offset="1" stop-color="#fff"/></radialGradient></defs><path d="M0 0H24V24Z" fill="url(#g)"/>"##,
+        ),
+        (
+            "non_scaling",
+            r##"<path d="M2 12H22" stroke="#000" vector-effect="non-scaling-stroke"/>"##,
+        ),
+        (
+            "blend",
+            r##"<path d="M0 0H24V24Z" style="mix-blend-mode:multiply"/>"##,
+        ),
+        (
+            "group_opacity",
+            r##"<g opacity="0.5"><path d="M0 0H12V12Z"/><path d="M6 6H18V18Z"/></g>"##,
+        ),
+        ("text", r##"<text x="2" y="12">hi</text>"##),
+    ];
+    let directory = tempfile::tempdir().unwrap();
+    for (name, body) in inputs {
+        let svg = format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">{body}</svg>"#
+        );
+        fs::write(directory.path().join(format!("{name}.svg")), svg).unwrap();
+    }
+
+    let output = Command::new(env!("CARGO_BIN_EXE_vdt"))
+        .args(["inspect", "--format", "json"])
+        .arg(directory.path())
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let entries = report.as_array().unwrap();
+    assert_eq!(entries.len(), inputs.len());
+    for entry in entries {
+        let errors: Vec<_> = entry["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|diagnostic| diagnostic["severity"] == "error")
+            .collect();
+        assert!(!errors.is_empty(), "{entry}");
+        for error in errors {
+            assert!(error["suggestion"].is_string(), "{error}");
+        }
+    }
+
+    let output = Command::new(env!("CARGO_BIN_EXE_vdt"))
+        .arg("check")
+        .arg(directory.path().join("dashes.svg"))
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains("dashed strokes cannot be represented by VectorDrawable\n  → Convert the dashed stroke to filled outlines.\n"),
+        "{stdout}"
+    );
+}

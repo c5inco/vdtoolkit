@@ -6,6 +6,13 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Every error and warning diagnostic carries a suggestion naming the fix, such
+  as converting a dashed stroke to filled outlines or copying referenced content
+  into the SVG. `check` and `inspect` print it under the diagnostic, as the JSON
+  report and the Figma plugin already did.
+
 ## [0.2.0] - 2026-09-14
 
 ### Added

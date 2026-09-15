@@ -929,6 +929,9 @@ fn print_human(analysis: &Analysis, inspect: bool) {
             diagnostic.message,
             location
         );
+        if let Some(suggestion) = &diagnostic.suggestion {
+            println!("  → {suggestion}");
+        }
     }
     if inspect {
         let metrics = &analysis.metrics;

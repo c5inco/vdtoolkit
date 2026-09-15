@@ -1,6 +1,6 @@
 import type { ConvertResult, Diagnostic } from "../vendor/vdtoolkit-wasm/vdtoolkit_wasm";
 import { blockingDiagnostics, capitalize, warningDiagnostics } from "./diagnostics";
-import type { ExportCandidate } from "./messages";
+import type { ExportCandidate, ExportKind } from "./messages";
 import { uniqueResourceNames } from "./resource-names";
 
 // Android's recommended vector icon limit. The dialog scales larger layers down to fit,
@@ -51,6 +51,7 @@ export type ReviewRow = ReadyRow | BlockedRow;
 export function reviewCandidates(
   candidates: ExportCandidate[],
   convert: (source: Uint8Array) => ConvertResult,
+  kind: ExportKind = "drawable",
 ): ReviewRow[] {
   const results = candidates.map((candidate) =>
     candidate.source && !candidate.skipReason ? convert(candidate.source) : undefined,
@@ -77,7 +78,7 @@ export function reviewCandidates(
         height,
         exportWidth: result.analysis.metrics.width,
         exportHeight: result.analysis.metrics.height,
-        resized: wasResized(candidate, result.analysis.metrics),
+        resized: kind === "drawable" && wasResized(candidate, result.analysis.metrics),
         fileName: `${readyNames[readyIndex++]}.xml`,
         xml: result.xml,
         warnings: warningDiagnostics(result.analysis.diagnostics).map(toIssue),

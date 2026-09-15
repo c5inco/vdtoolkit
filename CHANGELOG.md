@@ -6,6 +6,13 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- The Figma plugin can batch-export selected frames, components, and instances
+  as optimized white 24dp notification icons. It uses the existing review UI,
+  reports notification-specific plate and empty-artwork warnings, and bundles
+  results as `notification-icons.zip`.
+
 ### Changed
 
 - Vector drawables packaged by the Figma exporter and adaptive icon layers

@@ -1,6 +1,6 @@
 import { matchesFilter } from "./export-review";
 import type { BlockedRow, Issue, ReadyRow, ReviewRow } from "./export-review";
-import type { SandboxMessage } from "./messages";
+import type { ExportKind, SandboxMessage } from "./messages";
 import { createDrawableZip } from "./zip";
 
 type Post = (message: SandboxMessage) => void;
@@ -32,6 +32,7 @@ const STYLES = `
     border-bottom: 1px solid var(--figma-color-border, #e6e6e6);
   }
   .summary { margin: 0; }
+  .preview-note { margin: -4px 0 0; color: var(--figma-color-text-secondary, #757575); }
   .filter {
     font: inherit; height: 28px; padding: 0 8px; border-radius: 5px; color: inherit;
     border: 1px solid var(--figma-color-border, #e6e6e6); background: var(--figma-color-bg, #fff);
@@ -62,6 +63,9 @@ const STYLES = `
     box-shadow: inset 0 0 0 1px var(--figma-color-border, #e6e6e6);
   }
   .thumb img { width: 28px; height: 28px; object-fit: contain; }
+  /* Android draws notification icons from alpha alone. White on a dark tile previews that result. */
+  .thumb.notification { background: #5f6368; }
+  .thumb.notification img { filter: brightness(0) invert(1); }
   .row label { display: flex; flex-direction: column; min-width: 0; cursor: pointer; }
   .row.blocked label { cursor: default; }
   .name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -103,7 +107,7 @@ export function renderPreparing(): void {
   document.body.replaceChildren(element("p", { className: "status" }, "Checking selected layers…"));
 }
 
-export function renderExportDialog(rows: ReviewRow[], post: Post): void {
+export function renderExportDialog(rows: ReviewRow[], kind: ExportKind, post: Post): void {
   for (const url of previewUrls) URL.revokeObjectURL(url);
   previewUrls = [];
   const ready = rows.filter((row): row is ReadyRow => row.status === "ready");
@@ -128,7 +132,7 @@ export function renderExportDialog(rows: ReviewRow[], post: Post): void {
   exportButton.addEventListener("click", () => {
     const chosen = ready.filter((row, index) => checkboxes[index].checked && isShown(row));
     if (chosen.length === 0) return;
-    download(chosen);
+    download(chosen, kind);
     post({ type: "exported", count: chosen.length });
   });
   const cancelButton = element("button", {}, "Cancel");
@@ -155,7 +159,7 @@ export function renderExportDialog(rows: ReviewRow[], post: Post): void {
     update();
   });
 
-  const readyElements = ready.map((row, index) => readyRow(row, checkboxes[index], post));
+  const readyElements = ready.map((row, index) => readyRow(row, checkboxes[index], kind, post));
   const blockedElements = blocked.map((row) => blockedRow(row, post));
   const readyCount = element("span", { className: "count" });
   const blockedCount = element("span", { className: "count" });
@@ -187,8 +191,19 @@ export function renderExportDialog(rows: ReviewRow[], post: Post): void {
 
   const filterWasFocused = document.activeElement?.classList.contains("filter") ?? false;
   const scrollTop = document.querySelector(".list")?.scrollTop ?? 0;
+  const header = element("header", {}, element("p", { className: "summary" }, summary(ready.length, rows.length)));
+  if (kind === "notification") {
+    header.append(
+      element(
+        "p",
+        { className: "preview-note" },
+        "The dark background is for preview only. Exported icons stay transparent.",
+      ),
+    );
+  }
+  header.append(filter);
   document.body.replaceChildren(
-    element("header", {}, element("p", { className: "summary" }, summary(ready.length, rows.length)), filter),
+    header,
     list,
     element("footer", {}, refreshButton, cancelButton, exportButton),
   );
@@ -215,7 +230,14 @@ export function renderExportDialog(rows: ReviewRow[], post: Post): void {
     selectAll.checked = count > 0 && count === shownReady;
     selectAll.indeterminate = count > 0 && count < shownReady;
     exportButton.disabled = count === 0;
-    exportButton.textContent = count === 1 ? "Export 1 drawable" : `Export ${count} drawables`;
+    exportButton.textContent =
+      kind === "notification"
+        ? count === 1
+          ? "Export 1 icon"
+          : `Export ${count} icons`
+        : count === 1
+          ? "Export 1 drawable"
+          : `Export ${count} drawables`;
   }
 }
 
@@ -237,12 +259,12 @@ function summary(readyCount: number, total: number): string {
   return `${readyCount} of ${total} layers are ready. The rest need fixes in Figma and won't be exported.`;
 }
 
-function readyRow(row: ReadyRow, checkbox: HTMLInputElement, post: Post): HTMLElement {
+function readyRow(row: ReadyRow, checkbox: HTMLInputElement, kind: ExportKind, post: Post): HTMLElement {
   return element(
     "div",
     { className: "row" },
     checkbox,
-    thumbnail(row),
+    thumbnail(row, kind === "notification"),
     element(
       "label",
       { htmlFor: checkbox.id },
@@ -299,8 +321,11 @@ function dimensions(width: number, height: number): string {
 
 // Shows Figma's SVG export, which can differ slightly from the converted drawable.
 // An <img> never runs scripts inside the SVG.
-function thumbnail(row: ReviewRow): HTMLElement {
-  const tile = element("span", { className: "thumb" });
+function thumbnail(row: ReviewRow, notification = false): HTMLElement {
+  const tile = element("span", {
+    className: notification ? "thumb notification" : "thumb",
+    title: notification ? "White notification icon preview" : "",
+  });
   if (row.preview) {
     const url = URL.createObjectURL(new Blob([row.preview as Uint8Array<ArrayBuffer>], { type: "image/svg+xml" }));
     previewUrls.push(url);
@@ -336,12 +361,13 @@ function issueList(issues: Issue[], kind: "warning" | "error"): HTMLElement {
   );
 }
 
-// Keep the Android resource directory in the download, including for one drawable.
-function download(rows: ReadyRow[]): void {
+// Keep the Android resource directory in every download, including for one icon.
+function download(rows: ReadyRow[], kind: ExportKind): void {
   const encoder = new TextEncoder();
   const bytes = createDrawableZip(rows.map((row) => ({ path: row.fileName, data: encoder.encode(row.xml) })));
   const url = URL.createObjectURL(new Blob([bytes as Uint8Array<ArrayBuffer>], { type: "application/zip" }));
-  const link = element("a", { href: url, download: "vector-drawables.zip" });
+  const fileName = kind === "notification" ? "notification-icons.zip" : "vector-drawables.zip";
+  const link = element("a", { href: url, download: fileName });
   document.body.append(link);
   link.click();
   link.remove();

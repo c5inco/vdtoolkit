@@ -16,6 +16,10 @@
     {
       "name": "Export Selection as Vector Drawables…",
       "command": "export-vector-drawables"
+    },
+    {
+      "name": "Export Selection as Notification Icons…",
+      "command": "export-notification-icons"
     }
   ],
   "networkAccess": {

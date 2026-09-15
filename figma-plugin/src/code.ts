@@ -1,6 +1,6 @@
 import type { Analysis, ConvertResult, Diagnostic } from "../vendor/vdtoolkit-wasm/vdtoolkit_wasm";
 import { blockingDiagnostics, capitalize, warningDiagnostics } from "./diagnostics";
-import type { ConvertRequest, ExportCandidate, ReviewRequest, SandboxMessage } from "./messages";
+import type { ConvertRequest, ExportCandidate, ExportKind, ReviewRequest, SandboxMessage } from "./messages";
 
 declare const __html__: string;
 
@@ -21,6 +21,7 @@ type ConvertibleNode = FrameNode | ComponentNode | InstanceNode;
 // The layers the export dialog opened with. Refresh re-checks these rather than the
 // current selection, because fixing a layer usually means selecting just that layer.
 let reviewedNodeIds: string[] = [];
+let exportKind: ExportKind = "drawable";
 
 figma.ui.onmessage = (message: SandboxMessage) => {
   switch (message?.type) {
@@ -30,7 +31,13 @@ figma.ui.onmessage = (message: SandboxMessage) => {
       return focus(message.nodeId);
     case "exported":
       return figma.notify(
-        message.count === 1 ? "Exported 1 Vector Drawable" : `Exported ${message.count} Vector Drawables`,
+        exportKind === "notification"
+          ? message.count === 1
+            ? "Exported 1 notification icon"
+            : `Exported ${message.count} notification icons`
+          : message.count === 1
+            ? "Exported 1 Vector Drawable"
+            : `Exported ${message.count} Vector Drawables`,
       );
     case "close":
       return figma.closePlugin();
@@ -47,6 +54,7 @@ if (figma.mode === "codegen") {
     return withinDeadline(generate(event.node), CODEGEN_DEADLINE_MS);
   });
 } else {
+  exportKind = figma.command === "export-notification-icons" ? "notification" : "drawable";
   void openExportDialog();
 }
 
@@ -58,12 +66,21 @@ function isConvertible(node: SceneNode): node is ConvertibleNode {
 async function openExportDialog(): Promise<void> {
   const selection = figma.currentPage.selection;
   if (selection.length === 0) {
-    figma.notify("Select one or more frames to export as Vector Drawables.");
+    figma.notify(
+      exportKind === "notification"
+        ? "Select one or more frames to export as notification icons."
+        : "Select one or more frames to export as Vector Drawables.",
+    );
     figma.closePlugin();
     return;
   }
   reviewedNodeIds = selection.map((node) => node.id);
-  figma.showUI(__html__, { width: 400, height: 480, title: "Export Vector Drawables", themeColors: true });
+  figma.showUI(__html__, {
+    width: 400,
+    height: 480,
+    title: exportKind === "notification" ? "Export Notification Icons" : "Export Vector Drawables",
+    themeColors: true,
+  });
   await postReview(selection);
 }
 
@@ -74,7 +91,11 @@ async function refreshReview(): Promise<void> {
 }
 
 async function postReview(nodes: readonly SceneNode[]): Promise<void> {
-  const request: ReviewRequest = { type: "review", candidates: await Promise.all(nodes.map(exportCandidate)) };
+  const request: ReviewRequest = {
+    type: "review",
+    kind: exportKind,
+    candidates: await Promise.all(nodes.map(exportCandidate)),
+  };
   figma.ui.postMessage(request);
 }
 

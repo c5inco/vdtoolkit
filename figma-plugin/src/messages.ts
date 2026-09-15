@@ -1,5 +1,7 @@
 import type { ConvertResult } from "../vendor/vdtoolkit-wasm/vdtoolkit_wasm";
 
+export type ExportKind = "drawable" | "notification";
+
 export interface ConvertRequest {
   type: "convert";
   id: string;
@@ -26,6 +28,7 @@ export interface ExportCandidate {
 
 export interface ReviewRequest {
   type: "review";
+  kind: ExportKind;
   candidates: ExportCandidate[];
 }
 

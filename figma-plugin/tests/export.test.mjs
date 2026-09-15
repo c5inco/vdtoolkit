@@ -33,11 +33,11 @@ const convert = (source) => wasm.convertSvg(source, true);
 const svg = (body) =>
   new TextEncoder().encode(`<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">${body}</svg>`);
 
-function runExportCommand(selection) {
+function runExportCommand(selection, command = "export-vector-drawables") {
   const calls = { notify: [], showUI: [], posted: [], closed: false, zoomed: [] };
   const figma = {
     mode: "default",
-    command: "export-vector-drawables",
+    command,
     currentPage: { selection },
     showUI: (_html, options) => calls.showUI.push(options),
     notify: (message) => calls.notify.push(message),
@@ -57,6 +57,26 @@ test("export command without a selection explains what to select", () => {
   assert.equal(calls.showUI.length, 0);
   assert.match(calls.notify[0], /Select one or more frames/);
   assert.equal(calls.closed, true);
+});
+
+test("notification command selects notification conversion and labels its UI", async () => {
+  const selection = [
+    {
+      id: "1",
+      name: "Bell",
+      type: "FRAME",
+      width: 24,
+      height: 24,
+      exportAsync: async () => new Uint8Array([1]),
+    },
+  ];
+  const { figma, calls } = runExportCommand(selection, "export-notification-icons");
+  await settle();
+
+  assert.equal(calls.showUI[0].title, "Export Notification Icons");
+  assert.equal(calls.posted[0].kind, "notification");
+  figma.ui.onmessage({ type: "exported", count: 2 });
+  assert.equal(calls.notify.at(-1), "Exported 2 notification icons");
 });
 
 test("export command sends every selected layer to the dialog, explaining skipped ones", async () => {
@@ -195,6 +215,20 @@ test("review exports large frames capped at 200dp and says so", () => {
   assert.match(row.xml, /android:height="133dp"/);
   assert.equal(row.resized, true);
   assert.deepEqual(row.warnings, []);
+});
+
+test("notification review exports a white 24dp icon with icon diagnostics", () => {
+  const source = svg('<rect width="24" height="24" fill="#123456"/>');
+  const [row] = reviewCandidates(
+    [{ nodeId: "1", name: "Status", source, width: 48, height: 48 }],
+    (input) => wasm.convertNotificationSvg(input, true),
+    "notification",
+  );
+
+  assert.equal(row.status, "ready");
+  assert.deepEqual([row.exportWidth, row.exportHeight, row.resized], [24, 24, false]);
+  assert.match(row.xml, /android:fillColor="#FFFFFF"/);
+  assert.ok(row.warnings.some((warning) => warning.code === "SVGVD017"));
 });
 
 test("size is never listed as a reason a large layer can't be exported", () => {

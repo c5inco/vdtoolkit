@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import init, { analyzeSvg, convertSvg } from "../pkg/vdtoolkit_wasm.js";
+import init, { analyzeSvg, convertNotificationSvg, convertSvg } from "../pkg/vdtoolkit_wasm.js";
 
 const wasm = await readFile(new URL("../pkg/vdtoolkit_wasm_bg.wasm", import.meta.url));
 await init({ module_or_path: wasm });
@@ -62,4 +62,12 @@ test("large drawables warn and can be fit within a size cap", () => {
   assert.match(capped.xml, /android:height="133dp"/);
   assert.match(capped.xml, /android:viewportWidth="480"/);
   assert.deepEqual(capped.analysis.diagnostics, []);
+});
+
+test("notification conversion whitens and fits artwork on a 24dp canvas", () => {
+  const result = convertNotificationSvg(exact, true, 20);
+  assert.equal(result.ok, true);
+  assert.deepEqual([result.analysis.metrics.width, result.analysis.metrics.height], [24, 24]);
+  assert.match(result.xml, /android:fillColor="#FFFFFF"/);
+  assert.ok(result.analysis.diagnostics.some(({ code }) => code === "SVGVD021"));
 });

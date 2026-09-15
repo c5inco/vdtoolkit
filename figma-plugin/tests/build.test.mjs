@@ -12,7 +12,7 @@ test("manifest declares a network-free codegen plugin with a Design Mode export 
   assert.deepEqual(manifest.editorType, ["figma", "dev"]);
   assert.deepEqual(
     manifest.menu.map((item) => item.command),
-    ["export-vector-drawables"],
+    ["export-vector-drawables", "export-notification-icons"],
   );
   assert.deepEqual(manifest.capabilities, ["codegen"]);
   assert.deepEqual(manifest.networkAccess.allowedDomains, ["none"]);
@@ -34,6 +34,9 @@ test("plugin bundles are self-contained and preserve the node-type guard", () =>
   // The export dialog draws into document.body as soon as the script runs.
   assert.match(ui, /<body><script>/);
   assert.match(ui, /AGFzbQE/); // base64-encoded WebAssembly magic bytes
+  assert.match(ui, /White notification icon preview/);
+  assert.match(ui, /brightness\(0\) invert\(1\)/);
+  assert.match(ui, /dark background is for preview only.*Exported icons stay transparent/i);
   assert.doesNotMatch(ui, /https?:\/\//);
   assert.doesNotMatch(ui, /<script[^>]+src=/);
 });

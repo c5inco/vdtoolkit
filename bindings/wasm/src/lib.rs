@@ -113,10 +113,28 @@ pub fn convert_svg(
     ))
 }
 
+/// Convert SVG bytes to a white 24dp Android notification icon. Artwork is
+/// scaled and centered inside `fit_dp`, which defaults to the full canvas.
+#[wasm_bindgen(js_name = convertNotificationSvg, skip_typescript)]
+pub fn convert_notification_svg(
+    source: &[u8],
+    optimize: bool,
+    fit_dp: Option<f32>,
+    pretty: Option<bool>,
+) -> JsValue {
+    serialize(&notification_result(
+        source,
+        optimize,
+        fit_dp.unwrap_or(vdtoolkit::NOTIFICATION_ICON_SIZE),
+        pretty.unwrap_or(false),
+    ))
+}
+
 #[wasm_bindgen(typescript_custom_section)]
 const TYPESCRIPT_FUNCTIONS: &'static str = r#"
 export function analyzeSvg(source: Uint8Array): AnalyzeResult;
 export function convertSvg(source: Uint8Array, optimize: boolean, maxSizeDp?: number, pretty?: boolean): ConvertResult;
+export function convertNotificationSvg(source: Uint8Array, optimize: boolean, fitDp?: number, pretty?: boolean): ConvertResult;
 "#;
 
 fn analyze_result(source: &[u8]) -> OperationResult {
@@ -154,6 +172,32 @@ fn convert_result(
                 analysis: asset.analysis,
             }
         }
+        Err(error) => failure(error),
+    }
+}
+
+fn notification_result(
+    source: &[u8],
+    optimize: bool,
+    fit_dp: f32,
+    pretty: bool,
+) -> OperationResult {
+    match vdtoolkit::convert(source).and_then(|mut asset| {
+        asset.to_icon(vdtoolkit::IconKind::Notification, fit_dp)?;
+        if optimize {
+            asset.optimize();
+        }
+        Ok(asset)
+    }) {
+        Ok(asset) => OperationResult::Success {
+            ok: true,
+            xml: Some(if pretty {
+                asset.to_xml()
+            } else {
+                asset.to_compact_xml()
+            }),
+            analysis: asset.analysis,
+        },
         Err(error) => failure(error),
     }
 }
@@ -285,5 +329,23 @@ mod tests {
             serde_json::to_value(&native.analysis).unwrap()
         );
         assert_eq!(capped["analysis"]["diagnostics"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn notification_conversion_matches_the_native_api() {
+        let mut native = vdtoolkit::convert(EXACT).unwrap();
+        native
+            .to_icon(vdtoolkit::IconKind::Notification, 20.0)
+            .unwrap();
+        native.optimize();
+
+        let converted = json(&notification_result(EXACT, true, 20.0, false));
+        assert_eq!(converted["xml"], native.to_compact_xml());
+        assert_eq!(
+            converted["analysis"],
+            serde_json::to_value(native.analysis).unwrap()
+        );
+        assert_eq!(converted["analysis"]["metrics"]["width"], 24.0);
+        assert!(converted["xml"].as_str().unwrap().contains("#FFFFFF"));
     }
 }

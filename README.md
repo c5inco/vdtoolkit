@@ -280,8 +280,10 @@ Figma plugin uses them to convert frames, components, and instances, without
 network access. In Dev Mode it shows the drawable for a single selection in
 Figma's Code panel. In Design Mode it lists every selected layer, shows which
 are ready and what to fix in the rest, and exports the chosen layers as `.xml`
-files. See [the development plugin guide](docs/figma-codegen.md) for build,
-import, test, and plugin-ID setup instructions.
+files. A second Design Mode command exports the same selection as white 24dp
+notification icons with notification-specific warnings. See the
+[development plugin guide](docs/figma-codegen.md) for build, import, test, and
+plugin-ID setup instructions.
 
 ## Development
 

@@ -1,9 +1,9 @@
-import init, { convertSvg } from "../vendor/vdtoolkit-wasm/vdtoolkit_wasm.js";
+import init, { convertNotificationSvg, convertSvg } from "../vendor/vdtoolkit-wasm/vdtoolkit_wasm.js";
 import wasmBytes from "../vendor/vdtoolkit-wasm/vdtoolkit_wasm_bg.wasm";
 import type { ConvertResult } from "../vendor/vdtoolkit-wasm/vdtoolkit_wasm";
 import { renderExportDialog, renderPreparing } from "./export-dialog";
 import { MAX_EXPORT_DP, reviewCandidates } from "./export-review";
-import type { ConvertRequest, ConvertResponse, ReviewRequest, SandboxMessage } from "./messages";
+import type { ConvertRequest, ConvertResponse, ExportKind, ReviewRequest, SandboxMessage } from "./messages";
 
 declare const parent: Window;
 
@@ -19,12 +19,12 @@ window.onmessage = async (event: MessageEvent<{ pluginMessage?: ConvertRequest |
   const request = event.data.pluginMessage;
   if (request?.type === "convert" && typeof request.id === "string") {
     // The Code panel is read by people, so it keeps readable XML; exported files are compact.
-    const convert = converter(await wasmReady, undefined, true);
+    const convert = converter(await wasmReady, "drawable", true, false);
     const response: ConvertResponse = { type: "converted", id: request.id, result: convert(request.source) };
     post(response);
   } else if (request?.type === "review" && Array.isArray(request.candidates)) {
-    const convert = converter(await wasmReady, MAX_EXPORT_DP);
-    renderExportDialog(reviewCandidates(request.candidates, convert), post);
+    const convert = converter(await wasmReady, request.kind);
+    renderExportDialog(reviewCandidates(request.candidates, convert, request.kind), request.kind, post);
   }
 };
 
@@ -34,11 +34,18 @@ window.onmessage = async (event: MessageEvent<{ pluginMessage?: ConvertRequest |
 if (document.body) renderPreparing();
 else document.addEventListener("DOMContentLoaded", renderPreparing, { once: true });
 
-function converter(initError: unknown, maxSizeDp?: number, pretty = false): (source: Uint8Array) => ConvertResult {
+function converter(
+  initError: unknown,
+  kind: ExportKind = "drawable",
+  pretty = false,
+  capDrawable = true,
+): (source: Uint8Array) => ConvertResult {
   return (source) => {
     try {
       if (initError !== undefined) throw initError;
-      return convertSvg(new Uint8Array(source), true, maxSizeDp, pretty);
+      return kind === "notification"
+        ? convertNotificationSvg(new Uint8Array(source), true, undefined, pretty)
+        : convertSvg(new Uint8Array(source), true, capDrawable ? MAX_EXPORT_DP : undefined, pretty);
     } catch (error) {
       return {
         ok: false,

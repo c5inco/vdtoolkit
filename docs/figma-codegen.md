@@ -29,6 +29,12 @@ The development plugin has two entry points and makes no network requests:
   Downloaded drawables are optimized and compact, with
   path data in its shortest form and no indentation; the Code panel shows the
   same drawable with readable line breaks.
+- **Design Mode notification icons.** **Export Selection as Notification
+  Icons…** uses the same review and batch-download flow, but turns each layer
+  into an optimized white 24dp notification icon. It preserves opacity, fits
+  artwork onto the 24dp canvas, and surfaces warnings for solid plates or empty
+  artwork before export. Selected icons download as `notification-icons.zip`,
+  with the XML files in `drawable-anydpi/`.
 
 The plugin checks `figma.mode`: `"codegen"` keeps the hidden converter used by
 the Code panel, and any other mode opens the export dialog.
@@ -115,6 +121,9 @@ not be committed unless the repository adopts a shared registered plugin.
 9. With the dialog open, select the blurred frame, remove its blur, and click
    **Refresh**. It moves to **Ready to export**, checked, and the layer you
    unchecked stays unchecked.
+10. Run **Export Selection as Notification Icons…** on a colored icon. The
+    exported drawable is 24×24dp with white paint. Full-canvas artwork shows
+    the solid-plate warning, and export downloads `notification-icons.zip`.
 
 Codegen intentionally does not support multi-selection, preferences, Figma for
 VS Code, or publication. Figma controls SVG export, so

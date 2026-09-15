@@ -150,6 +150,136 @@ dependencies between runs. The script pins Material Icons, Ashung, AOSP, and
 the Android SDK build-tools versions; it does not need the temporary benchmark
 directories used during development.
 
+## Checking a path data spelling change
+
+Changing how `optimize` spells path data or numbers needs more than a parser
+check: Android can draw the same shape differently when a coordinate lands one
+float step away. This check renders every icon's previous and new optimized
+drawable with Android's own drawable loader and compares the pixels. It is not
+kept in the repository; rebuild it from these steps in a scratch directory
+(`$CHECK` below) when you need it.
+
+### 1. Build both binaries
+
+Build the new `vdt` in this checkout and the previous one from the commit
+before the change:
+
+```sh
+cargo build --release --locked
+git worktree add --detach "$CHECK/baseline" <commit-before-the-change>
+(cd "$CHECK/baseline" && cargo build --release --locked)
+```
+
+Remove the worktree afterwards with `git worktree remove "$CHECK/baseline"`.
+
+### 2. Gather icons
+
+Use the pinned Material corpus samples plus this harness's fixtures, so both
+simple icons and clip, gradient, and even-odd cases are covered:
+
+```python
+import importlib.util, pathlib
+spec = importlib.util.spec_from_file_location("material", "tools/check-material-symbols.py")
+material = importlib.util.module_from_spec(spec); spec.loader.exec_module(material)
+corpus = pathlib.Path("$CHECK/corpus"); corpus.mkdir(parents=True, exist_ok=True)
+for prefix, suite in (("o", "outlined-100"), ("t", "twotone-100")):
+    for index, (svg_path, _) in enumerate(material.sample_entries(suite)):
+        material.download((svg_path, corpus / f"{prefix}{index:03}.svg"))
+# Also copy tools/android-renderer/fixtures/**/*.svg as f_<path_with_underscores>.svg.
+```
+
+### 3. Generate the drawables
+
+For each SVG, read its minimum API with `vdt inspect <svg> --format json`
+(`minimum_api`), and put its drawables in `res/drawable` for 21 or
+`res/drawable-v24` for 24. Write `old_<name>.xml` with the baseline
+`vdt optimize` and `new_<name>.xml` with the new one, and add a
+`<name> <minimum api>` line to `assets/icons.txt`. Skip SVGs that do not
+convert.
+
+### 4. Build two APKs
+
+Build them without Gradle, as `build.sh` does: `aapt2 compile` every drawable,
+`aapt2 link` the app with `-A assets`, then `javac`, `d8`, `zip` the
+`classes.dex` in, and `apksigner` both with a debug key.
+
+- The app manifest declares package `com.vdtoolkit.shortpaths` with
+  `minSdkVersion` 21 and an empty `<application>`. Give it one empty Java
+  class: an app without code gives the instrumentation no process to run in.
+- The test manifest declares package `com.vdtoolkit.shortpaths.test`, an
+  `android.test.InstrumentationTestRunner` instrumentation targeting the app,
+  and `<uses-library android:name="android.test.runner" />`. Compile it
+  against `android.jar` and `optional/android.test.base.jar`.
+
+### 5. Write the test
+
+One `InstrumentationTestCase` reads `icons.txt` from the target context's
+assets and, for every icon at or above its minimum API, renders `old_` and
+`new_` at 480 and 1440 pixels on the longer side:
+
+```java
+Drawable drawable = resources.getDrawable(resources.getIdentifier(name, "drawable", PACKAGE));
+float scale = (float) size / Math.max(drawable.getIntrinsicWidth(), drawable.getIntrinsicHeight());
+int width = Math.round(drawable.getIntrinsicWidth() * scale);
+int height = Math.round(drawable.getIntrinsicHeight() * scale);
+Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+drawable.setBounds(0, 0, width, height);
+drawable.draw(new Canvas(bitmap));
+```
+
+Compare both bitmaps with `getPixels`, recording the largest difference in
+any ARGB channel, the number of differing pixels, and the painted (non-zero
+alpha) pixel counts. A render fails when a channel differs by more than 2
+(this harness's allowance for rasterization variance) or when the new drawable
+paints nothing where the old one painted something. Write one line per render
+plus a summary to `getExternalFilesDir("reports")/api<N>_short_paths.txt`
+before asserting, so a failing run still reports every icon.
+
+### 6. Run on emulator.wtf
+
+```sh
+ew-cli --app app.apk --test test.apk \
+  --device model=Pixel7,version=21 --device model=Pixel7,version=24 \
+  --device model=Pixel7,version=26 --device model=Pixel7,version=33 \
+  --device model=Pixel7,version=36 \
+  --directories-to-pull /sdcard/Android/data/com.vdtoolkit.shortpaths/files/reports \
+  --outputs summary,merged_results_xml,results_xml,logcat,pulled_dirs \
+  --outputs-dir run --no-test-cache
+```
+
+API 21 to 23 read path data with the framework's Java `PathParser`, and API 24
+onward with the native one in `hwui`, so keep at least API 21 and one API 24+
+device. A parse failure shows up in the test failure as a
+`NumberFormatException` from `PathParser` and in logcat as
+`error in parsing "…"`.
+
+### Tracing a failure
+
+To find which part of a spelling Android reads differently, also package
+variants of each new drawable that undo one shortening at a time, and compare
+each against `old_`: every command made absolute using the values Android
+computes from the new text in `f32`, leading zeros restored, a space before
+every minus sign, a letter before every coordinate set, and `H`/`V` written as
+lines. The variant whose failures disappear names the cause; if only the
+absolute variant keeps failing like the new text, the numbers themselves
+differ.
+
+### Findings
+
+The 2026-09-14 run, for the first shortest-path-data change, rendered 210
+icons at two sizes on the five devices above: all 2,086 renders were
+pixel-identical. Getting there showed three things parser checks missed:
+
+- Android 5.0 does not start a new number at a second decimal point, so
+  `1.5.5` fails to parse.
+- Framework parsers draw extra coordinates after `M` as further moves, and
+  Android 5.0 does not return to the subpath's start after `Z`, so a line after
+  a move keeps its letter and the command after a close is absolute.
+- A relative value whose `f32` sum lands one float step from the absolute
+  value (`17.499998` instead of `17.5`) changed edge pixels by up to 80 levels
+  in about 60 icons on every API level, although the shape is the same. A
+  relative spelling is only used when the sum is exact.
+
 ## Compose renderer
 
 `compose/` is a small Gradle project that loads the same generated drawables

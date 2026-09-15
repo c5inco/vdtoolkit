@@ -446,7 +446,7 @@ fn embedding_api_serializes_and_optimizes_an_asset() {
     let after = asset.to_xml();
 
     assert!(after.len() < before.len());
-    assert!(after.contains("M1.235,2.346"));
+    assert!(after.contains("M1.235 2.346"));
     assert_eq!(asset.analysis.metrics.estimated_xml_bytes, after.len());
 }
 
@@ -516,7 +516,7 @@ fn optimize_reports_before_and_after_sizes() {
     assert!(report.contains("Reduction:"));
     let xml = fs::read_to_string(output).unwrap();
     assert!(xml.contains("<clip-path"));
-    assert_eq!(xml.matches("M1.235,2.346").count(), 2);
+    assert_eq!(xml.matches("M1.235 2.346").count(), 2);
     assert!(!xml.contains("1.234567"));
     assert!(!xml.contains("2.345678"));
 }
@@ -2060,7 +2060,7 @@ fn cli_notification_optimize_shortens_numbers_without_moving_the_artwork() {
         "{plain}"
     );
     assert!(
-        optimized.contains("android:pathData=\"M12,2.167 L2.333,22 L21.667,22 Z\""),
+        optimized.contains("android:pathData=\"M12 2.167L2.333 22H21.667Z\""),
         "{optimized}"
     );
     assert!(optimized.len() < plain.len());
@@ -2125,7 +2125,7 @@ fn cli_adaptive_optimize_shortens_every_drawable_and_keeps_pngs_identical() {
         "{plain_foreground}"
     );
     assert!(
-        foreground_xml.contains("android:pathData=\"M54,26.958 L27.417,81.5 L80.583,81.5 Z\""),
+        foreground_xml.contains("android:pathData=\"M54 26.958L27.417 81.5H80.583Z\""),
         "{foreground_xml}"
     );
     assert!(foreground_xml.contains("android:width=\"108dp\""));
@@ -2143,7 +2143,7 @@ fn cli_adaptive_optimize_shortens_every_drawable_and_keeps_pngs_identical() {
         background_xml.contains("android:endX=\"107.64\""),
         "{background_xml}"
     );
-    assert!(background_xml.contains("android:pathData=\"M0,0 L108,0 L108,108 L0,108 Z\""));
+    assert!(background_xml.contains("android:pathData=\"M0 0H108V108H0Z\""));
     let legacy = read(&optimized, "mipmap-anydpi-v24/ic_launcher.xml");
     let plain_legacy = read(&plain, "mipmap-anydpi-v24/ic_launcher.xml");
     assert!(
@@ -2154,9 +2154,9 @@ fn cli_adaptive_optimize_shortens_every_drawable_and_keeps_pngs_identical() {
         plain_legacy.contains("M-9.000002,-9.000002"),
         "{plain_legacy}"
     );
-    assert!(legacy.contains("M-9,-9 L57,-9 L57,57 L-9,57 Z"), "{legacy}");
+    assert!(legacy.contains("M-9-9H57V57H-9Z"), "{legacy}");
     assert!(
-        legacy.contains("M24,7.475 L7.755,40.806 L40.245,40.806 Z"),
+        legacy.contains("M24 7.475L7.755 40.806H40.245Z"),
         "{legacy}"
     );
     assert!(legacy.len() < plain_legacy.len());

@@ -29,7 +29,7 @@ pub(crate) fn process(source: &[u8], keep_drawable: bool) -> Result<Processed> {
     let mut metrics = Metrics::default();
     let drawable = vector::lower(&tree, &mut compatibility, &mut diagnostics, &mut metrics);
     if let Some(ref drawable) = drawable {
-        metrics.estimated_xml_bytes = crate::xml::write(drawable).len();
+        metrics.estimated_xml_bytes = crate::xml::write(drawable, false).len();
     }
     let minimum_api = if compatibility.convertible() {
         drawable.as_ref().map(VectorDrawable::minimum_api)

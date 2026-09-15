@@ -12,8 +12,8 @@ silently removes unsupported content is not equivalent to one that rejects it.
   folder mode with `vdt` directory conversion.
 - Run `vdtoolkit` in its default `exact` mode and in its explicit `optimize`
   mode. The former preserves the normalized `f32` geometry; the latter rounds
-  numeric values to three decimals and must be treated as a separate, lossy
-  policy.
+  numeric values to three decimals, writes path data in its shortest form, and
+  must be treated as a separate, lossy policy.
 - Run the reference tool at both its default precision (`2`) and precision `6`.
 - Compare successful conversions, rejections, XML validity, determinism, and
   rendered pixels separately from timing. XML byte counts are not fidelity
@@ -84,6 +84,10 @@ On the 100 Material Symbols corpus at reference commit
 | svg2vectordrawable precision 2 | 55.88 ms | 67.06 ms | 63,542 |
 | svg2vectordrawable precision 6 | 56.86 ms | 61.15 ms | 63,542 |
 
+The `optimize` row predates shortest path data; see
+[Shortest path data in `optimize`](#shortest-path-data-in-optimize) for current
+figures, measured on another machine.
+
 On the same 100 assets, the AOSP CLI had a 490.27 ms median and 531.87 ms p95,
 compared with 24.55 ms and 32.33 ms for `vdt convert` directory conversion.
 That is approximately a 20 times lower end-to-end CLI latency for vdtoolkit.
@@ -95,6 +99,28 @@ The remaining output-size difference is not solely formatting: vdtoolkit
 normalizes a 960-unit Material Symbol viewBox to a 24-unit viewport, whereas
 the reference leaves that viewport at 960. The pixel comparison below is needed
 before interpreting either output-size column as a quality result.
+
+## Shortest path data in `optimize`
+
+`optimize` now writes each path command in its shortest form that Android
+reads as exactly the same numbers. Measured on 2026-09-14 on an Apple M5 with
+Rust 1.98.1, on the same 100-asset corpus, with the previous `main` and this
+change built on the same machine (median and p95 of ten warm samples; p95 is the
+slowest sample):
+
+| Build and policy | Median | p95 | Output bytes |
+| --- | ---: | ---: | ---: |
+| vdtoolkit `exact`, before | 5.51 ms | 7.31 ms | 106,088 |
+| vdtoolkit `exact`, after | 5.10 ms | 6.31 ms | 106,088 |
+| vdtoolkit `optimize`, before | 6.50 ms | 6.93 ms | 99,446 |
+| vdtoolkit `optimize`, after | 12.96 ms | 13.13 ms | 85,129 |
+
+`optimize` output is 14.4% smaller and `exact` output is unchanged. Choosing
+each command's spelling costs time: `optimize` takes about twice as long as
+before, roughly 0.13 ms per asset on this corpus. Rendering 210 icons on Android
+API 21 through 36 showed the shortened drawables are pixel-identical to the
+previous ones; see the
+[Android renderer harness](../tools/android-renderer/README.md#checking-a-path-data-spelling-change).
 
 ## Pixel fidelity result
 

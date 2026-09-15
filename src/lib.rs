@@ -24,6 +24,7 @@ mod icon;
 mod notification;
 mod optimize;
 mod render;
+mod short_path;
 mod svg;
 mod vector;
 mod xml;
@@ -49,12 +50,14 @@ pub struct Asset {
     /// Compatibility, minimum Android API, diagnostics, and source metrics.
     pub analysis: Analysis,
     declared_size: bool,
+    /// Set by `optimize`: path data is written in its shortest form.
+    short_paths: bool,
 }
 
 impl Asset {
     /// Serialize this asset as deterministic Android VectorDrawable XML.
     pub fn to_xml(&self) -> String {
-        xml::write(&self.drawable)
+        xml::write(&self.drawable, self.short_paths)
     }
 
     /// Serialize this asset as deterministic, whitespace-minimized
@@ -63,9 +66,11 @@ impl Asset {
         xml::compact(&self.to_xml())
     }
 
-    /// Safely reduce numeric precision in the generated drawable.
+    /// Safely reduce numeric precision in the generated drawable, and write
+    /// its path data in the shortest form Android reads as the same points.
     pub fn optimize(&mut self) {
         optimize::optimize(&mut self.drawable);
+        self.short_paths = true;
         self.analysis.metrics.estimated_xml_bytes = self.to_xml().len();
     }
 
@@ -378,6 +383,7 @@ impl Asset {
                 metrics,
             },
             declared_size: true,
+            short_paths: false,
         };
         asset.analysis.metrics.estimated_xml_bytes = asset.to_xml().len();
         asset
@@ -455,5 +461,6 @@ pub fn convert(source: &[u8]) -> Result<Asset> {
             .expect("conversion requested for a compatible SVG"),
         analysis: processed.analysis,
         declared_size: processed.declared_size,
+        short_paths: false,
     })
 }

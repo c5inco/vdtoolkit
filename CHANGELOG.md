@@ -119,6 +119,14 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- `optimize`, and `--optimize` on `notification` and `adaptive`, write path data
+  in its shortest form: each command absolute or relative, whichever is shorter,
+  `H` and `V` for horizontal and vertical lines, and no repeated command letters,
+  unneeded separators, or leading zeros. A relative spelling is used only where
+  Android's parser, adding it up in floats, reaches exactly the number the
+  absolute spelling gives, so drawables render as they did with absolute path
+  data. `convert` output is unchanged; `Asset::optimize` does the same in the
+  Rust API.
 - The experimental Rust API now boxes the analysis inside
   `Error::Incompatible`. Field access and pattern matches are unchanged; code
   that moves the analysis out needs to dereference the box.

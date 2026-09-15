@@ -5,7 +5,9 @@ use crate::vector::{
     VectorNode, VectorPath,
 };
 
-pub fn write(drawable: &VectorDrawable) -> String {
+/// Serialize a drawable. `short_paths` spells path data in its shortest form,
+/// which `Asset::optimize` turns on once numbers are rounded.
+pub fn write(drawable: &VectorDrawable, short_paths: bool) -> String {
     let mut xml = String::new();
     xml.push_str("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n");
     let _ = writeln!(
@@ -31,7 +33,7 @@ pub fn write(drawable: &VectorDrawable) -> String {
         "    android:viewportHeight=\"{}\">",
         number(drawable.viewport_height)
     );
-    write_nodes(&mut xml, &drawable.children, 1);
+    write_nodes(&mut xml, &drawable.children, 1, short_paths);
     xml.push_str("</vector>\n");
     xml
 }
@@ -56,14 +58,14 @@ pub fn compact(text: &str) -> String {
     compact
 }
 
-fn write_nodes(xml: &mut String, nodes: &[VectorNode], depth: usize) {
+fn write_nodes(xml: &mut String, nodes: &[VectorNode], depth: usize, short_paths: bool) {
     let indent = "    ".repeat(depth);
     let attribute_indent = "    ".repeat(depth + 1);
     for node in nodes {
         match node {
             VectorNode::Group(group) => {
                 let _ = writeln!(xml, "{indent}<group>");
-                write_nodes(xml, &group.children, depth + 1);
+                write_nodes(xml, &group.children, depth + 1, short_paths);
                 let _ = writeln!(xml, "{indent}</group>");
             }
             VectorNode::ClipPath(path_data_value) => {
@@ -71,21 +73,29 @@ fn write_nodes(xml: &mut String, nodes: &[VectorNode], depth: usize) {
                 let _ = writeln!(
                     xml,
                     "{attribute_indent}android:pathData=\"{}\"",
-                    path_data(&path_data_value.0)
+                    path_text(&path_data_value.0, short_paths)
                 );
                 let _ = writeln!(xml, "{attribute_indent}/>");
             }
-            VectorNode::Path(path) => write_path(xml, path, &indent, &attribute_indent),
+            VectorNode::Path(path) => {
+                write_path(xml, path, &indent, &attribute_indent, short_paths)
+            }
         }
     }
 }
 
-fn write_path(xml: &mut String, path: &VectorPath, indent: &str, attribute_indent: &str) {
+fn write_path(
+    xml: &mut String,
+    path: &VectorPath,
+    indent: &str,
+    attribute_indent: &str,
+    short_paths: bool,
+) {
     let _ = writeln!(xml, "{indent}<path");
     let _ = writeln!(
         xml,
         "{attribute_indent}android:pathData=\"{}\"",
-        path_data(&path.path_data.0)
+        path_text(&path.path_data.0, short_paths)
     );
     let mut gradients = Vec::new();
     if let Some(paint) = &path.fill {
@@ -255,7 +265,16 @@ fn argb(color: Color, alpha: f32) -> String {
     }
 }
 
-fn path_data(commands: &[PathCommand]) -> String {
+fn path_text(commands: &[PathCommand], short_paths: bool) -> String {
+    if short_paths {
+        crate::short_path::write(commands)
+    } else {
+        path_data(commands)
+    }
+}
+
+/// Every command absolute with its letter, one space between commands.
+pub(crate) fn path_data(commands: &[PathCommand]) -> String {
     let mut value = String::new();
     for command in commands {
         if !value.is_empty() {

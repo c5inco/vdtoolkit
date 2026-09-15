@@ -40,7 +40,7 @@ vdt convert icons/ -o res/drawable/    # directories work; tree is preserved
 vdt check icon.svg                     # is it convertible? (no output written)
 vdt inspect icon.svg --format json     # diagnostics, min API, metrics
 vdt inspect bell.svg --as notification --format json  # would it make a good notification icon?
-vdt optimize icon.svg -o ic_icon.xml   # convert with smaller numbers, same rendering
+vdt optimize icon.svg -o ic_icon.xml   # convert with shorter numbers and path data, same rendering
 vdt adaptive --foreground fg.svg --background-color '#3DDC84' -o app/src/main/res
 vdt notification bell.svg -o res/drawable/ic_stat_bell.xml
 vdt convert icon.svg --pretty          # human-readable XML instead of the default compact format
@@ -51,7 +51,7 @@ vdt convert icon.svg --pretty          # human-readable XML instead of the defau
 | `convert` | Write VectorDrawable XML. Directory input requires `-o`. |
 | `check` | Report compatibility only. |
 | `inspect` | Report compatibility, diagnostics, minimum Android API, content bounds, and metrics. |
-| `optimize` | Convert, then shorten numbers where it cannot change rendering. |
+| `optimize` | Convert, then shorten numbers and path data where it cannot change rendering. |
 | `adaptive` | Generate an adaptive launcher icon and its layer drawables into a `res/` directory. |
 | `notification` | Convert to a white 24dp notification icon drawable. |
 
@@ -121,7 +121,7 @@ vdt notification icons/ --fit 20 -o res/drawable/
 | Option | Meaning |
 | --- | --- |
 | `--fit <dp>` | Square that the artwork is scaled to fit, centered on the 24dp canvas. Defaults to 24, which keeps artwork that already carries its own padding, such as a Material system icon, at its drawn size. Use 20 for artwork drawn edge to edge, which leaves the 2dp of padding a system icon has. |
-| `--optimize` | Shorten numbers where it cannot change rendering, as the `optimize` command does. It runs after the fit, so placement is unchanged. |
+| `--optimize` | Shorten numbers and path data where it cannot change rendering, as the `optimize` command does. It runs after the fit, so placement is unchanged. |
 | `--strict` | Reject input that needs safe normalization, as elsewhere. |
 
 A gradient whose stops all share one opacity is only color, so it becomes solid
@@ -157,7 +157,7 @@ vdt adaptive --foreground logo.svg --background bg.svg --monochrome logo.svg \
 | `--fit <dp>` | Square that the foreground and monochrome artwork is scaled to fit, centered on the 108dp layer. Defaults to 108 for artwork drawn on the full layer. For a plain logo, Android recommends 48 to 66; 66 is the safe zone that no launcher mask hides. |
 | `--name <name>` | Resource name, `ic_launcher` by default. Layers use it as a prefix. |
 | `--legacy` | Also write a legacy icon for devices below API 26, with the 72dp visible area on the 44dp circle keyline of a 48dp icon. It is a vector in `mipmap/`. When the art needs API 24, because of gradients, even-odd fills, or clips, it is a vector in `mipmap-anydpi-v24/` for API 24 and 25 plus PNGs rendered from that vector in `mipmap-mdpi/` through `mipmap-xxxhdpi/` for API 21 to 23. | Regenerating a name switches layouts cleanly: files of the layout no longer used are removed.
-| `--optimize` | Shorten numbers in every layer drawable and the legacy vector where it cannot change rendering, as the `optimize` command does. It runs after the fit, which is what introduces long decimals, so placement is unchanged. Legacy PNGs are rendered from the exact vector either way. |
+| `--optimize` | Shorten numbers and path data in every layer drawable and the legacy vector where it cannot change rendering, as the `optimize` command does. It runs after the fit, which is what introduces long decimals, so placement is unchanged. Legacy PNGs are rendered from the exact vector either way. |
 
 The files written are `mipmap-anydpi-v26/<name>.xml`,
 `mipmap-anydpi-v26/<name>_round.xml`, `drawable/<name>_foreground.xml`, either

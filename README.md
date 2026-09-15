@@ -1,13 +1,17 @@
 # vdtoolkit
 
-Convert SVG icons to Android VectorDrawable XML without Android Studio, the
-Android SDK, Gradle, or a JVM. `vdtoolkit` is a single native binary and a small
-Rust library. Output is deterministic, and anything VectorDrawable cannot render
-exactly is rejected with a diagnostic instead of silently approximated.
+Turn SVGs into Android resources without Android Studio, the Android SDK,
+Gradle, or a JVM. `vdt` is a single native command that converts SVGs to
+VectorDrawable XML, generates adaptive launcher icons and notification icons,
+shrinks drawables without changing how they render, and checks whether an SVG
+will convert before anything is written. The same converter is available as a
+Rust library, as WebAssembly, and in a development Figma plugin.
 
-Compared with the Android Studio importer, it runs anywhere, scripts cleanly
-into CI, produces identical output on every machine, and fails loudly instead
-of emitting a drawable that renders differently from the source.
+Output is deterministic, so the same SVG gives the same XML on every machine,
+and anything VectorDrawable cannot render exactly is rejected with a diagnostic
+instead of silently approximated. Compared with the Android Studio importer, it
+runs anywhere, scripts cleanly into CI, and fails loudly instead of emitting a
+drawable that renders differently from the source.
 
 ## Install
 
@@ -24,7 +28,8 @@ To install with Cargo from GitHub, you need Rust 1.85 or newer:
 cargo install --git https://github.com/c5inco/vdtoolkit --locked
 ```
 
-The package is `vdtoolkit` and the installed command is `vdt`.
+The package is `vdtoolkit` and the installed command is `vdt`. Version 0.1.0
+was released as `svg2vd`; later releases use the new names.
 
 To build from a clone of this repository instead:
 
@@ -156,7 +161,7 @@ vdt adaptive --foreground logo.svg --background bg.svg --monochrome logo.svg \
 | `--monochrome <svg>` | Optional monochrome layer for themed icons on Android 13 and newer. |
 | `--fit <dp>` | Square that the foreground and monochrome artwork is scaled to fit, centered on the 108dp layer. Defaults to 108 for artwork drawn on the full layer. For a plain logo, Android recommends 48 to 66; 66 is the safe zone that no launcher mask hides. |
 | `--name <name>` | Resource name, `ic_launcher` by default. Layers use it as a prefix. |
-| `--legacy` | Also write a legacy icon for devices below API 26, with the 72dp visible area on the 44dp circle keyline of a 48dp icon. It is a vector in `mipmap/`. When the art needs API 24, because of gradients, even-odd fills, or clips, it is a vector in `mipmap-anydpi-v24/` for API 24 and 25 plus PNGs rendered from that vector in `mipmap-mdpi/` through `mipmap-xxxhdpi/` for API 21 to 23. | Regenerating a name switches layouts cleanly: files of the layout no longer used are removed.
+| `--legacy` | Also write a legacy icon for devices below API 26, with the 72dp visible area on the 44dp circle keyline of a 48dp icon. It is a vector in `mipmap/`. When the art needs API 24, because of gradients, even-odd fills, or clips, it is a vector in `mipmap-anydpi-v24/` for API 24 and 25 plus PNGs rendered from that vector in `mipmap-mdpi/` through `mipmap-xxxhdpi/` for API 21 to 23. Regenerating a name switches layouts cleanly: files of the layout no longer used are removed. |
 | `--optimize` | Shorten numbers and path data in every layer drawable and the legacy vector where it cannot change rendering, as the `optimize` command does. It runs after the fit, which is what introduces long decimals, so placement is unchanged. Legacy PNGs are rendered from the exact vector either way. |
 
 The files written are `mipmap-anydpi-v26/<name>.xml`,
@@ -186,7 +191,7 @@ to the `<application>` element of the manifest.
 </svg>
 ```
 
-becomes
+becomes, with `--pretty` (by default the same XML is written on one line)
 
 ```xml
 <?xml version="1.0" encoding="utf-8"?>
@@ -251,13 +256,15 @@ let xml = asset.to_xml();
 The CLI is the stable interface. The Rust API may change between `0.x`
 releases.
 
-## WebAssembly and Figma proof of concept
+## WebAssembly and Figma
 
-Browser-oriented `wasm-bindgen` bindings live in `bindings/wasm`. A minimal
-Figma Dev Mode codegen plugin uses those bindings to convert a single frame,
-component, or instance selection in Figma's native Code panel, without a visible UI or network access.
-See [the development plugin guide](docs/figma-codegen.md) for build, import,
-test, and plugin-ID setup instructions.
+Browser-oriented `wasm-bindgen` bindings live in `bindings/wasm`. A development
+Figma plugin uses them to convert frames, components, and instances, without
+network access. In Dev Mode it shows the drawable for a single selection in
+Figma's Code panel. In Design Mode it lists every selected layer, shows which
+are ready and what to fix in the rest, and exports the chosen layers as `.xml`
+files. See [the development plugin guide](docs/figma-codegen.md) for build,
+import, test, and plugin-ID setup instructions.
 
 ## Development
 

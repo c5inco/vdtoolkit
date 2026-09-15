@@ -805,7 +805,7 @@ def prepare_full_corpus(
     )
     print(f"Preparing {len(pairs)} paired outlined assets", flush=True)
     for index, (svg_path, android) in enumerate(pairs):
-        name = f"{index:05}-{pathlib.PurePosixPath(svg_path).parts[-3]}"
+        name = f"ic_{index:05}_{pathlib.PurePosixPath(svg_path).parts[-3]}"
         shutil.copyfile(checkout / svg_path, sources / f"{name}.svg")
         shutil.copyfile(checkout / android, official / f"{name}.xml")
     return len(pairs)
@@ -835,7 +835,9 @@ def main() -> None:
             entries = sample_entries(suite)
             downloads = []
             for index, (svg_path, android) in enumerate(entries):
-                name = f"{index:03}-{svg_path.split('/')[2]}"
+                # A valid Android resource name, so `convert` keeps it and the
+                # generated drawable pairs with the official one by file name.
+                name = f"ic_{index:03}_{svg_path.split('/')[2]}"
                 downloads.extend(
                     [
                         (svg_path, sources / f"{name}.svg"),

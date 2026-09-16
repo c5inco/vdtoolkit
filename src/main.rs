@@ -479,36 +479,6 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
         }
         (None, None) => unreachable!("clap requires a foreground layer"),
     };
-    // Every layer can be written as a vector or as a raster in any of three
-    // formats, so whichever forms are not written this time are removed: a
-    // layer left behind by an earlier run is dead weight in the resource tree.
-    // Each of those files holds exactly one drawable, so a file of that name is
-    // one vdt would have written anyway.
-    let layer_forms = |name: &str| {
-        let mut forms = vec![drawable_dir.join(name).with_extension("xml")];
-        forms.extend(
-            vdtoolkit::ImageFormat::EXTENSIONS
-                .iter()
-                .map(|extension| raster_dir.join(name).with_extension(extension)),
-        );
-        forms
-    };
-    let mut all_forms: Vec<PathBuf> = [&foreground_name, &background_name, &monochrome_name]
-        .iter()
-        .flat_map(|name| layer_forms(name))
-        .collect();
-    // Only a background can be a color, and a values file can hold any number
-    // of resources, so one is only vdt's to remove when it holds nothing but
-    // this icon's background color. That is also exactly what Android Studio's
-    // Image Asset wizard writes; anything more belongs to the project.
-    let background_values = args
-        .output
-        .join("values")
-        .join(&background_name)
-        .with_extension("xml");
-    if holds_only_color(&background_values, &background_name) {
-        all_forms.push(background_values);
-    }
     let (background, background_reference) = match (&args.background, &args.background_image, color)
     {
         (Some(path), _, _) => {
@@ -608,11 +578,45 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
         .map(|(path, _)| path)
         .chain(images.iter().map(|(path, _)| path))
         .collect();
-    let mut stale: Vec<PathBuf> = all_forms
-        .iter()
-        .filter(|path| !written.contains(path))
-        .cloned()
-        .collect();
+    // A file an earlier run left behind is removed only when keeping it would
+    // break the build or show the wrong icon. Anything else is merely unused,
+    // and vdt cannot tell whether the rest of the project refers to it, so it
+    // is named and left alone: deleting a resource something still uses would
+    // break the build itself.
+    let mut stale: Vec<PathBuf> = Vec::new();
+    let mut unused: Vec<PathBuf> = Vec::new();
+    for name in [&foreground_name, &background_name, &monochrome_name] {
+        let rasters: Vec<PathBuf> = vdtoolkit::ImageFormat::EXTENSIONS
+            .iter()
+            .map(|extension| raster_dir.join(name).with_extension(extension))
+            .collect();
+        // Two images with one name in one folder are the same resource twice,
+        // which aapt2 refuses to build, so a format change clears the old one.
+        let wrote_raster = rasters.iter().any(|path| written.contains(&path));
+        for path in rasters.into_iter().filter(|path| !written.contains(&path)) {
+            if wrote_raster {
+                stale.push(path);
+            } else {
+                unused.push(path);
+            }
+        }
+        // A vector layer is a @drawable and a raster one a @mipmap, so one left
+        // behind by the other form never collides with it.
+        let vector = drawable_dir.join(name).with_extension("xml");
+        if !written.contains(&&vector) {
+            unused.push(vector);
+        }
+    }
+    // A color background is a @color, which nothing else vdt writes collides
+    // with, and a values file can hold any number of other resources besides.
+    let background_values = args
+        .output
+        .join("values")
+        .join(&background_name)
+        .with_extension("xml");
+    if !written.contains(&&background_values) {
+        unused.push(background_values);
+    }
     if let (true, Some(background), Some(foreground)) = (args.legacy, &background, &foreground) {
         let legacy = vdtoolkit::Asset::legacy_launcher_icon(background, foreground);
         let xml = drawable_xml(&legacy, args.optimize, args.pretty);
@@ -680,6 +684,13 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
         })?;
         eprintln!("removed stale resource {}", path.display());
     }
+    for path in unused.iter().filter(|path| path.is_file()) {
+        eprintln!(
+            "note: the icon no longer uses {}; remove it if nothing else in the project refers \
+             to it",
+            path.display()
+        );
+    }
     Ok(Outcome::Passed)
 }
 
@@ -712,24 +723,6 @@ fn format_xml(xml: String, pretty: bool) -> String {
     } else {
         vdtoolkit::compact_xml(&xml)
     }
-}
-
-/// Whether the values file at `path` holds a single `<color>` resource named
-/// `name` and nothing else, so removing it cannot take anything with it.
-fn holds_only_color(path: &Path, name: &str) -> bool {
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return false;
-    };
-    let Ok(document) = roxmltree::Document::parse(&text) else {
-        return false;
-    };
-    let resources = document.root_element();
-    let mut children = resources.children().filter(|node| node.is_element());
-    resources.has_tag_name("resources")
-        && children
-            .next()
-            .is_some_and(|node| node.has_tag_name("color") && node.attribute("name") == Some(name))
-        && children.next().is_none()
 }
 
 /// Read a raster layer, report what it will look like, and return the file to

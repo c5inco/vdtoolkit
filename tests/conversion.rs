@@ -1656,14 +1656,14 @@ fn cli_adaptive_never_removes_resources_it_did_not_write() {
     assert_eq!(fs::read_to_string(&monochrome_values).unwrap(), unrelated);
     assert_eq!(fs::read_to_string(&background_values).unwrap(), mixed);
 
-    // The file Android Studio's Image Asset wizard writes holds nothing but
-    // the background color, which is exactly what vdt writes too. Replacing
-    // that background with an SVG does make it stale, so it is removed.
+    // Even the file Android Studio's Image Asset wizard writes, which holds
+    // nothing but the background color, is left in place: vdt cannot tell
+    // whether anything else in the project uses that color.
     let studio = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<resources>\n    \
                   <color name=\"ic_launcher_background\">#3DDC84</color>\n</resources>\n";
     fs::write(&background_values, studio).unwrap();
     run(&["--background", bg.to_str().unwrap()]);
-    assert!(!background_values.exists());
+    assert_eq!(fs::read_to_string(&background_values).unwrap(), studio);
 }
 
 #[test]
@@ -1922,7 +1922,8 @@ fn cli_adaptive_places_a_bitmap_background_without_resampling_it() {
             .contains("must be a PNG, a WebP, or a JPEG"),
     );
 
-    // Switching background form clears the one the last run wrote.
+    // Switching to a color leaves the image in place and names it: a @mipmap
+    // and a @color never collide, so keeping it breaks nothing.
     let output = Command::new(env!("CARGO_BIN_EXE_vdt"))
         .args(["adaptive", "--foreground"])
         .arg(&foreground)
@@ -1931,12 +1932,16 @@ fn cli_adaptive_places_a_bitmap_background_without_resampling_it() {
         .output()
         .unwrap();
     assert!(output.status.success(), "{output:?}");
-    assert!(!res.join("mipmap-nodpi/ic_launcher_background.png").exists());
-    assert!(res.join("values/ic_launcher_background.xml").is_file());
+    let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(
-        String::from_utf8(output.stderr)
-            .unwrap()
-            .contains("removed stale resource"),
+        res.join("mipmap-nodpi/ic_launcher_background.png")
+            .is_file()
+    );
+    assert!(res.join("values/ic_launcher_background.xml").is_file());
+    assert!(!stderr.contains("removed stale resource"), "{stderr}");
+    assert!(
+        stderr.contains("mipmap-nodpi/ic_launcher_background.png; remove it"),
+        "{stderr}"
     );
 }
 
@@ -2234,16 +2239,21 @@ fn cli_legacy_removes_the_other_layout_when_art_changes() {
     let stderr = run(&["--background", gradient.to_str().unwrap()]);
     assert!(!stderr.contains("removed"), "{stderr}");
     let stderr = run(&["--background-color", "#3DDC84"]);
-    // Twelve legacy files, plus the drawable the SVG background wrote before
-    // this run replaced it with a color resource.
+    // The twelve legacy files would outrank the new icon, so they go. The
+    // drawable the SVG background wrote is a @drawable and the new background
+    // a @color, so it collides with nothing: it is named, not deleted.
     assert_eq!(
         stderr.matches("removed stale resource").count(),
-        13,
+        12,
         "{stderr}"
     );
     assert!(
-        stderr.contains("drawable-anydpi/ic_launcher_background.xml"),
+        stderr.contains("drawable-anydpi/ic_launcher_background.xml; remove it"),
         "{stderr}"
+    );
+    assert!(
+        res.join("drawable-anydpi/ic_launcher_background.xml")
+            .is_file()
     );
     for relative in split {
         assert!(!res.join(relative).exists(), "{relative} should be gone");
@@ -2254,16 +2264,17 @@ fn cli_legacy_removes_the_other_layout_when_art_changes() {
 
     // And back again.
     let stderr = run(&["--background", gradient.to_str().unwrap()]);
-    // The two plain legacy files, plus the color resource this run replaces.
+    // The two plain legacy files go; the color resource is named, not deleted.
     assert_eq!(
         stderr.matches("removed stale resource").count(),
-        3,
+        2,
         "{stderr}"
     );
     assert!(
-        stderr.contains("values/ic_launcher_background.xml"),
+        stderr.contains("values/ic_launcher_background.xml; remove it"),
         "{stderr}"
     );
+    assert!(res.join("values/ic_launcher_background.xml").is_file());
     for relative in plain {
         assert!(!res.join(relative).exists(), "{relative} should be gone");
     }

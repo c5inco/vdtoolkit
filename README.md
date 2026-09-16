@@ -208,10 +208,12 @@ diagnostic codes, so `inspect --as adaptive-foreground --fit 66` or
 Every layer is converted before anything is written, and a layer that fails
 leaves the directory untouched, and every raster layer is decoded in full, so
 an image with damaged data is refused before it can replace a working one.
-Regenerating a name with a different kind of layer removes the resource the
-last run wrote for it, so an icon never carries two versions of a layer. A
-background's `values/<name>_background.xml` is removed only when it holds
-nothing but that one color, so a file that holds other resources is left alone.
+Regenerating a name removes a file an earlier run left behind only when keeping
+it would break the build: a raster layer that changes format, say from `.png`
+to `.webp`, would otherwise leave two files with one resource name in one
+folder. Any other leftover, such as a vector layer replaced by an image, is a
+different resource type that collides with nothing, and vdt cannot tell whether
+the rest of the project still uses it, so it is named in a note and left alone.
 Add `android:icon="@mipmap/<name>"` and `android:roundIcon="@mipmap/<name>_round"`
 to the `<application>` element of the manifest.
 

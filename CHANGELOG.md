@@ -87,14 +87,15 @@ follow [Semantic Versioning](https://semver.org/).
   but another mask may not. The finding names the `--fit` that would bring the
   artwork in. Expect new warnings on unchanged input: artwork that was certified
   before and is genuinely clipped now says so.
-- Regenerating an adaptive icon with a different kind of layer removes the
-  resource the previous run wrote for it, the way switching legacy layouts
-  already did, so an icon never carries two versions of a layer at once. This
-  covers the vector drawable and the raster image, in any of the three
-  formats, for all three layers. A values file can hold any number of
-  resources, so the background's color resource is removed only when its file
-  holds nothing but that one color, which is what vdt and Android Studio's
-  Image Asset wizard both write; a file that holds anything more is left alone.
+- Regenerating an adaptive icon removes a file an earlier run left behind only
+  when keeping it would break the build, the way switching legacy layouts
+  already did to avoid showing the old icon: changing a raster layer's format,
+  say from `.png` to `.webp`, leaves two files with one resource name in one
+  folder, which `aapt2` refuses to build. Any other leftover, such as a vector
+  layer replaced by an image or a color background replaced by an SVG, is a
+  different resource type that collides with nothing. vdt cannot tell whether
+  the rest of the project still refers to it, and deleting a resource in use
+  would break the build itself, so it names the file in a note and leaves it.
 - **Adaptive backgrounds now cover the layer by default.** Android crops the
   background layer with launcher masks and shifts it for parallax, so a
   background that does not reach every edge shows through. Non-square

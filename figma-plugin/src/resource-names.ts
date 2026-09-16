@@ -1,9 +1,13 @@
 // Android resource files must be named with lowercase letters, digits, and underscores,
-// starting with a letter, so "Icons/Arrow Left" becomes "icons_arrow_left".
+// starting with a letter, so "Icons/Arrow Left" becomes "icons_arrow_left". Symbols that carry
+// meaning become words, matching the CLI, so "C++" becomes "c_plus_plus" rather than "c".
+const SYMBOL_WORDS: Record<string, string> = { "+": "plus", "#": "sharp", "&": "and", "@": "at", "%": "percent" };
+
 export function resourceName(layerName: string): string {
   const name = layerName
     .normalize("NFKD")
     .replace(/[̀-ͯ]/g, "")
+    .replace(/[+#&@%]/g, (symbol) => `_${SYMBOL_WORDS[symbol]}_`)
     .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "_")

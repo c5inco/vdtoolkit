@@ -5,6 +5,7 @@ use std::process::ExitCode;
 
 use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
+use unicode_normalization::UnicodeNormalization;
 use vdtoolkit::{
     Analysis, Asset, Compatibility, DiagnosticCode, Error, IconKind, Result, Severity,
 };
@@ -639,12 +640,30 @@ fn is_resource_name(name: &str) -> bool {
 /// otherwise words become lowercase and are joined by underscores, as
 /// `Arrow-Left` becomes `arrow_left` and `HTTPServer` becomes `http_server`,
 /// and a name that would start with a digit or be a Java keyword gains an
-/// `ic_` prefix.
+/// `ic_` prefix. Accents are dropped, so `Café` becomes `cafe`, and symbols
+/// that carry meaning become words, so `C++` becomes `c_plus_plus` rather than
+/// colliding with `C`.
 fn resource_name(stem: &str) -> Result<String> {
     if is_resource_name(stem) {
         return Ok(stem.to_owned());
     }
-    let chars: Vec<char> = stem.chars().collect();
+    let mut chars = Vec::with_capacity(stem.len());
+    for c in stem.nfkd().filter(|c| !('\u{300}'..='\u{36f}').contains(c)) {
+        let word = match c {
+            '+' => "plus",
+            '#' => "sharp",
+            '&' => "and",
+            '@' => "at",
+            '%' => "percent",
+            _ => {
+                chars.push(c);
+                continue;
+            }
+        };
+        chars.push('_');
+        chars.extend(word.chars());
+        chars.push('_');
+    }
     let mut name = String::with_capacity(stem.len());
     for (index, &c) in chars.iter().enumerate() {
         if c.is_ascii_uppercase() {

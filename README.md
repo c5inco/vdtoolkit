@@ -80,7 +80,10 @@ digits, and underscores, not starting with a digit and not a Java keyword. A
 valid name is kept. Any other name is rewritten and the new name is printed:
 `Arrow-Left.svg` becomes `arrow_left.xml`, `HTTPServer.svg` becomes
 `http_server.xml`, and `2x.svg` and `switch.svg` become `ic_2x.xml` and
-`ic_switch.xml`. This covers `convert`, `optimize`, and `notification`,
+`ic_switch.xml`. Accents are dropped (`Café.svg` becomes `cafe.xml`), and `+`,
+`#`, `&`, `@`, and `%` become words, so `C++.svg` and `C#.svg` become
+`c_plus_plus.xml` and `c_sharp.xml` instead of both becoming `c.xml`. Other
+punctuation separates words or is dropped. This covers `convert`, `optimize`, and `notification`,
 including a name given with `-o`. When two inputs in a directory would get the
 same name, the later one fails instead of overwriting the first.
 

@@ -92,6 +92,23 @@ icon. Only 2 of 135 glass icons convert: 132 blur their gradient layers with an
 `feGaussianBlur` / `feFlood` / `feBlend` filter chain and 119 clip them with
 alpha masks, neither of which VectorDrawable can express.
 
+## Hugeicons stress corpus
+
+[hugeicons/hugeicons](https://github.com/hugeicons/hugeicons) publishes its
+free Stroke Rounded set as MIT-licensed SVGs under `icons/`. The suite
+sparse-checks out commit `3e93f5d3` and converts all 6,143 icons: 24-unit
+viewports of 1.5-unit round-capped strokes built from paths, circles, ellipses,
+and a few rectangles. There are no paired VectorDrawables, so the suite
+measures compatibility and repeated-output determinism only and is not a
+release gate.
+
+At that commit 6,137 of 6,143 icons convert (5,602 exact and 535 exact with
+normalization), all byte-identical on repeat, and the suite fails if that count
+drops. The 6 rejections all use dashed strokes, which VectorDrawable cannot
+express. Six pairs of upstream names, such as `rubber-duck.svg` and
+`rubber--duck.svg`, map to the same Android resource name, so the suite renames
+its copies before converting them.
+
 ## Gradient lowering
 
 VectorDrawable gradients are inline complex colors from API 24. Linear

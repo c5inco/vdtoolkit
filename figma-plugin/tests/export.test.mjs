@@ -262,6 +262,9 @@ test("layer names become valid Android resource names", () => {
   assert.equal(resourceName("ChevronDown"), "chevron_down");
   assert.equal(resourceName("24px Café"), "ic_24px_cafe");
   assert.equal(resourceName("🙂"), "vector");
+  assert.equal(resourceName("C++"), "c_plus_plus");
+  assert.equal(resourceName("C#"), "c_sharp");
+  assert.equal(resourceName("R&D @ 100%"), "r_and_d_at_100_percent");
   assert.deepEqual(uniqueResourceNames(["Home", "home", "HOME"]), ["home", "home_2", "home_3"]);
 });
 

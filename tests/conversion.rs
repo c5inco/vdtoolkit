@@ -2597,6 +2597,10 @@ fn cli_writes_valid_android_resource_names() {
         "switch",
         "_private",
         "ic_ok",
+        "c++",
+        "c#",
+        "Café",
+        "100%",
     ] {
         fs::write(input.join(name).with_extension("svg"), icon_svg(24)).unwrap();
     }
@@ -2627,7 +2631,11 @@ fn cli_writes_valid_android_resource_names() {
         [
             "_private.xml",
             "arrow_left.xml",
+            "c_plus_plus.xml",
+            "c_sharp.xml",
+            "cafe.xml",
             "http_server.xml",
+            "ic_100_percent.xml",
             "ic_2x.xml",
             "ic_ok.xml",
             "ic_switch.xml",

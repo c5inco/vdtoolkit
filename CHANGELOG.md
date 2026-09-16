@@ -12,9 +12,19 @@ follow [Semantic Versioning](https://semver.org/).
   as optimized white 24dp notification icons. It uses the existing review UI,
   reports notification-specific plate and empty-artwork warnings, and bundles
   results as `notification-icons.zip`.
+- Optional Hugeicons stress suite, `tools/check-hugeicons.py`, covering all
+  6,143 free Stroke Rounded icons from a pinned commit. It checks a coverage
+  floor and repeated-output determinism.
 
 ### Changed
 
+- Output names keep more of the file name. `convert`, `optimize`, and
+  `notification` drop accents instead of the accented letters, so `Café.svg`
+  becomes `cafe.xml` rather than `caf.xml`. They also spell out `+`, `#`, `&`,
+  `@`, and `%`, so `C++.svg` becomes `c_plus_plus.xml` rather than colliding
+  with `C.svg`. Inputs with these characters get new output names; delete the
+  old outputs and update references. The Figma plugin spells out the same
+  symbols.
 - `vdtoolkit` is now a CLI only. The experimental Rust API is no longer
   documented or supported: its items are hidden from generated docs and exist
   only so the `vdt` binary, WebAssembly bindings, and tests can share code.

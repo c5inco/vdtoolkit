@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-16
+
 ### Added
 
 - `adaptive --foreground-image <png|webp>` and `--monochrome-image` take a
@@ -277,7 +279,8 @@ follow [Semantic Versioning](https://semver.org/).
 - Paired Material corpus conformance, Studio Icons stress coverage, release
   packaging, and optional Android pixel-renderer verification.
 
-[Unreleased]: https://github.com/c5inco/vdtoolkit/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/c5inco/vdtoolkit/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/c5inco/vdtoolkit/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/c5inco/vdtoolkit/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/c5inco/vdtoolkit/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/c5inco/vdtoolkit/releases/tag/v0.1.0

@@ -41,11 +41,6 @@ follow [Semantic Versioning](https://semver.org/).
   `SVGVD020` now also reports a background image that is not fully opaque, the
   same finding a vector background that leaves gaps gets. vdt decodes the image
   without changing it, so the layer it does not convert is still checked.
-- `analyze_layer_image`, `LayerImage`, `LayerKind`, and `ImageFormat` on the
-  Rust API, which is the same check without writing anything.
-- `Asset::painted_reach`, `ADAPTIVE_ICON_MASK_RADIUS`, and
-  `ADAPTIVE_ICON_SAFE_RADIUS`, which replace `Asset::outside_adaptive_safe_zone`
-  and its bounding-box answer.
 - `adaptive --background-fit cover|contain` chooses how a background SVG is
   scaled onto the 108dp layer. `cover` fills the layer and lets it crop
   whatever overflows; `contain` is the previous behavior. `inspect` and
@@ -74,6 +69,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- `vdtoolkit` is now a CLI only. The experimental Rust API is no longer
+  documented or supported: its items are hidden from generated docs and exist
+  only so the `vdt` binary, WebAssembly bindings, and tests can share code.
+  Use `vdt` instead of depending on the crate.
 - **`SVGVD019` now measures distance from the centre of the layer, not a
   bounding box, and reports against the circle a launcher mask actually shows.**
   The old check asked whether content stayed inside a 66dp *square*, but a mask
@@ -105,10 +104,6 @@ follow [Semantic Versioning](https://semver.org/).
   artwork produces a different drawable than 0.3.0 did, and part of that
   artwork is cropped; pass `--background-fit contain` to restore the old
   result. Square backgrounds are unaffected.
-- The Rust API's `Asset::to_icon`, `Asset::fit_adaptive_layer`,
-  `Asset::to_notification_icon`, `analyze_as`, and `analyze_file_as` take a
-  `Fit` instead of an `f32`, and `IconKind::default_fit` returns one.
-  `Fit::contain(dp)` is the previous behavior.
 - The Figma export dialog closes once the zip is handed to the browser, and
   reports the count as it closes instead of leaving itself open behind the
   save prompt. Enter now runs Export, the way a dialog's default button does,

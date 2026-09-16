@@ -4,8 +4,8 @@ Turn SVGs into Android resources without Android Studio, the Android SDK,
 Gradle, or a JVM. `vdt` is a single native command that converts SVGs to
 VectorDrawable XML, generates adaptive launcher icons and notification icons,
 shrinks drawables without changing how they render, and checks whether an SVG
-will convert before anything is written. The same converter is available as a
-Rust library, as WebAssembly, and in a development Figma plugin.
+will convert before anything is written. The same converter also runs as
+WebAssembly in a development Figma plugin.
 
 Output is deterministic, so the same SVG gives the same XML on every machine,
 and anything VectorDrawable cannot render exactly is rejected with a diagnostic
@@ -69,9 +69,7 @@ accepts only input that needs no normalization at all.
 
 Written XML is compact by default to reduce resource size without changing
 geometry or precision. Pass `--pretty` to `convert`, `optimize`, `notification`,
-or `adaptive` when reviewing or hand-editing the generated XML. The Rust API
-keeps its readable `Asset::to_xml()` output; use `Asset::to_compact_xml()` for
-the compact form.
+or `adaptive` when reviewing or hand-editing the generated XML.
 
 The examples put vectors in `drawable-anydpi/`, which makes them win resource
 selection over same-named density-specific bitmaps. The `anydpi` qualifier and
@@ -280,31 +278,6 @@ notification icon, or drawable reaches for `vdt` instead of writing
 VectorDrawable XML by hand, inspects the SVG before generating anything, picks
 options such as `--fit` for the kind of icon, and knows how to act on what the
 diagnostics report. Install `vdt` itself first.
-
-## Rust API (experimental)
-
-Rust programs can embed the same analyzer and converter without launching a
-subprocess. The crate is not on crates.io yet, so depend on it from Git:
-
-```toml
-[dependencies]
-vdtoolkit = { git = "https://github.com/c5inco/vdtoolkit" }
-```
-
-API docs are not on docs.rs yet; build them locally with `cargo doc --open`.
-
-```rust
-let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
-    <path d="M2 2H22V22H2Z" fill="#123456"/>
-</svg>"##;
-let asset = vdtoolkit::convert(source)?;
-assert_eq!(asset.analysis.minimum_api, Some(21));
-let xml = asset.to_xml();
-# Ok::<(), vdtoolkit::Error>(())
-```
-
-The CLI is the stable interface. The Rust API may change between `0.x`
-releases.
 
 ## WebAssembly and Figma
 

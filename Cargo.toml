@@ -28,6 +28,8 @@ path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
+image-webp = "0.2.4"
+jpeg-decoder = { version = "0.3.2", default-features = false }
 roxmltree = "0.21"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -37,6 +39,7 @@ usvg = { version = "0.48.1", default-features = false }
 walkdir = "2.5"
 
 [dev-dependencies]
+image-webp = "0.2.4"
 resvg = { version = "0.48.1", default-features = false }
 tempfile = "3"
 

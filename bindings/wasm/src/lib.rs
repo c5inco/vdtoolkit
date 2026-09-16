@@ -183,7 +183,7 @@ fn notification_result(
     pretty: bool,
 ) -> OperationResult {
     match vdtoolkit::convert(source).and_then(|mut asset| {
-        asset.to_icon(vdtoolkit::IconKind::Notification, fit_dp)?;
+        asset.to_icon(vdtoolkit::IconKind::Notification, vdtoolkit::Fit::contain(fit_dp))?;
         if optimize {
             asset.optimize();
         }
@@ -335,7 +335,7 @@ mod tests {
     fn notification_conversion_matches_the_native_api() {
         let mut native = vdtoolkit::convert(EXACT).unwrap();
         native
-            .to_icon(vdtoolkit::IconKind::Notification, 20.0)
+            .to_icon(vdtoolkit::IconKind::Notification, vdtoolkit::Fit::contain(20.0))
             .unwrap();
         native.optimize();
 

@@ -175,6 +175,22 @@ pub enum DiagnosticCode {
     /// Wide-gamut `color()` values were resolved to the sRGB they render as.
     #[serde(rename = "SVGVD022")]
     WideGamutColor,
+    /// An adaptive background was scaled to cover the 108dp layer, so the
+    /// layer cropped what overflowed it.
+    #[serde(rename = "SVGVD023")]
+    BackgroundCropped,
+    /// A bitmap background layer is not square, so Android stretches it onto
+    /// the square layer.
+    #[serde(rename = "SVGVD024")]
+    BackgroundImageShape,
+    /// A bitmap background layer carries fewer or more pixels than the
+    /// densest screen draws the layer at.
+    #[serde(rename = "SVGVD025")]
+    BackgroundImageResolution,
+    /// A bitmap foreground layer has no transparent pixels, so it covers the
+    /// background layer entirely.
+    #[serde(rename = "SVGVD026")]
+    ForegroundOpaque,
 }
 
 impl DiagnosticCode {
@@ -203,6 +219,10 @@ impl DiagnosticCode {
             Self::BackgroundGap => "SVGVD020",
             Self::PaintFlattened => "SVGVD021",
             Self::WideGamutColor => "SVGVD022",
+            Self::BackgroundCropped => "SVGVD023",
+            Self::BackgroundImageShape => "SVGVD024",
+            Self::BackgroundImageResolution => "SVGVD025",
+            Self::ForegroundOpaque => "SVGVD026",
         }
     }
 }

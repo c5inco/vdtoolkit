@@ -8,6 +8,47 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `adaptive --foreground-image <png|webp>` and `--monochrome-image` take a
+  raster foreground or monochrome layer and place it the same way. Because
+  `--fit` places vector artwork and vdt will not resample a bitmap, the image
+  must already be drawn on the full square layer: `SVGVD019` measures the
+  painted pixels against the 66dp safe zone and says when it is not, with half
+  a dp of tolerance for antialiased edges. A foreground is judged the opposite
+  way round to a background — the new `SVGVD026` reports one with no
+  transparent pixels, which covers the background entirely, and `SVGVD018`
+  reports one with nothing painted. A JPEG is rejected for these layers, since
+  a layer with no alpha channel cannot sit over anything. `--fit` is rejected
+  when every layer it would place is a raster image, and `--legacy` alongside
+  `--foreground-image`.
+- `adaptive --background-image <png|webp|jpg>` takes a raster background from
+  anywhere on disk and places it, so a bitmap background no longer needs a res
+  folder laid out or the icon XML wired up by hand. The file is copied byte for
+  byte into `mipmap-nodpi/<name>_background.<ext>`, where Android draws it onto
+  the layer without scaling it for density; vdt never resamples it. The format
+  is read from the file's own header, so a mislabeled file is still written
+  under the extension it really is; `.jpeg` is normalized to `.jpg`. A JPEG
+  carries no alpha channel, so only its header is read and it can never raise
+  `SVGVD020`. An animated WebP and `--legacy`, which composes both layers into
+  one vector, are both rejected alongside it.
+- `SVGVD024` and `SVGVD025`, which report a background image that is not square
+  or does not carry the 432px an xxxhdpi device draws the 108dp layer at.
+  `SVGVD020` now also reports a background image that is not fully opaque, the
+  same finding a vector background that leaves gaps gets. vdt decodes the image
+  without changing it, so the layer it does not convert is still checked.
+- `analyze_layer_image`, `LayerImage`, `LayerKind`, and `ImageFormat` on the
+  Rust API, which is the same check without writing anything.
+- `Asset::painted_reach`, `ADAPTIVE_ICON_MASK_RADIUS`, and
+  `ADAPTIVE_ICON_SAFE_RADIUS`, which replace `Asset::outside_adaptive_safe_zone`
+  and its bounding-box answer.
+- `adaptive --background-fit cover|contain` chooses how a background SVG is
+  scaled onto the 108dp layer. `cover` fills the layer and lets it crop
+  whatever overflows; `contain` is the previous behavior. `inspect` and
+  `check` take the same option with `--as adaptive-background`, and their
+  JSON `icon` object gained a `fit_mode` field.
+- `SVGVD023`, a note naming what percentage of a background the layer cropped
+  when covering it. Like `SVGVD021` it is printed by the generator, because it
+  names something the generator changed about the artwork rather than
+  something the source already had.
 - The Figma plugin can batch-export selected frames, components, and instances
   as optimized white 24dp notification icons. It uses the existing review UI,
   reports notification-specific plate and empty-artwork warnings, and bundles
@@ -27,6 +68,37 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **`SVGVD019` now measures distance from the centre of the layer, not a
+  bounding box, and reports against the circle a launcher mask actually shows.**
+  The old check asked whether content stayed inside a 66dp *square*, but a mask
+  is a circle: the corners of that square sit 46.7dp from the centre while a
+  circular mask shows 36dp, so artwork drawn edge to edge at the recommended
+  `--fit 66` passed the check and was visibly clipped on a device. vdt now
+  renders the layer and measures the painted pixels, which also removes the
+  false positive a box test would have: a round logo filling the 66dp box
+  reaches only 33dp and is fine. Past 36dp is a warning, because the clipping is
+  certain; between 33 and 36dp is a note, because a circular mask still shows it
+  but another mask may not. The finding names the `--fit` that would bring the
+  artwork in. Expect new warnings on unchanged input: artwork that was certified
+  before and is genuinely clipped now says so.
+- Regenerating an adaptive icon with a different kind of layer removes the
+  resource the previous run wrote for it, the way switching legacy layouts
+  already did, so an icon never carries two versions of a layer at once. This
+  covers all three layers and every form each can take: a vector drawable, a
+  color resource, and a raster image in any of the three formats.
+- **Adaptive backgrounds now cover the layer by default.** Android crops the
+  background layer with launcher masks and shifts it for parallax, so a
+  background that does not reach every edge shows through. Non-square
+  background artwork was scaled to fit and left letterboxed, which earned an
+  `SVGVD020` warning that nothing but redrawing the artwork could clear;
+  it now fills the layer. Regenerating an icon from non-square background
+  artwork produces a different drawable than 0.3.0 did, and part of that
+  artwork is cropped; pass `--background-fit contain` to restore the old
+  result. Square backgrounds are unaffected.
+- The Rust API's `Asset::to_icon`, `Asset::fit_adaptive_layer`,
+  `Asset::to_notification_icon`, `analyze_as`, and `analyze_file_as` take a
+  `Fit` instead of an `f32`, and `IconKind::default_fit` returns one.
+  `Fit::contain(dp)` is the previous behavior.
 - The Figma export dialog closes once the zip is handed to the browser, and
   reports the count as it closes instead of leaving itself open behind the
   save prompt. Enter now runs Export, the way a dialog's default button does,

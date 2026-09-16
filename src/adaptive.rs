@@ -2,6 +2,9 @@
 
 use std::fmt::Write;
 
+use serde::Serialize;
+
+use crate::analysis::{Diagnostic, DiagnosticCode, Severity};
 use crate::vector::{
     Color, FillRule, LineCap, LineJoin, Paint, PathCommand, PathData, VectorDrawable, VectorGroup,
     VectorNode, VectorPath,
@@ -16,6 +19,82 @@ pub const ADAPTIVE_ICON_SAFE_ZONE: f32 = 66.0;
 /// Diameter in dp of the circular area launchers show; the outer 18dp on each
 /// side is reserved for masks and effects.
 pub const ADAPTIVE_ICON_VISIBLE_DIAMETER: f32 = 72.0;
+
+/// Radius in dp of the largest circle a launcher mask can show: the 72dp
+/// visible window taken as a circle. Painted content past this is clipped.
+pub const ADAPTIVE_ICON_MASK_RADIUS: f32 = ADAPTIVE_ICON_VISIBLE_DIAMETER / 2.0;
+
+/// Radius in dp of the circle Android asks key content to stay inside, which
+/// leaves room for masks that are not circles and for OEM variation.
+pub const ADAPTIVE_ICON_SAFE_RADIUS: f32 = ADAPTIVE_ICON_SAFE_ZONE / 2.0;
+
+/// Alpha above which a pixel counts as painted. An antialiased edge fades out
+/// over a pixel or two, and a pixel this faint is not artwork anyone can see.
+pub(crate) const PAINTED_ALPHA: u8 = 8;
+
+/// How far past a radius painted content may reach before it is worth
+/// reporting, in dp. An antialiased edge fades out past the shape it draws,
+/// and a fraction of a dp is not the clipping these findings are about.
+const REACH_TOLERANCE: f32 = 0.5;
+
+/// How far a pixel of a `width` × `height` raster of the whole layer sits from
+/// the layer's centre, in dp.
+///
+/// The mask is a circle, so distance from the centre is what decides whether
+/// a pixel survives; a bounding box cannot answer that, because its corners
+/// are further out than the artwork inside it.
+pub(crate) fn reach_dp(x: u32, y: u32, width: u32, height: u32) -> f32 {
+    let (width, height) = (width.max(1) as f32, height.max(1) as f32);
+    let dx = (x as f32 + 0.5 - width / 2.0) / width * ADAPTIVE_ICON_SIZE;
+    let dy = (y as f32 + 0.5 - height / 2.0) / height * ADAPTIVE_ICON_SIZE;
+    dx.hypot(dy)
+}
+
+/// What to report about a foreground whose painted content reaches `reach` dp
+/// from the centre, or `None` when it stays inside the circle Android asks
+/// for.
+///
+/// Past [`ADAPTIVE_ICON_MASK_RADIUS`] the clipping is a fact about rendering,
+/// so it is a warning. Between that and [`ADAPTIVE_ICON_SAFE_RADIUS`] it is a
+/// note: a circular mask still shows it, but a mask that is not a circle may
+/// not.
+pub(crate) fn safe_zone_finding(reach: f32, subject: &str, remedy: String) -> Option<Diagnostic> {
+    let (severity, message) = if reach > ADAPTIVE_ICON_MASK_RADIUS + REACH_TOLERANCE {
+        (
+            Severity::Warning,
+            format!(
+                "{subject} reaches {reach:.1}dp from the centre, past the {}dp a circular \
+                 launcher mask shows, so it is clipped",
+                crate::xml::number(ADAPTIVE_ICON_MASK_RADIUS)
+            ),
+        )
+    } else if reach > ADAPTIVE_ICON_SAFE_RADIUS + REACH_TOLERANCE {
+        (
+            Severity::Info,
+            format!(
+                "{subject} reaches {reach:.1}dp from the centre, past the {}dp Android asks key \
+                 content to stay inside; a circular mask still shows it, but other launcher \
+                 masks may not",
+                crate::xml::number(ADAPTIVE_ICON_SAFE_RADIUS)
+            ),
+        )
+    } else {
+        return None;
+    };
+    Some(Diagnostic {
+        code: DiagnosticCode::OutsideSafeZone,
+        severity,
+        message,
+        location: None,
+        suggestion: Some(remedy),
+    })
+}
+
+/// The fit that would bring artwork now reaching `reach` dp inside the safe
+/// circle, rounded down to a whole dp.
+pub(crate) fn fit_for_reach(fit: f32, reach: f32) -> f32 {
+    (fit * ADAPTIVE_ICON_SAFE_RADIUS / reach).floor().max(1.0)
+}
 
 /// Edge length in dp of a legacy launcher icon for devices below API 26.
 pub const LEGACY_ICON_SIZE: f32 = 48.0;
@@ -56,16 +135,90 @@ pub fn color_resource_xml(name: &str, color: &str) -> String {
     )
 }
 
+/// Whether artwork is scaled to fit inside the square it is placed in, or to
+/// cover it.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FitMode {
+    /// Scale until the whole source fits inside the square. Non-square
+    /// artwork keeps all of its content and leaves bands of the square
+    /// unpainted along its shorter side.
+    #[default]
+    Contain,
+    /// Scale until the source covers the square. Non-square artwork overflows
+    /// the canvas along its longer side, where the canvas crops it.
+    Cover,
+}
+
+/// Where artwork is placed on an icon canvas: the centered square it is
+/// scaled to, and whether it fits inside that square or covers it.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct Fit {
+    /// Edge length in dp of the centered square.
+    pub size: f32,
+    /// Whether the artwork fits inside the square or covers it.
+    pub mode: FitMode,
+}
+
+impl Fit {
+    /// Scale the whole source into a centered `size` dp square.
+    pub const fn contain(size: f32) -> Self {
+        Self {
+            size,
+            mode: FitMode::Contain,
+        }
+    }
+
+    /// Scale the source until it covers a centered `size` dp square.
+    pub const fn cover(size: f32) -> Self {
+        Self {
+            size,
+            mode: FitMode::Cover,
+        }
+    }
+
+    /// Uniform scale and the offsets that center the scaled source on a
+    /// `canvas` dp square. Under [`FitMode::Cover`] the offsets are negative
+    /// on the axis that overflows.
+    pub(crate) fn placement(
+        self,
+        viewport_width: f32,
+        viewport_height: f32,
+        canvas: f32,
+    ) -> (f32, f32, f32) {
+        let extent = match self.mode {
+            FitMode::Contain => viewport_width.max(viewport_height),
+            FitMode::Cover => viewport_width.min(viewport_height),
+        };
+        let scale = self.size / extent;
+        (
+            scale,
+            (canvas - viewport_width * scale) / 2.0,
+            (canvas - viewport_height * scale) / 2.0,
+        )
+    }
+
+    /// Fraction of the source's area that falls outside a `canvas` dp square,
+    /// which the canvas crops away. Zero unless the placement overflows.
+    pub(crate) fn cropped(self, viewport_width: f32, viewport_height: f32, canvas: f32) -> f32 {
+        let (scale, ..) = self.placement(viewport_width, viewport_height, canvas);
+        let (width, height) = (viewport_width * scale, viewport_height * scale);
+        if !(width > 0.0 && height > 0.0) {
+            return 0.0;
+        }
+        1.0 - (width.min(canvas) * height.min(canvas)) / (width * height)
+    }
+}
+
 /// Move the drawable onto a square canvas, scaling its content uniformly so
-/// the source viewport fits inside a centered square of `fit` units.
+/// the source viewport fits inside, or covers, a centered square of `fit`
+/// units.
 ///
 /// Uniform scaling and translation are applied to geometry, stroke widths, and
-/// gradient coordinates, so rendering is unchanged apart from placement.
-pub(crate) fn fit_square(drawable: &mut VectorDrawable, canvas: f32, fit: f32) {
-    let extent = drawable.viewport_width.max(drawable.viewport_height);
-    let scale = fit / extent;
-    let dx = (canvas - drawable.viewport_width * scale) / 2.0;
-    let dy = (canvas - drawable.viewport_height * scale) / 2.0;
+/// gradient coordinates, so rendering is unchanged apart from placement. Under
+/// [`FitMode::Cover`] the canvas also crops whatever overflows it.
+pub(crate) fn fit_square(drawable: &mut VectorDrawable, canvas: f32, fit: Fit) {
+    let (scale, dx, dy) = fit.placement(drawable.viewport_width, drawable.viewport_height, canvas);
     transform_nodes(&mut drawable.children, scale, dx, dy);
     drawable.width_dp = canvas;
     drawable.height_dp = canvas;

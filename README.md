@@ -221,6 +221,7 @@ becomes, with `--pretty` (by default the same XML is written on one line)
 | `<use>`, `<defs>`, inherited CSS styles | DTDs, entity declarations, external references |
 | Nested affine transforms (flattened into geometry) | Strokes under non-uniform scale or skew |
 | Solid fills, fill opacity, fill rules | Alpha or grayscale masks, even-odd or multi-path clips |
+| Wide-gamut `color()` values, resolved to the sRGB they render as | Color spaces that are not Display P3, sRGB, or linear sRGB |
 | Linear gradients and circular radial gradients, including stop opacity and spread methods | Radial gradients with a focal point, a focal radius, or an elliptical shape |
 | Solid strokes: opacity, width, caps, joins | Nested effects or paint effects inside `<clipPath>`/`<mask>` |
 | Single-path clips and hard white single-shape masks (lowered to clips) | |
@@ -234,7 +235,10 @@ Plain paths and a single clip target API 21. Drawables that need multiple clips,
 `android:fillType`, or gradients target API 24, and `inspect` then adds an
 `SVGVD004` note naming which of those raised it, with how to stay on API 21.
 The note is informational: it does not change compatibility, the exit code, or
-what `convert` prints. Gradients are written inline
+what `convert` prints. `inspect` adds an `SVGVD022` note in the same way when a
+design tool wrote a wide-gamut `color()` value, naming how many were resolved to
+sRGB; VectorDrawable has no wide-gamut color, so the resolved value is what
+Android draws either way. Gradients are written inline
 with the `aapt` namespace, which the Android build tools compile into color
 resources. See [docs/research.md](docs/research.md)
 for the renderer findings behind those levels.

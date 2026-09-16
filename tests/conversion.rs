@@ -2843,3 +2843,102 @@ fn every_error_suggests_a_fix() {
         "{stdout}"
     );
 }
+
+#[test]
+fn wide_gamut_colors_keep_their_paint_instead_of_vanishing_or_turning_black() {
+    // Figma writes the sRGB fallback first and the wide-gamut color after it,
+    // both in the style attribute, which outranks the presentation attribute.
+    // Dropping the color() function it cannot read used to take the stroke
+    // with it, leaving a 24dp notification icon with nothing painted.
+    let stroked = br##"<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M2 2H18V18H2Z" stroke="#6C707E" style="stroke:#6C707E;stroke:color(display-p3 0.4235 0.4392 0.4941);stroke-opacity:1;" stroke-width="1.5"/>
+    </svg>"##;
+    let filled = br##"<svg width="20" height="20" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
+        <path d="M2 2H18V18H2Z" fill="#6C707E" style="fill:#6C707E;fill:color(display-p3 0.4235 0.4392 0.4941);fill-opacity:1;"/>
+    </svg>"##;
+
+    let asset = vdtoolkit::convert(stroked).unwrap();
+    assert!(
+        asset.to_xml().contains("android:strokeColor=\"#6B707F\""),
+        "{}",
+        asset.to_xml()
+    );
+    assert!(asset.painted_coverage() > 0.0);
+
+    // An unreadable fill used to fall back to black, the SVG initial value,
+    // rather than to the sRGB the design tool wrote beside it.
+    let asset = vdtoolkit::convert(filled).unwrap();
+    assert!(
+        asset.to_xml().contains("android:fillColor=\"#6B707F\""),
+        "{}",
+        asset.to_xml()
+    );
+
+    let mut icon = vdtoolkit::convert(stroked).unwrap();
+    icon.to_icon(vdtoolkit::IconKind::Notification, 24.0)
+        .unwrap();
+    assert!(
+        !icon
+            .analysis
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code.as_str() == "SVGVD018"),
+        "{:?}",
+        icon.analysis.diagnostics
+    );
+}
+
+#[test]
+fn resolving_a_wide_gamut_color_is_reported_as_an_informational_note() {
+    let source = br##"<svg width="20" height="20" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
+        <path d="M2 2H18V18H2Z" fill="#6C707E" style="fill:color(display-p3 0.4235 0.4392 0.4941);"/>
+        <path d="M4 4H8V8H4Z" stroke="#6C707E" style="stroke:color(display-p3 0.4235 0.4392 0.4941);"/>
+    </svg>"##;
+
+    let asset = vdtoolkit::convert(source).unwrap();
+    let [note] = asset
+        .analysis
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code.as_str() == "SVGVD022")
+        .collect::<Vec<_>>()[..]
+    else {
+        panic!("expected one note: {:?}", asset.analysis.diagnostics);
+    };
+    assert!(matches!(note.severity, Severity::Info));
+    assert_eq!(
+        note.message,
+        "resolved 2 wide-gamut colors to sRGB; VectorDrawable has no wide-gamut color"
+    );
+    // A note never moves a drawable out of exact conversion.
+    assert_eq!(asset.analysis.compatibility, Compatibility::Exact);
+
+    // One color reads as a singular.
+    let single = br##"<svg width="20" height="20" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
+        <path d="M2 2H18V18H2Z" fill="#6C707E" style="fill:color(display-p3 0.4235 0.4392 0.4941);"/>
+    </svg>"##;
+    assert!(
+        vdtoolkit::convert(single)
+            .unwrap()
+            .analysis
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic
+                .message
+                .starts_with("resolved 1 wide-gamut color to")),
+    );
+
+    // An SVG with no color() function says nothing.
+    let plain =
+        br##"<svg width="20" height="20" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
+        <path d="M2 2H18V18H2Z" fill="#6C707E"/>
+    </svg>"##;
+    assert!(
+        !vdtoolkit::convert(plain)
+            .unwrap()
+            .analysis
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code.as_str() == "SVGVD022"),
+    );
+}

@@ -13,8 +13,24 @@ follow [Semantic Versioning](https://semver.org/).
   reports notification-specific plate and empty-artwork warnings, and bundles
   results as `notification-icons.zip`.
 
+### Fixed
+
+- Wide-gamut `color()` values, which Figma writes into `style` after an sRGB
+  fallback, are resolved to sRGB before parsing. The SVG parser dropped the
+  declaration it could not read, and the `style` attribute outranks the
+  matching presentation attribute, so strokes silently vanished and fills
+  silently turned black. Display P3, sRGB, and linear sRGB resolve; other
+  color spaces are left untouched. `inspect` reports the resolution as a new
+  `SVGVD022` note; like the other informational notes it does not reach
+  `convert` output or the Figma export dialog, where every notification icon
+  flattens to white anyway.
+
 ### Changed
 
+- The Figma export dialog closes once the zip is handed to the browser, and
+  reports the count as it closes instead of leaving itself open behind the
+  save prompt. Enter now runs Export, the way a dialog's default button does,
+  except while a button or the filter box has focus.
 - Vector drawables packaged by the Figma exporter and adaptive icon layers
   now use `drawable-anydpi/`. CLI examples recommend the same directory for
   caller-selected `convert`, `optimize`, and `notification` outputs.

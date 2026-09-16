@@ -172,6 +172,9 @@ pub enum DiagnosticCode {
     /// Colors or gradients were flattened to white for a notification icon.
     #[serde(rename = "SVGVD021")]
     PaintFlattened,
+    /// Wide-gamut `color()` values were resolved to the sRGB they render as.
+    #[serde(rename = "SVGVD022")]
+    WideGamutColor,
 }
 
 impl DiagnosticCode {
@@ -199,6 +202,7 @@ impl DiagnosticCode {
             Self::OutsideSafeZone => "SVGVD019",
             Self::BackgroundGap => "SVGVD020",
             Self::PaintFlattened => "SVGVD021",
+            Self::WideGamutColor => "SVGVD022",
         }
     }
 }

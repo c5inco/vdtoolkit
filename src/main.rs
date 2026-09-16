@@ -479,14 +479,13 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
         }
         (None, None) => unreachable!("clap requires a foreground layer"),
     };
-    // A layer can be written as a vector, a color, or a raster in any of three
+    // Every layer can be written as a vector or as a raster in any of three
     // formats, so whichever forms are not written this time are removed: a
     // layer left behind by an earlier run is dead weight in the resource tree.
+    // Each of those files holds exactly one drawable, so a file of that name is
+    // one vdt would have written anyway.
     let layer_forms = |name: &str| {
-        let mut forms = vec![
-            drawable_dir.join(name).with_extension("xml"),
-            args.output.join("values").join(name).with_extension("xml"),
-        ];
+        let mut forms = vec![drawable_dir.join(name).with_extension("xml")];
         forms.extend(
             vdtoolkit::ImageFormat::EXTENSIONS
                 .iter()
@@ -494,10 +493,22 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
         );
         forms
     };
-    let all_forms: Vec<PathBuf> = [&foreground_name, &background_name, &monochrome_name]
+    let mut all_forms: Vec<PathBuf> = [&foreground_name, &background_name, &monochrome_name]
         .iter()
         .flat_map(|name| layer_forms(name))
         .collect();
+    // Only a background can be a color, and a values file can hold any number
+    // of resources, so one is only vdt's to remove when it holds nothing but
+    // this icon's background color. That is also exactly what Android Studio's
+    // Image Asset wizard writes; anything more belongs to the project.
+    let background_values = args
+        .output
+        .join("values")
+        .join(&background_name)
+        .with_extension("xml");
+    if holds_only_color(&background_values, &background_name) {
+        all_forms.push(background_values);
+    }
     let (background, background_reference) = match (&args.background, &args.background_image, color)
     {
         (Some(path), _, _) => {
@@ -701,6 +712,24 @@ fn format_xml(xml: String, pretty: bool) -> String {
     } else {
         vdtoolkit::compact_xml(&xml)
     }
+}
+
+/// Whether the values file at `path` holds a single `<color>` resource named
+/// `name` and nothing else, so removing it cannot take anything with it.
+fn holds_only_color(path: &Path, name: &str) -> bool {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    let Ok(document) = roxmltree::Document::parse(&text) else {
+        return false;
+    };
+    let resources = document.root_element();
+    let mut children = resources.children().filter(|node| node.is_element());
+    resources.has_tag_name("resources")
+        && children
+            .next()
+            .is_some_and(|node| node.has_tag_name("color") && node.attribute("name") == Some(name))
+        && children.next().is_none()
 }
 
 /// Read a raster layer, report what it will look like, and return the file to

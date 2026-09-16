@@ -219,11 +219,9 @@ fn decode_webp(data: &[u8]) -> Result<Decoded> {
         ));
     }
     let (width, height) = decoder.dimensions();
-    // A file without an alpha channel cannot have a transparent pixel, so it
-    // paints the whole layer and the pixels say nothing the header does not.
-    if !decoder.has_alpha() {
-        return Ok(opaque_layer(width, height));
-    }
+    // The image data is decoded even when there is no alpha to scan: a file
+    // whose header reads but whose data is damaged would otherwise be copied
+    // into the project and fail only when Android packages or draws it.
     let size = decoder
         .output_buffer_size()
         .ok_or_else(|| Error::InvalidInput("WebP dimensions are too large to decode".to_owned()))?;
@@ -231,15 +229,23 @@ fn decode_webp(data: &[u8]) -> Result<Decoded> {
     decoder
         .read_image(&mut pixels)
         .map_err(|error| Error::InvalidInput(format!("cannot decode WebP: {error}")))?;
+    // Without an alpha channel the pixels are RGB and every one is painted.
+    if !decoder.has_alpha() {
+        return Ok(opaque_layer(width, height));
+    }
     Ok(scan(&pixels, width, height, 4, 3))
 }
 
-/// JPEG carries no alpha channel, so the pixels say nothing the header does
-/// not: the image is opaque, and only its size is in question.
+/// JPEG carries no alpha channel, so the image is opaque and only its size is
+/// in question. The image data is still decoded in full: a file whose header
+/// reads but whose data is cut short would otherwise be copied into the
+/// project and fail only when Android packages or draws it. JPEG has no
+/// checksum, so data damaged into bytes that still decode cannot be caught
+/// here or by any other decoder.
 fn decode_jpeg(data: &[u8]) -> Result<Decoded> {
     let mut decoder = jpeg_decoder::Decoder::new(std::io::Cursor::new(data));
     decoder
-        .read_info()
+        .decode()
         .map_err(|error| Error::InvalidInput(format!("cannot decode JPEG: {error}")))?;
     let info = decoder
         .info()

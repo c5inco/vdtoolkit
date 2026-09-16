@@ -206,9 +206,12 @@ diagnostic codes, so `inspect --as adaptive-foreground --fit 66` or
 | `SVGVD025` | A layer image does not carry the 432px an xxxhdpi device draws the layer at: a warning when it is smaller, so the icon is upscaled and soft, and a note when it is larger, so the extra pixels are decoded and scaled away on every draw. |
 
 Every layer is converted before anything is written, and a layer that fails
-leaves the directory untouched. Regenerating a name with a different kind of
-background removes the resource the last run wrote for it, so an icon never
-carries two background layers at once.
+leaves the directory untouched, and every raster layer is decoded in full, so
+an image with damaged data is refused before it can replace a working one.
+Regenerating a name with a different kind of layer removes the resource the
+last run wrote for it, so an icon never carries two versions of a layer. A
+background's `values/<name>_background.xml` is removed only when it holds
+nothing but that one color, so a file that holds other resources is left alone.
 Add `android:icon="@mipmap/<name>"` and `android:roundIcon="@mipmap/<name>_round"`
 to the `<application>` element of the manifest.
 

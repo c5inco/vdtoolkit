@@ -1607,6 +1607,138 @@ fn cli_adaptive_places_a_raster_foreground_and_judges_it_as_a_foreground() {
 }
 
 #[test]
+fn cli_adaptive_never_removes_resources_it_did_not_write() {
+    let temp = tempfile::tempdir().unwrap();
+    let fg = temp.path().join("fg.svg");
+    let bg = temp.path().join("bg.svg");
+    fs::write(
+        &fg,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M12 7L7 17h10z"/></svg>"##,
+    )
+    .unwrap();
+    fs::write(
+        &bg,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108"><rect width="108" height="108" fill="#3DDC84"/></svg>"##,
+    )
+    .unwrap();
+    let res = temp.path().join("res");
+    let values = res.join("values");
+    fs::create_dir_all(&values).unwrap();
+    let run = |args: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_vdt"))
+            .args(["adaptive", "--foreground"])
+            .arg(&fg)
+            .args(args)
+            .args(["--fit", "56", "-o"])
+            .arg(&res)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+    };
+
+    // A values file is a container for any resources, so one that merely
+    // shares a layer's name is the project's, not vdt's. A foreground or
+    // monochrome layer is never written as a values file at all.
+    let foreground_values = values.join("ic_launcher_foreground.xml");
+    let monochrome_values = values.join("ic_launcher_monochrome.xml");
+    let unrelated = "<resources><string name=\"app_name\">Mine</string></resources>\n";
+    fs::write(&foreground_values, unrelated).unwrap();
+    fs::write(&monochrome_values, unrelated).unwrap();
+    // A background values file that holds more than the icon's color is also
+    // the project's, even though vdt could have written one of that name.
+    let background_values = values.join("ic_launcher_background.xml");
+    let mixed = "<resources>\n    <color name=\"ic_launcher_background\">#FFFFFF</color>\n    \
+                 <string name=\"tagline\">Kept</string>\n</resources>\n";
+    fs::write(&background_values, mixed).unwrap();
+
+    run(&["--background", bg.to_str().unwrap()]);
+    assert_eq!(fs::read_to_string(&foreground_values).unwrap(), unrelated);
+    assert_eq!(fs::read_to_string(&monochrome_values).unwrap(), unrelated);
+    assert_eq!(fs::read_to_string(&background_values).unwrap(), mixed);
+
+    // The file Android Studio's Image Asset wizard writes holds nothing but
+    // the background color, which is exactly what vdt writes too. Replacing
+    // that background with an SVG does make it stale, so it is removed.
+    let studio = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<resources>\n    \
+                  <color name=\"ic_launcher_background\">#3DDC84</color>\n</resources>\n";
+    fs::write(&background_values, studio).unwrap();
+    run(&["--background", bg.to_str().unwrap()]);
+    assert!(!background_values.exists());
+}
+
+#[test]
+fn cli_adaptive_rejects_raster_layers_with_corrupt_image_data() {
+    let temp = tempfile::tempdir().unwrap();
+    let fg = temp.path().join("fg.svg");
+    fs::write(
+        &fg,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M12 7L7 17h10z"/></svg>"##,
+    )
+    .unwrap();
+    let res = temp.path().join("res");
+    let run = |image: &std::path::Path| {
+        Command::new(env!("CARGO_BIN_EXE_vdt"))
+            .args(["adaptive", "--foreground"])
+            .arg(&fg)
+            .args(["--fit", "56", "--background-image"])
+            .arg(image)
+            .arg("-o")
+            .arg(&res)
+            .output()
+            .unwrap()
+    };
+
+    // A valid opaque WebP. No alpha channel, which is the path that used to
+    // skip decoding the image data entirely.
+    let mut opaque = Vec::new();
+    image_webp::WebPEncoder::new(std::io::Cursor::new(&mut opaque))
+        .encode(
+            &[0x3D, 0xDC, 0x84].repeat(432 * 432),
+            432,
+            432,
+            image_webp::ColorType::Rgb8,
+        )
+        .unwrap();
+    assert!(
+        !image_webp::WebPDecoder::new(std::io::Cursor::new(&opaque))
+            .unwrap()
+            .has_alpha(),
+        "the fixture must exercise the opaque path"
+    );
+    let good = temp.path().join("good.webp");
+    fs::write(&good, &opaque).unwrap();
+    assert!(run(&good).status.success());
+    let placed = res.join("mipmap-nodpi/ic_launcher_background.webp");
+    assert!(placed.is_file());
+
+    // Headers intact, image data cut short: each format's header still reads.
+    let jpeg = include_bytes!("fixtures/background_square.jpg");
+    let scan = jpeg
+        .windows(2)
+        .position(|pair| pair == [0xFF, 0xDA])
+        .unwrap();
+    let broken_jpeg = temp.path().join("broken.jpg");
+    fs::write(&broken_jpeg, &jpeg[..scan + 40]).unwrap();
+    let broken_webp = temp.path().join("broken.webp");
+    fs::write(&broken_webp, &opaque[..opaque.len() / 2]).unwrap();
+
+    for broken in [&broken_jpeg, &broken_webp] {
+        let output = run(broken);
+        assert!(!output.status.success(), "{broken:?} was accepted");
+        assert!(
+            String::from_utf8(output.stderr)
+                .unwrap()
+                .contains("cannot decode"),
+            "{broken:?}"
+        );
+        // Refusing before anything is written also keeps the working layer:
+        // it is not cleared away as stale by a run that did not replace it.
+        assert_eq!(fs::read(&placed).unwrap(), opaque, "{broken:?}");
+        assert!(!res.join("mipmap-nodpi/ic_launcher_background.jpg").exists());
+    }
+}
+
+#[test]
 fn cli_adaptive_places_a_bitmap_background_without_resampling_it() {
     let temp = tempfile::tempdir().unwrap();
     let foreground = temp.path().join("fg.svg");

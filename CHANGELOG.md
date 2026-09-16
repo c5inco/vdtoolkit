@@ -28,10 +28,14 @@ follow [Semantic Versioning](https://semver.org/).
   byte into `mipmap-nodpi/<name>_background.<ext>`, where Android draws it onto
   the layer without scaling it for density; vdt never resamples it. The format
   is read from the file's own header, so a mislabeled file is still written
-  under the extension it really is; `.jpeg` is normalized to `.jpg`. A JPEG
-  carries no alpha channel, so only its header is read and it can never raise
-  `SVGVD020`. An animated WebP and `--legacy`, which composes both layers into
-  one vector, are both rejected alongside it.
+  under the extension it really is; `.jpeg` is normalized to `.jpg`. Every
+  image is decoded in full before anything is written, so one whose header
+  reads but whose data is cut short or damaged is refused, rather than copied
+  into the project to fail when Android packages or draws it. A JPEG carries no
+  alpha channel, so it can never raise `SVGVD020`; it has no checksum either, so
+  data damaged into bytes that still decode is caught by no decoder. An
+  animated WebP and `--legacy`, which composes both layers into one vector, are
+  both rejected alongside it.
 - `SVGVD024` and `SVGVD025`, which report a background image that is not square
   or does not carry the 432px an xxxhdpi device draws the 108dp layer at.
   `SVGVD020` now also reports a background image that is not fully opaque, the
@@ -86,8 +90,11 @@ follow [Semantic Versioning](https://semver.org/).
 - Regenerating an adaptive icon with a different kind of layer removes the
   resource the previous run wrote for it, the way switching legacy layouts
   already did, so an icon never carries two versions of a layer at once. This
-  covers all three layers and every form each can take: a vector drawable, a
-  color resource, and a raster image in any of the three formats.
+  covers the vector drawable and the raster image, in any of the three
+  formats, for all three layers. A values file can hold any number of
+  resources, so the background's color resource is removed only when its file
+  holds nothing but that one color, which is what vdt and Android Studio's
+  Image Asset wizard both write; a file that holds anything more is left alone.
 - **Adaptive backgrounds now cover the layer by default.** Android crops the
   background layer with launcher masks and shifts it for parallax, so a
   background that does not reach every edge shows through. Non-square

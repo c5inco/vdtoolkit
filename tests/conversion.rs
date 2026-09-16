@@ -1667,6 +1667,129 @@ fn cli_adaptive_never_removes_resources_it_did_not_write() {
 }
 
 #[test]
+fn cli_adaptive_clears_mipmap_versions_that_would_shadow_a_raster_layer() {
+    let temp = tempfile::tempdir().unwrap();
+    let fg = temp.path().join("fg.svg");
+    let bg = temp.path().join("bg.svg");
+    fs::write(
+        &fg,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M12 7L7 17h10z"/></svg>"##,
+    )
+    .unwrap();
+    fs::write(
+        &bg,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108"><rect width="108" height="108" fill="#3DDC84"/></svg>"##,
+    )
+    .unwrap();
+    let image = temp.path().join("bg.png");
+    fs::write(
+        &image,
+        vdtoolkit::convert(fs::read(&bg).unwrap().as_slice())
+            .unwrap()
+            .to_png(432, 432)
+            .unwrap(),
+    )
+    .unwrap();
+    let res = temp.path().join("res");
+    let run = |args: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_vdt"))
+            .args(["adaptive", "--foreground"])
+            .arg(&fg)
+            .args(args)
+            .args(["--fit", "56", "-o"])
+            .arg(&res)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        String::from_utf8(output.stderr).unwrap()
+    };
+    // What Android Studio's Image Asset wizard leaves for an image background:
+    // one version per density, all chosen over mipmap-nodpi on a device of
+    // that density, plus a qualified one that wins in dark mode.
+    let studio = [
+        "mipmap-mdpi/ic_launcher_background.png",
+        "mipmap-hdpi/ic_launcher_background.webp",
+        "mipmap-xxhdpi/ic_launcher_background.png",
+        "mipmap-xxxhdpi/ic_launcher_background.webp",
+        "mipmap-night-xhdpi/ic_launcher_background.png",
+    ];
+    // Things in those folders that are not versions of the layer stay.
+    let bystanders = [
+        "mipmap-xxhdpi/ic_launcher.png",
+        "mipmap-xxhdpi/ic_launcher_foreground_old.png",
+        "drawable-xxhdpi/ic_launcher_background.png",
+    ];
+    let plant = |files: &[&str]| {
+        for relative in files {
+            let path = res.join(relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, b"stale").unwrap();
+        }
+    };
+    plant(&studio);
+    plant(&bystanders);
+
+    // An image background is @mipmap/ic_launcher_background, so every other
+    // version of that resource would show instead of it, and is removed.
+    let stderr = run(&["--background-image", image.to_str().unwrap()]);
+    assert!(
+        res.join("mipmap-nodpi/ic_launcher_background.png")
+            .is_file()
+    );
+    for relative in studio {
+        assert!(
+            !res.join(relative).exists(),
+            "{relative} survived\n{stderr}"
+        );
+        assert!(stderr.contains(relative), "{relative}\n{stderr}");
+    }
+    for relative in bystanders {
+        assert!(res.join(relative).is_file(), "{relative} was removed");
+    }
+
+    // A vector background is @drawable/ic_launcher_background, which a
+    // mipmap never shadows, so versions left in mipmap folders are only named.
+    plant(&studio);
+    let stderr = run(&["--background", bg.to_str().unwrap()]);
+    for relative in studio {
+        assert!(res.join(relative).is_file(), "{relative} was removed");
+        assert!(
+            stderr.contains(&format!("{relative}; remove it")),
+            "{relative}\n{stderr}"
+        );
+    }
+}
+
+#[test]
+fn cli_adaptive_prints_the_safe_zone_note() {
+    let temp = tempfile::tempdir().unwrap();
+    let round = temp.path().join("round.svg");
+    fs::write(
+        &round,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><circle cx="12" cy="12" r="12" fill="#fff"/></svg>"##,
+    )
+    .unwrap();
+    // At --fit 72 the round logo reaches about 36dp: a circular mask still
+    // shows it, but it is past the 33dp Android asks for, which is a note.
+    // The generator is the command people run, so it has to print it.
+    let output = Command::new(env!("CARGO_BIN_EXE_vdt"))
+        .args(["adaptive", "--foreground"])
+        .arg(&round)
+        .args(["--background-color", "#3DDC84", "--fit", "72", "-o"])
+        .arg(temp.path().join("res"))
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    let note = stderr
+        .lines()
+        .find(|line| line.contains("SVGVD019"))
+        .unwrap_or_else(|| panic!("no safe-zone finding printed:\n{stderr}"));
+    assert!(note.starts_with("note:"), "{note}");
+    assert!(note.contains("past the 33dp Android asks"), "{note}");
+}
+
+#[test]
 fn cli_adaptive_rejects_raster_layers_with_corrupt_image_data() {
     let temp = tempfile::tempdir().unwrap();
     let fg = temp.path().join("fg.svg");

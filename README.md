@@ -196,7 +196,7 @@ diagnostic codes, so `inspect --as adaptive-foreground --fit 66` or
 
 | Code | Meaning |
 | --- | --- |
-| `SVGVD019` | How far the foreground or monochrome artwork reaches from the centre of the layer, measured from the painted pixels. A warning past 36dp, which is what a circular launcher mask shows, so the artwork is clipped; a note past 33dp, the radius Android asks key content to stay inside. The remedy names the `--fit` that would bring it in. |
+| `SVGVD019` | How far the foreground or monochrome artwork reaches from the centre of the layer, measured from the painted pixels. A warning past 36dp, which is what a circular launcher mask shows, so the artwork is clipped; a note past 33dp, the radius Android asks key content to stay inside, which `adaptive` prints as well as `inspect`. The remedy names the `--fit` that would bring it in. |
 | `SVGVD020` | Warning: the background leaves part of the 108dp layer unpainted, which shows through launcher masks and parallax. Inset clips, holes, and transparent paint all leave gaps, as does non-square artwork under `--background-fit contain`. |
 | `SVGVD023` | Note: the background was scaled to cover the layer, naming what percentage of the artwork the layer cropped. Square artwork is unchanged and gets no note. |
 | `SVGVD024` | Warning: a layer image is not square, so Android stretches it onto the square layer and the artwork is distorted. |
@@ -209,9 +209,12 @@ an image with damaged data is refused before it can replace a working one.
 Regenerating a name removes a file an earlier run left behind only when keeping
 it would break the build: a raster layer that changes format, say from `.png`
 to `.webp`, would otherwise leave two files with one resource name in one
-folder. Any other leftover, such as a vector layer replaced by an image, is a
-different resource type that collides with nothing, and vdt cannot tell whether
-the rest of the project still uses it, so it is named in a note and left alone.
+folder, and a raster layer's versions in density folders such as
+`mipmap-xxhdpi/`, which Android Studio writes, would be picked over
+`mipmap-nodpi/` and keep the old icon showing. Any other leftover, such as a
+vector layer replaced by an image, is a different resource type that collides
+with nothing, and vdt cannot tell whether the rest of the project still uses
+it, so it is named in a note and left alone.
 Add `android:icon="@mipmap/<name>"` and `android:roundIcon="@mipmap/<name>_round"`
 to the `<application>` element of the manifest.
 

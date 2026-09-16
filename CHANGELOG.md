@@ -83,18 +83,23 @@ follow [Semantic Versioning](https://semver.org/).
   false positive a box test would have: a round logo filling the 66dp box
   reaches only 33dp and is fine. Past 36dp is a warning, because the clipping is
   certain; between 33 and 36dp is a note, because a circular mask still shows it
-  but another mask may not. The finding names the `--fit` that would bring the
+  but another mask may not. `adaptive` prints the note as well as `inspect`. The finding names the `--fit` that would bring the
   artwork in. Expect new warnings on unchanged input: artwork that was certified
   before and is genuinely clipped now says so.
 - Regenerating an adaptive icon removes a file an earlier run left behind only
   when keeping it would break the build, the way switching legacy layouts
   already did to avoid showing the old icon: changing a raster layer's format,
   say from `.png` to `.webp`, leaves two files with one resource name in one
-  folder, which `aapt2` refuses to build. Any other leftover, such as a vector
-  layer replaced by an image or a color background replaced by an SVG, is a
-  different resource type that collides with nothing. vdt cannot tell whether
-  the rest of the project still refers to it, and deleting a resource in use
-  would break the build itself, so it names the file in a note and leaves it.
+  folder, which `aapt2` refuses to build. Writing a raster layer also removes
+  the versions of it in density folders such as `mipmap-xxhdpi/`, which
+  Android Studio's Image Asset wizard writes for every density: Android picks
+  those over `mipmap-nodpi/` on a device of that density, so a project moved
+  from Studio to vdt kept showing its old icon. Verified on an emulator at API
+  36. Any other leftover, such as a vector layer replaced by an image or a
+  color background replaced by an SVG, is a different resource type that
+  collides with nothing. vdt cannot tell whether the rest of the project still
+  refers to it, and deleting a resource in use would break the build itself,
+  so it names the file in a note and leaves it.
 - **Adaptive backgrounds now cover the layer by default.** Android crops the
   background layer with launcher masks and shifts it for parallax, so a
   background that does not reach every edge shows through. Non-square

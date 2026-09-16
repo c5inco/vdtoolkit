@@ -378,14 +378,19 @@ fn print_findings(input: &Path, analysis: &Analysis) {
 /// for findings that do not come from converting a file.
 fn print_diagnostics(input: &Path, diagnostics: &[Diagnostic]) {
     for diagnostic in diagnostics {
-        let changed_the_artwork = [
+        // Notes about the icon being generated are printed: what the generator
+        // changed about the artwork, and artwork close enough to the mask edge
+        // that some launchers clip it. Notes that describe the source SVG in
+        // general are left to inspect.
+        let about_this_icon = [
             DiagnosticCode::PaintFlattened.as_str(),
             DiagnosticCode::BackgroundCropped.as_str(),
+            DiagnosticCode::OutsideSafeZone.as_str(),
         ]
         .contains(&diagnostic.code.as_str());
         let label = match diagnostic.severity {
             Severity::Warning => "warning",
-            Severity::Info if changed_the_artwork => "note",
+            Severity::Info if about_this_icon => "note",
             Severity::Info | Severity::Error => continue,
         };
         eprintln!(
@@ -585,15 +590,30 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
     // break the build itself.
     let mut stale: Vec<PathBuf> = Vec::new();
     let mut unused: Vec<PathBuf> = Vec::new();
+    let mipmap_dirs = mipmap_dirs(&args.output);
     for name in [&foreground_name, &background_name, &monochrome_name] {
-        let rasters: Vec<PathBuf> = vdtoolkit::ImageFormat::EXTENSIONS
+        // Every file named for the layer in any mipmap folder is a version of
+        // the one @mipmap resource a raster layer is written as.
+        let alternatives: Vec<PathBuf> = mipmap_dirs
             .iter()
-            .map(|extension| raster_dir.join(name).with_extension(extension))
+            .flat_map(|dir| {
+                MIPMAP_EXTENSIONS
+                    .iter()
+                    .map(move |extension| dir.join(name).with_extension(extension))
+            })
             .collect();
-        // Two images with one name in one folder are the same resource twice,
-        // which aapt2 refuses to build, so a format change clears the old one.
-        let wrote_raster = rasters.iter().any(|path| written.contains(&path));
-        for path in rasters.into_iter().filter(|path| !written.contains(&path)) {
+        // When this run writes that resource into mipmap-nodpi, every other
+        // version breaks the icon: one in the same folder is the same resource
+        // twice, which aapt2 refuses to build, and one in a density folder,
+        // which Android Studio writes for every density, is chosen over
+        // mipmap-nodpi on a device of that density, so the old layer keeps
+        // showing. They are versions of the resource vdt writes, so nothing
+        // else can be using them.
+        let wrote_raster = alternatives.iter().any(|path| written.contains(&path));
+        for path in alternatives
+            .into_iter()
+            .filter(|path| !written.contains(&path))
+        {
             if wrote_raster {
                 stale.push(path);
             } else {
@@ -723,6 +743,33 @@ fn format_xml(xml: String, pretty: bool) -> String {
     } else {
         vdtoolkit::compact_xml(&xml)
     }
+}
+
+/// File extensions a mipmap resource can carry.
+const MIPMAP_EXTENSIONS: [&str; 5] = ["png", "webp", "jpg", "jpeg", "xml"];
+
+/// Every mipmap folder in a resource directory, qualified or not, in a stable
+/// order.
+fn mipmap_dirs(res: &Path) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = std::fs::read_dir(res)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .filter(|entry| {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            name == "mipmap" || name.starts_with("mipmap-")
+        })
+        .map(|entry| entry.path())
+        .collect();
+    // mipmap-nodpi is where this run writes, and may not exist yet.
+    let nodpi = res.join("mipmap-nodpi");
+    if !dirs.contains(&nodpi) {
+        dirs.push(nodpi);
+    }
+    dirs.sort();
+    dirs
 }
 
 /// Read a raster layer, report what it will look like, and return the file to

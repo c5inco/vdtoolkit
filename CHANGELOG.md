@@ -15,6 +15,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- `vdtoolkit` is now a CLI only. The experimental Rust API is no longer
+  documented or supported: its items are hidden from generated docs and exist
+  only so the `vdt` binary, WebAssembly bindings, and tests can share code.
+  Use `vdt` instead of depending on the crate.
 - Vector drawables packaged by the Figma exporter and adaptive icon layers
   now use `drawable-anydpi/`. CLI examples recommend the same directory for
   caller-selected `convert`, `optimize`, and `notification` outputs.

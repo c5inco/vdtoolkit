@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>vdtoolkit: SVG to Android VectorDrawable, rendered like Android</title>
+  <meta name="description" content="Convert an SVG to VectorDrawable XML in your browser and see how Android 5.0, 7.0, and current Android draw it.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400&display=swap">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="masthead">
+    <h1>vdt</h1>
+    <p class="lede">
+      Turns SVGs into Android VectorDrawables. Drop one in to see the XML it writes and
+      how Android draws that XML, from API 21 to today.
+    </p>
+    <a class="repo" href="https://github.com/c5inco/vdtoolkit">Install from GitHub</a>
+  </header>
+
+  <main class="workbench">
+    <section class="source" aria-labelledby="source-heading">
+      <h2 id="source-heading">Source</h2>
+      <label class="drop" id="drop">
+        <input type="file" id="file" accept=".svg,.xml,image/svg+xml,text/xml">
+        <span class="drop-title">Drop an SVG or VectorDrawable XML</span>
+        <span class="drop-hint">or choose a file. Nothing leaves your browser.</span>
+      </label>
+      <fieldset class="samples">
+        <legend>Or try a sample</legend>
+        <div id="samples" class="sample-list"></div>
+      </fieldset>
+      <p class="file-name" id="file-name" aria-live="polite"></p>
+    </section>
+
+    <section class="renders" aria-labelledby="renders-heading">
+      <div class="renders-head">
+        <h2 id="renders-heading">On Android</h2>
+        <div class="controls">
+          <label>Screen density
+            <select id="density">
+              <option value="1">mdpi (1x)</option>
+              <option value="1.5">hdpi (1.5x)</option>
+              <option value="2">xhdpi (2x)</option>
+              <option value="3" selected>xxhdpi (3x)</option>
+              <option value="4">xxxhdpi (4x)</option>
+            </select>
+          </label>
+          <label>Zoom
+            <input type="range" id="zoom" min="1" max="12" step="1" value="4">
+            <output id="zoom-value" for="zoom">4x</output>
+          </label>
+        </div>
+      </div>
+      <div class="columns" id="columns"></div>
+      <p class="method">
+        Each view is drawn by a line-by-line port of that version's drawing code from the
+        Android Open Source Project, running on Skia in your browser. Shapes, clips,
+        and gradients match the devices we test against; edge smoothing can differ by a
+        pixel.
+      </p>
+    </section>
+
+    <section class="output" aria-labelledby="output-heading">
+      <h2 id="output-heading">VectorDrawable XML</h2>
+      <div class="summary" id="summary"></div>
+      <ul class="diagnostics" id="diagnostics"></ul>
+      <div class="xml-actions">
+        <button type="button" id="copy">Copy XML</button>
+        <button type="button" id="download">Download XML</button>
+      </div>
+      <pre class="xml"><code id="xml"></code></pre>
+    </section>
+  </main>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>

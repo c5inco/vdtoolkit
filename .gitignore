@@ -9,3 +9,6 @@
 /figma-plugin/node_modules
 /figma-plugin/vendor
 __pycache__/
+/site/dist
+/site/node_modules
+/site/vendor

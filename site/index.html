@@ -3,78 +3,172 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>vdtoolkit: SVG to Android VectorDrawable, rendered like Android</title>
-  <meta name="description" content="Convert an SVG to VectorDrawable XML in your browser and see how Android 5.0, 7.0, and current Android draw it.">
+  <title>vdt: SVG to Android VectorDrawable, drawn by Android</title>
+  <meta name="description" content="Convert an SVG to VectorDrawable XML or an adaptive launcher icon in your browser and see how Android 5.0, 7.0, and current Android draw it.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Recursive:slnt,wght,CASL,CRSV,MONO@-15..0,300..1000,0..1,0..1,0..1&display=swap">
   <link rel="stylesheet" href="styles.css">
 </head>
-<body>
-  <header class="masthead">
-    <h1>vdt</h1>
-    <p class="lede">
-      Turns SVGs into Android VectorDrawables. Drop one in to see the XML it writes and
-      how Android draws that XML, from API 21 to today.
-    </p>
-    <a class="repo" href="https://github.com/c5inco/vdtoolkit">Install from GitHub</a>
+<body data-tool="drawable">
+  <header class="bar">
+    <a class="mark" href="./">vdt</a>
+    <nav class="tools" aria-label="Tools">
+      <button type="button" data-tool="drawable">Drawable</button>
+      <button type="button" data-tool="icon">Launcher icon</button>
+    </nav>
+    <label class="open">
+      <input type="file" id="file" accept=".svg,.xml,image/svg+xml,text/xml">
+      Open an SVG or XML
+    </label>
+    <nav class="samples" id="samples" aria-label="Samples"></nav>
+    <a class="repo" href="https://github.com/c5inco/vdtoolkit">GitHub</a>
   </header>
 
-  <main class="workbench">
-    <section class="source" aria-labelledby="source-heading">
-      <h2 id="source-heading">Source</h2>
-      <label class="drop" id="drop">
-        <input type="file" id="file" accept=".svg,.xml,image/svg+xml,text/xml">
-        <span class="drop-title">Drop an SVG or VectorDrawable XML</span>
-        <span class="drop-hint">or choose a file. Nothing leaves your browser.</span>
-      </label>
-      <fieldset class="samples">
-        <legend>Or try a sample</legend>
-        <div id="samples" class="sample-list"></div>
-      </fieldset>
-      <p class="file-name" id="file-name" aria-live="polite"></p>
-    </section>
-
-    <section class="renders" aria-labelledby="renders-heading">
-      <div class="renders-head">
-        <h2 id="renders-heading">On Android</h2>
+  <main>
+    <section class="table" id="tool-drawable" aria-labelledby="table-heading">
+      <div class="table-head">
+        <h1 id="table-heading"><span id="file-name">Nested clips</span> on three Androids</h1>
         <div class="controls">
-          <label>Screen density
+          <label>Density
             <select id="density">
-              <option value="1">mdpi (1x)</option>
-              <option value="1.5">hdpi (1.5x)</option>
-              <option value="2">xhdpi (2x)</option>
-              <option value="3" selected>xxhdpi (3x)</option>
-              <option value="4">xxxhdpi (4x)</option>
+              <option value="1">mdpi</option>
+              <option value="1.5">hdpi</option>
+              <option value="2">xhdpi</option>
+              <option value="3" selected>xxhdpi</option>
+              <option value="4">xxxhdpi</option>
             </select>
           </label>
           <label>Zoom
-            <input type="range" id="zoom" min="1" max="12" step="1" value="4">
-            <output id="zoom-value" for="zoom">4x</output>
+            <input type="range" id="zoom" min="1" max="12" step="1" value="5">
+            <output id="zoom-value" for="zoom">5×</output>
           </label>
         </div>
       </div>
       <div class="columns" id="columns"></div>
       <p class="method">
-        Each view is drawn by a line-by-line port of that version's drawing code from the
-        Android Open Source Project, running on Skia in your browser. Shapes, clips,
-        and gradients match the devices we test against; edge smoothing can differ by a
-        pixel.
+        Each view runs a line-by-line port of that Android version's drawing code on Skia,
+        here in your browser. Shapes, clips and gradients match the devices we test on. Edge
+        smoothing comes from today's Skia, so an edge can differ by a pixel. Hover a render
+        to compare the same pixels across all three.
       </p>
     </section>
 
-    <section class="output" aria-labelledby="output-heading">
-      <h2 id="output-heading">VectorDrawable XML</h2>
-      <div class="summary" id="summary"></div>
-      <ul class="diagnostics" id="diagnostics"></ul>
-      <div class="xml-actions">
-        <button type="button" id="copy">Copy XML</button>
-        <button type="button" id="download">Download XML</button>
+    <section class="table" id="tool-icon" aria-labelledby="icon-heading" hidden>
+      <div class="table-head">
+        <h1 id="icon-heading">Launcher icon from two layers</h1>
+        <div class="controls">
+          <label>Density
+            <select id="icon-density">
+              <option value="1">mdpi</option>
+              <option value="1.5">hdpi</option>
+              <option value="2">xhdpi</option>
+              <option value="3" selected>xxhdpi</option>
+              <option value="4">xxxhdpi</option>
+            </select>
+          </label>
+          <label>Zoom
+            <input type="range" id="icon-zoom" min="1" max="8" step="1" value="2">
+            <output id="icon-zoom-value" for="icon-zoom">2×</output>
+          </label>
+          <label><input type="checkbox" id="safe-zone" checked> Safe zone</label>
+        </div>
+      </div>
+
+      <div class="icon-grid">
+        <form class="inputs" id="icon-form">
+          <fieldset class="layer">
+            <legend>Foreground</legend>
+            <div class="layer-row">
+              <span class="layer-file" id="fg-name"></span>
+              <label class="pick">Choose<input type="file" id="fg-file" accept=".svg,image/svg+xml"></label>
+              <button type="button" class="use-sample" data-sample="foreground:foreground">Sample</button>
+            </div>
+            <div class="layer-note" id="fg-note"></div>
+          </fieldset>
+
+          <fieldset class="layer">
+            <legend>Background</legend>
+            <div class="layer-row">
+              <label class="radio"><input type="radio" name="bg-kind" value="color" checked> Color</label>
+              <input type="color" id="bg-color" value="#3ddc84" aria-label="Background color">
+              <input type="text" id="bg-hex" value="#3DDC84" size="9" spellcheck="false" aria-label="Background color as hex">
+            </div>
+            <div class="layer-row">
+              <label class="radio"><input type="radio" name="bg-kind" value="svg"> SVG</label>
+              <span class="layer-file" id="bg-name"></span>
+              <label class="pick">Choose<input type="file" id="bg-file" accept=".svg,image/svg+xml"></label>
+              <button type="button" class="use-sample" data-sample="background:flat">Flat</button>
+              <button type="button" class="use-sample" data-sample="background:gradient">Gradient</button>
+            </div>
+            <div class="layer-note" id="bg-note"></div>
+          </fieldset>
+
+          <fieldset class="layer">
+            <legend>Monochrome</legend>
+            <div class="layer-row">
+              <label class="radio"><input type="checkbox" id="mono-on"> Include</label>
+              <span class="layer-file" id="mono-name"></span>
+              <label class="pick">Choose<input type="file" id="mono-file" accept=".svg,image/svg+xml"></label>
+              <button type="button" class="use-sample" data-sample="monochrome:monochrome">Sample</button>
+            </div>
+            <div class="layer-note" id="mono-note"></div>
+          </fieldset>
+
+          <fieldset class="flags">
+            <legend>Flags</legend>
+            <label class="flag">--fit
+              <input type="range" id="fit" min="48" max="108" step="1" value="108" list="fit-marks">
+              <output id="fit-value" for="fit">108 dp</output>
+            </label>
+            <datalist id="fit-marks"><option value="66" label="safe zone"></option></datalist>
+            <p class="flag-help">Size of the square the foreground and monochrome artwork fit. 108 fills the layer; 66 keeps art inside the safe zone every launcher shows.</p>
+            <label class="flag"><input type="checkbox" id="legacy"> --legacy <span class="flag-help">also write a 48dp icon for devices below API 26</span></label>
+            <label class="flag"><input type="checkbox" id="optimize"> --optimize <span class="flag-help">shorten numbers where it cannot change rendering</span></label>
+            <label class="flag">--name <input type="text" id="icon-name" value="ic_launcher" size="14" spellcheck="false"></label>
+          </fieldset>
+
+          <pre class="command" id="command"></pre>
+        </form>
+
+        <div class="previews-block">
+          <h2>Under launcher masks</h2>
+          <div class="previews" id="previews"></div>
+          <p class="method">
+            Launchers show the central 72dp of each 108dp layer and cut it with their own
+            shape. The dashed circle is the 66dp safe zone. Layers are drawn by the latest
+            Android port; the masks are the shapes launchers use.
+          </p>
+        </div>
+
+        <div class="files-block">
+          <h2>Files written to res/</h2>
+          <ul class="files" id="files"></ul>
+          <button type="button" id="zip" class="zip">Download res.zip</button>
+        </div>
+      </div>
+
+      <div id="legacy-block" class="legacy-block" hidden>
+        <h2>The legacy icon on three Androids</h2>
+        <div class="columns" id="icon-columns"></div>
+      </div>
+    </section>
+
+    <section class="xml-section" aria-labelledby="xml-heading">
+      <div class="xml-side">
+        <h2 id="xml-heading">VectorDrawable XML</h2>
+        <dl class="facts" id="facts"></dl>
+        <div class="actions">
+          <button type="button" id="copy">Copy XML</button>
+          <button type="button" id="download">Download</button>
+        </div>
+        <ul class="diagnostics" id="diagnostics"></ul>
       </div>
       <pre class="xml"><code id="xml"></code></pre>
     </section>
   </main>
 
+  <div class="drop-veil" id="drop-veil" aria-hidden="true">Drop to open</div>
   <script type="module" src="main.js"></script>
 </body>
 </html>

@@ -1,6 +1,6 @@
 //! Browser-oriented WebAssembly adapter for the `vdtoolkit` Rust API.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 #[derive(Debug, Serialize)]
@@ -138,12 +138,356 @@ pub fn convert_notification_svg(
     ))
 }
 
+/// Generate an adaptive launcher icon from SVG layers: the same files, in the
+/// same order, that `vdt adaptive` writes into `res/`. Exactly one of
+/// `background` (an SVG scaled to cover the layer) and `background_color`
+/// (`#RRGGBB` or `#AARRGGBB`) must be given. Legacy PNGs are listed by path
+/// only; render them from the legacy vector they name.
+#[wasm_bindgen(js_name = adaptiveIcon, skip_typescript)]
+pub fn adaptive_icon(
+    foreground: &[u8],
+    background: Option<Vec<u8>>,
+    background_color: Option<String>,
+    monochrome: Option<Vec<u8>>,
+    options: JsValue,
+) -> JsValue {
+    let options: AdaptiveOptions = match serde_wasm_bindgen::from_value(options) {
+        Ok(options) => options,
+        Err(error) => {
+            return serialize(&AdaptiveResult::Failure {
+                ok: false,
+                error: adapter_error(vdtoolkit::Error::InvalidInput(format!(
+                    "invalid options: {error}"
+                ))),
+                layer: None,
+            });
+        }
+    };
+    serialize(&adaptive_result(
+        foreground,
+        background.as_deref(),
+        background_color.as_deref(),
+        monochrome.as_deref(),
+        &options,
+    ))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+struct AdaptiveOptions {
+    name: String,
+    fit: f32,
+    legacy: bool,
+    optimize: bool,
+    pretty: bool,
+}
+
+impl Default for AdaptiveOptions {
+    fn default() -> Self {
+        Self {
+            name: "ic_launcher".to_owned(),
+            fit: vdtoolkit::ADAPTIVE_ICON_SIZE,
+            legacy: false,
+            optimize: false,
+            pretty: false,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct AdaptiveFile {
+    /// Path under `res/`, with forward slashes.
+    path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    xml: Option<String>,
+    /// For a PNG: the path of the vector it is rendered from.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rendered_from: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct AdaptiveLayers {
+    foreground: vdtoolkit::Analysis,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    background: Option<vdtoolkit::Analysis>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    monochrome: Option<vdtoolkit::Analysis>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    legacy: Option<vdtoolkit::Analysis>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+enum AdaptiveResult {
+    Success {
+        ok: bool,
+        files: Vec<AdaptiveFile>,
+        layers: Box<AdaptiveLayers>,
+    },
+    Failure {
+        ok: bool,
+        error: AdapterError,
+        /// Which layer failed to convert, when one did.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        layer: Option<&'static str>,
+    },
+}
+
 #[wasm_bindgen(typescript_custom_section)]
 const TYPESCRIPT_FUNCTIONS: &'static str = r#"
+export interface AdaptiveIconOptions {
+  /** Resource name of the icon and prefix of its layers; default ic_launcher. */
+  name?: string;
+  /** Size in dp of the centered square the foreground and monochrome artwork fit; default 108. */
+  fit?: number;
+  /** Also write the icon for devices below API 26; default false. */
+  legacy?: boolean;
+  optimize?: boolean;
+  pretty?: boolean;
+}
+
+export interface AdaptiveIconFile {
+  /** Path under res/, such as mipmap-anydpi-v26/ic_launcher.xml. */
+  path: string;
+  xml?: string;
+  /** For a PNG: the path of the vector it is rendered from. */
+  rendered_from?: string;
+}
+
+export interface AdaptiveIconLayers {
+  foreground: Analysis;
+  background?: Analysis;
+  monochrome?: Analysis;
+  legacy?: Analysis;
+}
+
+export type AdaptiveIconResult =
+  | { ok: true; files: AdaptiveIconFile[]; layers: AdaptiveIconLayers }
+  | { ok: false; error: VdtoolkitError; layer?: "foreground" | "background" | "monochrome" };
+
 export function analyzeSvg(source: Uint8Array, allowApproximate?: boolean): AnalyzeResult;
 export function convertSvg(source: Uint8Array, optimize: boolean, maxSizeDp?: number, pretty?: boolean, allowApproximate?: boolean): ConvertResult;
 export function convertNotificationSvg(source: Uint8Array, optimize: boolean, fitDp?: number, pretty?: boolean, allowApproximate?: boolean): ConvertResult;
+export function adaptiveIcon(foreground: Uint8Array, background: Uint8Array | undefined, backgroundColor: string | undefined, monochrome: Uint8Array | undefined, options?: AdaptiveIconOptions): AdaptiveIconResult;
 "#;
+
+fn adaptive_result(
+    foreground: &[u8],
+    background: Option<&[u8]>,
+    background_color: Option<&str>,
+    monochrome: Option<&[u8]>,
+    options: &AdaptiveOptions,
+) -> AdaptiveResult {
+    use vdtoolkit::{Asset, Fit, IconKind};
+
+    let invalid = |message: String| AdaptiveResult::Failure {
+        ok: false,
+        error: adapter_error(vdtoolkit::Error::InvalidInput(message)),
+        layer: None,
+    };
+    if !is_resource_name(&options.name) {
+        return invalid(format!(
+            "resource name must match [a-z_][a-z0-9_]*, got {:?}",
+            options.name
+        ));
+    }
+    if !(options.fit > 0.0 && options.fit <= vdtoolkit::ADAPTIVE_ICON_SIZE) {
+        return invalid(format!(
+            "fit must be between 0 and {} dp, got {}",
+            vdtoolkit::ADAPTIVE_ICON_SIZE,
+            options.fit
+        ));
+    }
+    let color = match (background, background_color) {
+        (Some(_), None) => None,
+        (None, Some(color)) => match normalize_color(color) {
+            Ok(color) => Some(color),
+            Err(error) => return layer_failure(error, "background"),
+        },
+        _ => return invalid("give exactly one of background and backgroundColor".to_owned()),
+    };
+
+    let layer = |source: &[u8], fit: Fit, kind: IconKind, name: &'static str| {
+        vdtoolkit::convert(source)
+            .and_then(|mut asset| {
+                asset.to_icon(kind, fit)?;
+                Ok(asset)
+            })
+            .map_err(|error| (error, name))
+    };
+    let xml = |asset: &Asset| {
+        let mut asset = asset.clone();
+        if options.optimize {
+            asset.optimize();
+        }
+        if options.pretty {
+            asset.to_xml()
+        } else {
+            asset.to_compact_xml()
+        }
+    };
+    let format = |xml: String| {
+        if options.pretty {
+            xml
+        } else {
+            vdtoolkit::compact_xml(&xml)
+        }
+    };
+    let file = |path: String, xml: String| AdaptiveFile {
+        path,
+        xml: Some(xml),
+        rendered_from: None,
+    };
+
+    let name = &options.name;
+    let foreground_name = format!("{name}_foreground");
+    let background_name = format!("{name}_background");
+    let monochrome_name = format!("{name}_monochrome");
+    let round_name = format!("{name}_round");
+
+    let foreground = match layer(
+        foreground,
+        Fit::contain(options.fit),
+        IconKind::AdaptiveForeground,
+        "foreground",
+    ) {
+        Ok(asset) => asset,
+        Err((error, name)) => return layer_failure(error, name),
+    };
+    let mut files = vec![file(
+        format!("drawable-anydpi/{foreground_name}.xml"),
+        xml(&foreground),
+    )];
+    let (background, background_reference, background_analysis) = match (background, color) {
+        (Some(source), _) => {
+            let asset = match layer(
+                source,
+                IconKind::AdaptiveBackground.default_fit(),
+                IconKind::AdaptiveBackground,
+                "background",
+            ) {
+                Ok(asset) => asset,
+                Err((error, name)) => return layer_failure(error, name),
+            };
+            files.push(file(
+                format!("drawable-anydpi/{background_name}.xml"),
+                xml(&asset),
+            ));
+            let analysis = asset.analysis.clone();
+            (
+                asset,
+                format!("@drawable/{background_name}"),
+                Some(analysis),
+            )
+        }
+        (None, Some(color)) => {
+            files.push(file(
+                format!("values/{background_name}.xml"),
+                format(vdtoolkit::color_resource_xml(&background_name, &color)),
+            ));
+            let asset = match Asset::solid_adaptive_layer(&color) {
+                Ok(asset) => asset,
+                Err(error) => return layer_failure(error, "background"),
+            };
+            (asset, format!("@color/{background_name}"), None)
+        }
+        (None, None) => unreachable!("one background is required above"),
+    };
+    let mut monochrome_analysis = None;
+    let monochrome_reference = match monochrome {
+        Some(source) => {
+            let asset = match layer(
+                source,
+                Fit::contain(options.fit),
+                IconKind::AdaptiveForeground,
+                "monochrome",
+            ) {
+                Ok(asset) => asset,
+                Err((error, name)) => return layer_failure(error, name),
+            };
+            files.push(file(
+                format!("drawable-anydpi/{monochrome_name}.xml"),
+                xml(&asset),
+            ));
+            monochrome_analysis = Some(asset.analysis);
+            Some(format!("@drawable/{monochrome_name}"))
+        }
+        None => None,
+    };
+    let icon = format(vdtoolkit::adaptive_icon_xml(
+        &background_reference,
+        &format!("@drawable/{foreground_name}"),
+        monochrome_reference.as_deref(),
+    ));
+    files.push(file(format!("mipmap-anydpi-v26/{name}.xml"), icon.clone()));
+    files.push(file(format!("mipmap-anydpi-v26/{round_name}.xml"), icon));
+
+    let mut legacy_analysis = None;
+    if options.legacy {
+        let legacy = Asset::legacy_launcher_icon(&background, &foreground);
+        let legacy_xml = xml(&legacy);
+        if legacy.analysis.minimum_api == Some(21) {
+            for icon_name in [name.as_str(), round_name.as_str()] {
+                files.push(file(format!("mipmap/{icon_name}.xml"), legacy_xml.clone()));
+            }
+        } else {
+            for icon_name in [name.as_str(), round_name.as_str()] {
+                files.push(file(
+                    format!("mipmap-anydpi-v24/{icon_name}.xml"),
+                    legacy_xml.clone(),
+                ));
+            }
+            for (density, _) in vdtoolkit::LEGACY_ICON_DENSITIES {
+                for icon_name in [name.as_str(), round_name.as_str()] {
+                    files.push(AdaptiveFile {
+                        path: format!("mipmap-{density}/{icon_name}.png"),
+                        xml: None,
+                        rendered_from: Some(format!("mipmap-anydpi-v24/{icon_name}.xml")),
+                    });
+                }
+            }
+        }
+        legacy_analysis = Some(legacy.analysis);
+    }
+
+    AdaptiveResult::Success {
+        ok: true,
+        files,
+        layers: Box::new(AdaptiveLayers {
+            foreground: foreground.analysis,
+            background: background_analysis,
+            monochrome: monochrome_analysis,
+            legacy: legacy_analysis,
+        }),
+    }
+}
+
+fn layer_failure(error: vdtoolkit::Error, layer: &'static str) -> AdaptiveResult {
+    AdaptiveResult::Failure {
+        ok: false,
+        error: adapter_error(error),
+        layer: Some(layer),
+    }
+}
+
+/// `[a-z_][a-z0-9_]*`, as the command line requires. Java keywords, which
+/// aapt2 also rejects, are left to the build.
+fn is_resource_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    matches!(chars.next(), Some(c) if c == '_' || c.is_ascii_lowercase())
+        && chars.all(|c| c == '_' || c.is_ascii_lowercase() || c.is_ascii_digit())
+}
+
+fn normalize_color(color: &str) -> vdtoolkit::Result<String> {
+    let digits = color.strip_prefix('#').unwrap_or(color);
+    if matches!(digits.len(), 6 | 8) && digits.chars().all(|c| c.is_ascii_hexdigit()) {
+        Ok(format!("#{}", digits.to_ascii_uppercase()))
+    } else {
+        Err(vdtoolkit::Error::InvalidInput(format!(
+            "background color must be #RRGGBB or #AARRGGBB, got {color:?}"
+        )))
+    }
+}
 
 fn analyze_result(source: &[u8], allow_approximate: bool) -> OperationResult {
     match vdtoolkit::analyze_with_options(source, allow_approximate) {
@@ -213,6 +557,13 @@ fn notification_result(
 }
 
 fn failure(error: vdtoolkit::Error) -> OperationResult {
+    OperationResult::Failure {
+        ok: false,
+        error: adapter_error(error),
+    }
+}
+
+fn adapter_error(error: vdtoolkit::Error) -> AdapterError {
     let kind = match &error {
         vdtoolkit::Error::Read { .. } | vdtoolkit::Error::Write { .. } => "io",
         vdtoolkit::Error::Utf8(_) => "utf8",
@@ -227,17 +578,14 @@ fn failure(error: vdtoolkit::Error) -> OperationResult {
         vdtoolkit::Error::Incompatible(analysis) => Some(*analysis),
         _ => None,
     };
-    OperationResult::Failure {
-        ok: false,
-        error: AdapterError {
-            kind,
-            message,
-            analysis,
-        },
+    AdapterError {
+        kind,
+        message,
+        analysis,
     }
 }
 
-fn serialize(result: &OperationResult) -> JsValue {
+fn serialize<T: Serialize>(result: &T) -> JsValue {
     result
         .serialize(&serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true))
         .expect("adapter result contains only JavaScript-compatible values")
@@ -299,8 +647,8 @@ mod tests {
     fn raster_conversion_errors_do_not_name_cli_flags() {
         let png = b"\x89PNG\r\n\x1a\n";
         for result in [
-            convert_result(png, false, None, false),
-            notification_result(png, false, 24.0, false),
+            convert_result(png, false, None, false, false),
+            notification_result(png, false, 24.0, false, false),
         ] {
             let result = json(&result);
             assert_eq!(result["error"]["kind"], "invalid_input");

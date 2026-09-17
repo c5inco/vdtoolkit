@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import init, { analyzeSvg, convertNotificationSvg, convertSvg } from "../pkg/vdtoolkit_wasm.js";
+import init, { adaptiveIcon, analyzeSvg, convertNotificationSvg, convertSvg } from "../pkg/vdtoolkit_wasm.js";
 
 const wasm = await readFile(new URL("../pkg/vdtoolkit_wasm_bg.wasm", import.meta.url));
 await init({ module_or_path: wasm });
@@ -70,4 +70,27 @@ test("notification conversion whitens and fits artwork on a 24dp canvas", () => 
   assert.deepEqual([result.analysis.metrics.width, result.analysis.metrics.height], [24, 24]);
   assert.match(result.xml, /android:fillColor="#FFFFFF"/);
   assert.ok(result.analysis.diagnostics.some(({ code }) => code === "SVGVD021"));
+});
+
+test("adaptive icon generation mirrors the command's files", () => {
+  const result = adaptiveIcon(exact, undefined, "#3DDC84", undefined, { fit: 66, legacy: true });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.files.map(({ path }) => path), [
+    "drawable-anydpi/ic_launcher_foreground.xml",
+    "values/ic_launcher_background.xml",
+    "mipmap-anydpi-v26/ic_launcher.xml",
+    "mipmap-anydpi-v26/ic_launcher_round.xml",
+    "mipmap/ic_launcher.xml",
+    "mipmap/ic_launcher_round.xml",
+  ]);
+  assert.match(result.files[0].xml, /android:width="108dp"/);
+  assert.equal(result.layers.legacy.minimum_api, 21);
+
+  const failed = adaptiveIcon(exact, unsupported, undefined, undefined, {});
+  assert.equal(failed.ok, false);
+  assert.equal(failed.layer, "background");
+
+  const bad = adaptiveIcon(exact, undefined, "#3DDC84", undefined, { name: "Icon" });
+  assert.equal(bad.ok, false);
+  assert.equal(bad.error.kind, "invalid_input");
 });

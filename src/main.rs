@@ -7,7 +7,8 @@ use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 use unicode_normalization::UnicodeNormalization;
 use vdtoolkit::{
-    Analysis, Asset, Compatibility, DiagnosticCode, Error, IconKind, Result, Severity,
+    Analysis, Asset, Compatibility, Diagnostic, DiagnosticCode, Error, Fit, FitMode, IconKind,
+    Result, Severity,
 };
 use walkdir::WalkDir;
 
@@ -82,15 +83,41 @@ struct NotificationArgs {
 #[command(group(
     ArgGroup::new("background_layer")
         .required(true)
-        .args(["background", "background_color"])
+        .args(["background", "background_color", "background_image"])
+), group(
+    ArgGroup::new("foreground_layer")
+        .required(true)
+        .args(["foreground", "foreground_image"])
+), group(
+    ArgGroup::new("monochrome_layer").args(["monochrome", "monochrome_image"])
 ))]
 struct AdaptiveArgs {
     /// Foreground layer SVG.
     #[arg(long)]
-    foreground: PathBuf,
-    /// Background layer SVG, scaled to fill the whole 108dp layer.
+    foreground: Option<PathBuf>,
+    /// Foreground layer as a PNG or WebP. The file is copied unchanged into
+    /// `mipmap-nodpi/` and must already be drawn on the full square layer with
+    /// the artwork inside the 66dp safe zone: vdt cannot scale a raster layer
+    /// without resampling it. A JPEG is rejected, because a layer with no
+    /// alpha channel would hide the background.
+    #[arg(long, value_name = "IMAGE")]
+    foreground_image: Option<PathBuf>,
+    /// Background layer SVG, scaled onto the whole 108dp layer.
     #[arg(long)]
     background: Option<PathBuf>,
+    /// How a background SVG is scaled onto the 108dp layer. `cover`, the
+    /// default, fills the layer and lets it crop whatever overflows, so
+    /// non-square artwork still reaches every edge. `contain` scales all of
+    /// the artwork in, which leaves non-square artwork letterboxed and the
+    /// bands showing through launcher masks and parallax.
+    #[arg(long, value_enum, value_name = "MODE")]
+    background_fit: Option<FitModeArg>,
+    /// Background layer as a PNG, WebP, or JPEG. The file is copied unchanged into
+    /// `mipmap-nodpi/`, where Android draws it onto the layer without scaling
+    /// it for density. vdt never resamples the image, but it does decode it to
+    /// report what the layer will look like.
+    #[arg(long, value_name = "IMAGE")]
+    background_image: Option<PathBuf>,
     /// Solid background color as #RRGGBB or #AARRGGBB, written as a color
     /// resource instead of a drawable.
     #[arg(long, value_name = "COLOR")]
@@ -98,14 +125,17 @@ struct AdaptiveArgs {
     /// Monochrome layer SVG for themed icons on Android 13 and newer.
     #[arg(long)]
     monochrome: Option<PathBuf>,
+    /// Monochrome layer as a PNG or WebP, placed like --foreground-image.
+    #[arg(long, value_name = "IMAGE")]
+    monochrome_image: Option<PathBuf>,
     /// Resource name of the icon and prefix of its layers.
     #[arg(long, default_value = "ic_launcher")]
     name: String,
     /// Size in dp of the centered square that the foreground and monochrome
     /// artwork is scaled to fit. 108 fills the layer. Android recommends 48 to
     /// 66 for a logo; 66 is the safe zone that no launcher mask hides.
-    #[arg(long, default_value_t = vdtoolkit::ADAPTIVE_ICON_SIZE)]
-    fit: f32,
+    #[arg(long)]
+    fit: Option<f32>,
     /// Also write a legacy icon for devices below API 26: the background and
     /// foreground under a circular mask. It is a vector in `mipmap/`, or, when
     /// the art needs API 24, a vector in `mipmap-anydpi-v24/` plus PNGs in
@@ -145,6 +175,10 @@ struct ReportArgs {
     /// for a notification icon and 108 for an adaptive layer.
     #[arg(long, requires = "as_kind")]
     fit: Option<f32>,
+    /// How the artwork is scaled onto the square given by --fit, for
+    /// `--as adaptive-background`. Defaults to what `adaptive` uses: `cover`.
+    #[arg(long, value_enum, value_name = "MODE", requires = "as_kind")]
+    background_fit: Option<FitModeArg>,
     /// Treat safe normalization as incompatible.
     #[arg(long)]
     strict: bool,
@@ -170,11 +204,39 @@ impl From<IconKindArg> for IconKind {
     }
 }
 
+#[derive(Clone, Copy, ValueEnum)]
+enum FitModeArg {
+    /// Scale the artwork until it covers the layer, cropping the overflow.
+    Cover,
+    /// Scale all of the artwork onto the layer, leaving bands unpainted.
+    Contain,
+}
+
+impl From<FitModeArg> for FitMode {
+    fn from(mode: FitModeArg) -> Self {
+        match mode {
+            FitModeArg::Cover => Self::Cover,
+            FitModeArg::Contain => Self::Contain,
+        }
+    }
+}
+
 /// The icon a report was made for, when `--as` was given.
 #[derive(Clone, Copy, Serialize)]
 struct IconTarget {
     kind: IconKind,
     fit: f32,
+    fit_mode: FitMode,
+}
+
+impl IconTarget {
+    /// The placement the report's analysis is made with.
+    fn placement(self) -> Fit {
+        Fit {
+            size: self.fit,
+            mode: self.fit_mode,
+        }
+    }
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -294,7 +356,7 @@ fn notification_one(args: &NotificationArgs, input: &Path, output: Option<Output
             "requires normalization and was rejected by --strict".to_owned(),
         ));
     }
-    asset.to_icon(IconKind::Notification, args.fit)?;
+    asset.to_icon(IconKind::Notification, Fit::contain(args.fit))?;
     print_findings(input, &asset.analysis);
     if args.optimize {
         asset.optimize();
@@ -310,14 +372,26 @@ fn notification_one(args: &NotificationArgs, input: &Path, output: Option<Output
 /// Print a converted file's warnings, and the flattening note a notification
 /// icon carries, with their codes. Normalization notes stay with `inspect`.
 fn print_findings(input: &Path, analysis: &Analysis) {
-    for diagnostic in &analysis.diagnostics {
+    print_diagnostics(input, &analysis.diagnostics);
+}
+
+/// Print the warnings and the notes that name something vdt changed or chose,
+/// for findings that do not come from converting a file.
+fn print_diagnostics(input: &Path, diagnostics: &[Diagnostic]) {
+    for diagnostic in diagnostics {
+        // Notes about the icon being generated are printed: what the generator
+        // changed about the artwork, and artwork close enough to the mask edge
+        // that some launchers clip it. Notes that describe the source SVG in
+        // general are left to inspect.
+        let about_this_icon = [
+            DiagnosticCode::PaintFlattened.as_str(),
+            DiagnosticCode::BackgroundCropped.as_str(),
+            DiagnosticCode::OutsideSafeZone.as_str(),
+        ]
+        .contains(&diagnostic.code.as_str());
         let label = match diagnostic.severity {
             Severity::Warning => "warning",
-            Severity::Info
-                if diagnostic.code.as_str() == DiagnosticCode::PaintFlattened.as_str() =>
-            {
-                "note"
-            }
+            Severity::Info if about_this_icon => "note",
             Severity::Info | Severity::Error => continue,
         };
         eprintln!(
@@ -331,12 +405,43 @@ fn print_findings(input: &Path, analysis: &Analysis) {
 
 fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
     validate_resource_name(&args.name)?;
-    if !(args.fit > 0.0 && args.fit <= vdtoolkit::ADAPTIVE_ICON_SIZE) {
+    // --fit places vector artwork. A raster layer is copied, never resampled,
+    // so there is nothing for it to place.
+    if args.fit.is_some() && args.foreground.is_none() && args.monochrome.is_none() {
+        return Err(Error::InvalidInput(
+            "--fit places vector artwork, and vdt cannot scale a raster layer without resampling \
+             it; draw the image with its artwork already inside the 66dp safe zone"
+                .to_owned(),
+        ));
+    }
+    let fit = args.fit.unwrap_or(vdtoolkit::ADAPTIVE_ICON_SIZE);
+    if !(fit > 0.0 && fit <= vdtoolkit::ADAPTIVE_ICON_SIZE) {
         return Err(Error::InvalidInput(format!(
-            "--fit must be between 0 and {} dp, got {}",
-            vdtoolkit::ADAPTIVE_ICON_SIZE,
-            args.fit
+            "--fit must be between 0 and {} dp, got {fit}",
+            vdtoolkit::ADAPTIVE_ICON_SIZE
         )));
+    }
+    if args.background_fit.is_some() && args.background.is_none() {
+        return Err(Error::InvalidInput(
+            "--background-fit applies to --background, which is the only background vdt places"
+                .to_owned(),
+        ));
+    }
+    if args.foreground_image.is_some() && args.legacy {
+        return Err(Error::InvalidInput(
+            "--legacy composes the foreground into a vector icon, which it cannot do for \
+             --foreground-image; use --foreground, or drop --legacy"
+                .to_owned(),
+        ));
+    }
+    if args.background_image.is_some() && args.legacy {
+        // The legacy icon is one vector composed from both layers, and vdt
+        // cannot draw a bitmap into a vector.
+        return Err(Error::InvalidInput(
+            "--legacy composes the background into a vector icon, which it cannot do for \
+             --background-image; use --background or --background-color, or drop --legacy"
+                .to_owned(),
+        ));
     }
     let color = args
         .background_color
@@ -350,26 +455,49 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
     let background_name = format!("{}_background", args.name);
     let monochrome_name = format!("{}_monochrome", args.name);
 
-    // Every layer is converted before anything is written, so a failing
-    // layer leaves the resource directory untouched.
-    let Some(foreground) = adaptive_layer(
-        &args,
-        &args.foreground,
-        args.fit,
-        IconKind::AdaptiveForeground,
-    ) else {
-        return Ok(Outcome::Failed);
-    };
-    let mut files = vec![(
-        drawable_dir.join(&foreground_name).with_extension("xml"),
-        drawable_xml(&foreground, args.optimize, args.pretty),
-    )];
-    let (background, background_reference) = match (&args.background, color) {
+    let raster_dir = args.output.join("mipmap-nodpi");
+    let mut files: Vec<(PathBuf, String)> = Vec::new();
+    let mut images: Vec<(PathBuf, Vec<u8>)> = Vec::new();
+
+    // Every layer is read before anything is written, so a failing layer
+    // leaves the resource directory untouched.
+    let (foreground, foreground_reference) = match (&args.foreground, &args.foreground_image) {
         (Some(path), _) => {
+            let Some(layer) =
+                adaptive_layer(&args, path, Fit::contain(fit), IconKind::AdaptiveForeground)
+            else {
+                return Ok(Outcome::Failed);
+            };
+            files.push((
+                drawable_dir.join(&foreground_name).with_extension("xml"),
+                drawable_xml(&layer, args.optimize, args.pretty),
+            ));
+            (Some(layer), format!("@drawable/{foreground_name}"))
+        }
+        (None, Some(path)) => {
+            images.push(raster_layer(
+                path,
+                &raster_dir,
+                &foreground_name,
+                vdtoolkit::LayerKind::Foreground,
+            )?);
+            (None, format!("@mipmap/{foreground_name}"))
+        }
+        (None, None) => unreachable!("clap requires a foreground layer"),
+    };
+    let (background, background_reference) = match (&args.background, &args.background_image, color)
+    {
+        (Some(path), _, _) => {
             let Some(layer) = adaptive_layer(
                 &args,
                 path,
-                vdtoolkit::ADAPTIVE_ICON_SIZE,
+                Fit {
+                    size: vdtoolkit::ADAPTIVE_ICON_SIZE,
+                    mode: args.background_fit.map_or(
+                        IconKind::AdaptiveBackground.default_fit().mode,
+                        FitMode::from,
+                    ),
+                },
                 IconKind::AdaptiveBackground,
             ) else {
                 return Ok(Outcome::Failed);
@@ -378,9 +506,21 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
                 drawable_dir.join(&background_name).with_extension("xml"),
                 drawable_xml(&layer, args.optimize, args.pretty),
             ));
-            (layer, format!("@drawable/{background_name}"))
+            (Some(layer), format!("@drawable/{background_name}"))
         }
-        (None, Some(color)) => {
+        // The image is copied, never resampled, so what is written is the
+        // source byte for byte; decoding it only reports what the layer
+        // will look like on a device.
+        (None, Some(path), _) => {
+            images.push(raster_layer(
+                path,
+                &raster_dir,
+                &background_name,
+                vdtoolkit::LayerKind::Background,
+            )?);
+            (None, format!("@mipmap/{background_name}"))
+        }
+        (None, None, Some(color)) => {
             files.push((
                 args.output
                     .join("values")
@@ -392,16 +532,16 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
                 ),
             ));
             (
-                vdtoolkit::Asset::solid_adaptive_layer(&color)?,
+                Some(vdtoolkit::Asset::solid_adaptive_layer(&color)?),
                 format!("@color/{background_name}"),
             )
         }
-        (None, None) => unreachable!("clap requires a background layer"),
+        (None, None, None) => unreachable!("clap requires a background layer"),
     };
-    let monochrome_reference = match &args.monochrome {
-        Some(monochrome) => {
+    let monochrome_reference = match (&args.monochrome, &args.monochrome_image) {
+        (Some(path), _) => {
             let Some(layer) =
-                adaptive_layer(&args, monochrome, args.fit, IconKind::AdaptiveForeground)
+                adaptive_layer(&args, path, Fit::contain(fit), IconKind::AdaptiveForeground)
             else {
                 return Ok(Outcome::Failed);
             };
@@ -411,12 +551,21 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
             ));
             Some(format!("@drawable/{monochrome_name}"))
         }
-        None => None,
+        (None, Some(path)) => {
+            images.push(raster_layer(
+                path,
+                &raster_dir,
+                &monochrome_name,
+                vdtoolkit::LayerKind::Foreground,
+            )?);
+            Some(format!("@mipmap/{monochrome_name}"))
+        }
+        (None, None) => None,
     };
     let icon = format_xml(
         vdtoolkit::adaptive_icon_xml(
             &background_reference,
-            &format!("@drawable/{foreground_name}"),
+            &foreground_reference,
             monochrome_reference.as_deref(),
         ),
         args.pretty,
@@ -427,13 +576,70 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
         icon.clone(),
     ));
     files.push((mipmap_dir.join(&round_name).with_extension("xml"), icon));
-    let mut images: Vec<(PathBuf, Vec<u8>)> = Vec::new();
     // The two legacy layouts are exclusive, and a qualified resource left
     // behind by an earlier run would outrank the new one on API 24 and 25, so
     // whichever layout is not written this time is removed.
+    let written: Vec<&PathBuf> = files
+        .iter()
+        .map(|(path, _)| path)
+        .chain(images.iter().map(|(path, _)| path))
+        .collect();
+    // A file an earlier run left behind is removed only when keeping it would
+    // break the build or show the wrong icon. Anything else is merely unused,
+    // and vdt cannot tell whether the rest of the project refers to it, so it
+    // is named and left alone: deleting a resource something still uses would
+    // break the build itself.
     let mut stale: Vec<PathBuf> = Vec::new();
-    if args.legacy {
-        let legacy = vdtoolkit::Asset::legacy_launcher_icon(&background, &foreground);
+    let mut unused: Vec<PathBuf> = Vec::new();
+    let mipmap_dirs = mipmap_dirs(&args.output);
+    for name in [&foreground_name, &background_name, &monochrome_name] {
+        // Every file named for the layer in any mipmap folder is a version of
+        // the one @mipmap resource a raster layer is written as.
+        let alternatives: Vec<PathBuf> = mipmap_dirs
+            .iter()
+            .flat_map(|dir| {
+                MIPMAP_EXTENSIONS
+                    .iter()
+                    .map(move |extension| dir.join(name).with_extension(extension))
+            })
+            .collect();
+        // When this run writes that resource into mipmap-nodpi, every other
+        // version breaks the icon: one in the same folder is the same resource
+        // twice, which aapt2 refuses to build, and one in a density folder,
+        // which Android Studio writes for every density, is chosen over
+        // mipmap-nodpi on a device of that density, so the old layer keeps
+        // showing. They are versions of the resource vdt writes, so nothing
+        // else can be using them.
+        let wrote_raster = alternatives.iter().any(|path| written.contains(&path));
+        for path in alternatives
+            .into_iter()
+            .filter(|path| !written.contains(&path))
+        {
+            if wrote_raster {
+                stale.push(path);
+            } else {
+                unused.push(path);
+            }
+        }
+        // A vector layer is a @drawable and a raster one a @mipmap, so one left
+        // behind by the other form never collides with it.
+        let vector = drawable_dir.join(name).with_extension("xml");
+        if !written.contains(&&vector) {
+            unused.push(vector);
+        }
+    }
+    // A color background is a @color, which nothing else vdt writes collides
+    // with, and a values file can hold any number of other resources besides.
+    let background_values = args
+        .output
+        .join("values")
+        .join(&background_name)
+        .with_extension("xml");
+    if !written.contains(&&background_values) {
+        unused.push(background_values);
+    }
+    if let (true, Some(background), Some(foreground)) = (args.legacy, &background, &foreground) {
+        let legacy = vdtoolkit::Asset::legacy_launcher_icon(background, foreground);
         let xml = drawable_xml(&legacy, args.optimize, args.pretty);
         let names = [args.name.as_str(), round_name.as_str()];
         let plain: Vec<PathBuf> = names
@@ -463,7 +669,6 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
             for path in plain {
                 files.push((path, xml.clone()));
             }
-            stale = split;
         } else {
             // Gradients, even-odd fills, or a second clip need API 24. The exact
             // vector serves API 24 and 25 from an anydpi folder, which outranks
@@ -480,7 +685,30 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
                 images.push((pair[0].clone(), png.clone()));
                 images.push((pair[1].clone(), png));
             }
-            stale = plain;
+        }
+        // Every other file named for the legacy icon in any mipmap folder is a
+        // version of the resource this run writes, and it breaks the icon: in
+        // a folder vdt writes to it is the same resource twice, which aapt2
+        // refuses to build, and anywhere else it is chosen over vdt's version on
+        // some device. Android Studio writes the legacy icon as .webp into every
+        // density folder, so a Studio project hits both cases. The adaptive
+        // icon in mipmap-anydpi-v26 is written this run, so it stays.
+        let written: Vec<&PathBuf> = files
+            .iter()
+            .map(|(path, _)| path)
+            .chain(images.iter().map(|(path, _)| path))
+            .collect();
+        for name in names {
+            stale.extend(
+                mipmap_dirs
+                    .iter()
+                    .flat_map(|dir| {
+                        MIPMAP_EXTENSIONS
+                            .iter()
+                            .map(move |extension| dir.join(name).with_extension(extension))
+                    })
+                    .filter(|path| !written.contains(&path)),
+            );
         }
     }
 
@@ -497,7 +725,14 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
             path: path.clone(),
             source,
         })?;
-        eprintln!("removed stale legacy icon {}", path.display());
+        eprintln!("removed stale resource {}", path.display());
+    }
+    for path in unused.iter().filter(|path| path.is_file()) {
+        eprintln!(
+            "note: the icon no longer uses {}; remove it if nothing else in the project refers \
+             to it",
+            path.display()
+        );
     }
     Ok(Outcome::Passed)
 }
@@ -533,9 +768,59 @@ fn format_xml(xml: String, pretty: bool) -> String {
     }
 }
 
+/// File extensions a mipmap resource can carry.
+const MIPMAP_EXTENSIONS: [&str; 5] = ["png", "webp", "jpg", "jpeg", "xml"];
+
+/// Every mipmap folder in a resource directory, qualified or not, in a stable
+/// order.
+fn mipmap_dirs(res: &Path) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = std::fs::read_dir(res)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .filter(|entry| {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            name == "mipmap" || name.starts_with("mipmap-")
+        })
+        .map(|entry| entry.path())
+        .collect();
+    // mipmap-nodpi is where this run writes, and may not exist yet.
+    let nodpi = res.join("mipmap-nodpi");
+    if !dirs.contains(&nodpi) {
+        dirs.push(nodpi);
+    }
+    dirs.sort();
+    dirs
+}
+
+/// Read a raster layer, report what it will look like, and return the file to
+/// write with the extension the image's own header calls for.
+///
+/// The bytes are the source's, unchanged: vdt places the image and never
+/// resamples it.
+fn raster_layer(
+    input: &Path,
+    dir: &Path,
+    name: &str,
+    layer: vdtoolkit::LayerKind,
+) -> Result<(PathBuf, Vec<u8>)> {
+    let data = std::fs::read(input).map_err(|source| Error::Read {
+        path: input.to_owned(),
+        source,
+    })?;
+    let (image, diagnostics) = vdtoolkit::analyze_layer_image(&data, layer)?;
+    print_diagnostics(input, &diagnostics);
+    Ok((
+        dir.join(name).with_extension(image.format.extension()),
+        data,
+    ))
+}
+
 /// Convert and fit one layer as `kind`, printing its findings, or report the
 /// failure with its path and return `None`.
-fn adaptive_layer(args: &AdaptiveArgs, input: &Path, fit: f32, kind: IconKind) -> Option<Asset> {
+fn adaptive_layer(args: &AdaptiveArgs, input: &Path, fit: Fit, kind: IconKind) -> Option<Asset> {
     let layer = || -> Result<Asset> {
         let mut asset = vdtoolkit::convert_file(input)?;
         if args.strict && asset.analysis.compatibility != Compatibility::Exact {
@@ -842,11 +1127,20 @@ fn is_large(analysis: &Analysis) -> bool {
 
 fn report(args: ReportArgs, inspect: bool) -> Result<Outcome> {
     let inputs = inputs(&args.input)?;
-    let icon = args.as_kind.map(|kind| IconTarget {
-        kind: kind.into(),
-        fit: args
-            .fit
-            .unwrap_or_else(|| IconKind::from(kind).default_fit()),
+    if args.background_fit.is_some()
+        && !matches!(args.as_kind, Some(IconKindArg::AdaptiveBackground))
+    {
+        return Err(Error::InvalidInput(
+            "--background-fit applies to --as adaptive-background".to_owned(),
+        ));
+    }
+    let icon = args.as_kind.map(|kind| {
+        let default = IconKind::from(kind).default_fit();
+        IconTarget {
+            kind: kind.into(),
+            fit: args.fit.unwrap_or(default.size),
+            fit_mode: args.background_fit.map_or(default.mode, FitMode::from),
+        }
     });
     if let Some(icon) = icon.filter(|icon| !(icon.fit > 0.0 && icon.fit <= icon.kind.canvas())) {
         return Err(Error::InvalidInput(format!(
@@ -860,7 +1154,7 @@ fn report(args: ReportArgs, inspect: bool) -> Result<Outcome> {
     let mut failed = 0;
     for input in &inputs {
         let result = match icon {
-            Some(icon) => vdtoolkit::analyze_file_as(input, icon.kind, icon.fit),
+            Some(icon) => vdtoolkit::analyze_file_as(input, icon.kind, icon.placement()),
             None => vdtoolkit::analyze_file(input),
         };
         match &result {

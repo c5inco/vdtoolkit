@@ -4,7 +4,7 @@
 use serde::Serialize;
 
 use crate::analysis::{Bounds, Diagnostic, DiagnosticCode, Severity};
-use crate::{Asset, Flattening, Result, adaptive, notification};
+use crate::{Asset, Fit, FitMode, Flattening, Result, adaptive, notification};
 
 /// What an SVG is being turned into, which decides the canvas it is fitted
 /// to and the findings that apply to the result.
@@ -31,15 +31,27 @@ impl IconKind {
     }
 
     /// The fit the generator commands use unless told otherwise: the whole
-    /// canvas.
-    pub fn default_fit(self) -> f32 {
-        self.canvas()
+    /// canvas, scaled to fit inside it.
+    ///
+    /// A background covers the canvas instead. Android crops that layer with
+    /// launcher masks and shifts it for parallax either way, so a background
+    /// that does not reach every edge shows through; covering is what makes
+    /// non-square artwork usable there.
+    pub fn default_fit(self) -> Fit {
+        match self {
+            Self::AdaptiveBackground => Fit::cover(self.canvas()),
+            Self::Notification | Self::AdaptiveForeground => Fit::contain(self.canvas()),
+        }
     }
 }
 
 /// Fraction of the canvas above which a notification icon is more likely a
 /// solid plate than a silhouette.
 const NOTIFICATION_PLATE_COVERAGE: f32 = 0.9;
+
+/// Fraction of a background below which cropping is rounding, not a decision
+/// worth reporting.
+const BACKGROUND_CROP_NOTE: f32 = 0.005;
 
 impl Asset {
     /// Turn this asset into an icon of `kind`, scaled uniformly and centered
@@ -51,10 +63,12 @@ impl Asset {
     /// as an `SVGVD021` note. Artwork that paints almost the whole canvas
     /// gets an `SVGVD017` warning, and artwork with nothing painted an
     /// `SVGVD018` warning. An adaptive foreground whose content leaves the
-    /// 66dp safe zone gets `SVGVD019`, and an adaptive background that does
-    /// not paint every pixel of the layer gets `SVGVD020`. None of these
-    /// change the compatibility or the minimum API.
-    pub fn to_icon(&mut self, kind: IconKind, fit: f32) -> Result<()> {
+    /// 66dp safe zone gets `SVGVD019`, an adaptive background that does not
+    /// paint every pixel of the layer gets `SVGVD020`, and an adaptive
+    /// background that [`FitMode::Cover`] scaled past the edges of the layer
+    /// gets `SVGVD023` naming how much the layer cropped. None of these change
+    /// the compatibility or the minimum API.
+    pub fn to_icon(&mut self, kind: IconKind, fit: Fit) -> Result<()> {
         match kind {
             IconKind::Notification => {
                 let flattening = self.to_notification_icon(fit)?;
@@ -109,26 +123,44 @@ impl Asset {
             }
             IconKind::AdaptiveForeground => {
                 self.fit_adaptive_layer(fit)?;
-                if let Some(bounds) = self.outside_adaptive_safe_zone() {
-                    self.analysis.diagnostics.push(Diagnostic {
-                        code: DiagnosticCode::OutsideSafeZone,
-                        severity: Severity::Warning,
-                        message: format!(
-                            "content spans {}, outside the {}dp safe zone; launcher masks may \
-                             hide it",
-                            span(bounds),
-                            crate::xml::number(adaptive::ADAPTIVE_ICON_SAFE_ZONE)
-                        ),
-                        location: None,
-                        suggestion: Some(format!(
-                            "Scale the artwork into the safe zone with --fit {} or smaller.",
-                            crate::xml::number(adaptive::ADAPTIVE_ICON_SAFE_ZONE)
-                        )),
-                    });
+                if let Some(reach) = self.painted_reach() {
+                    let remedy = format!(
+                        "Scale the artwork into the circle with --fit {} or smaller.",
+                        crate::xml::number(adaptive::fit_for_reach(fit.size, reach))
+                    );
+                    self.analysis
+                        .diagnostics
+                        .extend(adaptive::safe_zone_finding(reach, "content", remedy));
                 }
             }
             IconKind::AdaptiveBackground => {
+                // The fit replaces the source viewport with the canvas, so
+                // what it crops has to be measured before it runs.
+                let cropped = fit.cropped(
+                    self.analysis.metrics.viewport_width,
+                    self.analysis.metrics.viewport_height,
+                    adaptive::ADAPTIVE_ICON_SIZE,
+                );
                 self.fit_adaptive_layer(fit)?;
+                if cropped > BACKGROUND_CROP_NOTE {
+                    self.analysis.diagnostics.push(Diagnostic {
+                        code: DiagnosticCode::BackgroundCropped,
+                        severity: Severity::Info,
+                        message: format!(
+                            "scaled the background to cover the {}dp layer, which cropped {:.0}% \
+                             of the artwork",
+                            crate::xml::number(adaptive::ADAPTIVE_ICON_SIZE),
+                            cropped * 100.0
+                        ),
+                        location: None,
+                        suggestion: Some(
+                            "Draw the background on a square canvas to control what the layer \
+                             keeps, or use --background-fit contain to scale all of it in, which \
+                             leaves part of the layer unpainted."
+                                .to_owned(),
+                        ),
+                    });
+                }
                 if !self.fills_adaptive_layer() {
                     let detail = match self.short_of_layer() {
                         Some(bounds) => {
@@ -150,11 +182,16 @@ impl Asset {
                             crate::xml::number(adaptive::ADAPTIVE_ICON_SIZE)
                         ),
                         location: None,
-                        suggestion: Some(
-                            "Draw the background edge to edge on a square canvas with no \
-                             transparent pixels, or use --background-color."
+                        suggestion: Some(match fit.mode {
+                            FitMode::Contain => "Use --background-fit cover to fill the layer \
+                                                 with the artwork, draw it edge to edge on a \
+                                                 square canvas with no transparent pixels, or use \
+                                                 --background-color."
                                 .to_owned(),
-                        ),
+                            FitMode::Cover => "Draw the background edge to edge with no \
+                                               transparent pixels, or use --background-color."
+                                .to_owned(),
+                        }),
                     });
                 }
             }
@@ -187,7 +224,7 @@ fn flattened(flattening: Flattening) -> String {
 }
 
 /// Bounds as `left..right × top..bottom` in dp.
-fn span(bounds: Bounds) -> String {
+pub(crate) fn span(bounds: Bounds) -> String {
     format!(
         "{}..{} × {}..{}dp",
         short(bounds.left),

@@ -30,7 +30,9 @@ figma.ui.onmessage = (message: SandboxMessage) => {
     case "focus":
       return focus(message.nodeId);
     case "exported":
-      return figma.notify(
+      // The dialog has nothing left to offer once the file is handed to the
+      // browser, so closing with the message shows it and dismisses in one go.
+      return figma.closePlugin(
         exportKind === "notification"
           ? message.count === 1
             ? "Exported 1 notification icon"

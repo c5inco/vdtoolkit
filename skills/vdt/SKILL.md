@@ -57,15 +57,16 @@ VectorDrawableCompat must load them below API 21, where `anydpi` is unavailable.
    ```
 
    `--as` takes `notification`, `adaptive-foreground` (also used for a
-   monochrome layer), or `adaptive-background`. `--fit` must match the value
-   you will pass to the generator.
+   monochrome layer), or `adaptive-background`. `--fit`, and
+   `--background-fit` for a background, must match the values you will pass to
+   the generator.
 
 2. **Read the report.** Each file gives:
 
    ```json
    {
      "path": "logo.svg",
-     "icon": { "kind": "adaptive-foreground", "fit": 66.0 },
+     "icon": { "kind": "adaptive-foreground", "fit": 66.0, "fit_mode": "contain" },
      "compatibility": "exact",
      "minimum_api": 21,
      "diagnostics": [
@@ -104,13 +105,41 @@ vdt adaptive --foreground logo.svg --background-color '#3DDC84' \
     --monochrome logo.svg --fit 66 -o app/src/main/res
 ```
 
-- `--foreground` is required. Give exactly one of `--background <svg>` (art
-  that fills the layer) or `--background-color <#RRGGBB>` (a flat color).
+- Give exactly one foreground: `--foreground <svg>` or `--foreground-image
+  <png|webp>`. A raster foreground must already be drawn on the full square
+  layer with its artwork inside the 66dp safe zone, because `--fit` places
+  vector artwork only; `SVGVD019` measures the painted pixels and says when it
+  is not. A JPEG is rejected for this layer, and for `--monochrome-image`,
+  because a layer with no alpha would hide the background — `SVGVD026` reports
+  a PNG or WebP with the same problem. `--legacy` is rejected with
+  `--foreground-image`.
+- Give exactly one of `--background <svg>` (art
+  that fills the layer), `--background-color <#RRGGBB>` (a flat color), or
+  `--background-image <png|webp|jpg>` (a raster image at any path).
+- `--background-image` is the answer when the background is a photo, a render,
+  or anything else that is not an SVG. Pass the file wherever it sits; vdt
+  copies it byte for byte into `mipmap-nodpi/` and points the icon at it. It
+  never resamples the image, but it does decode it, so `SVGVD024`, `SVGVD025`,
+  and `SVGVD020` still report a background that is not square, too small, or
+  not fully opaque. PNG, WebP, and JPEG, recognized from the file's own header
+  rather than its name; a JPEG has no alpha, so it can never raise `SVGVD020`.
+  An animated WebP and `--legacy` are both rejected.
+- `--background-fit` is how a background SVG is scaled onto the 108dp layer.
+  The default `cover` fills it and crops whatever overflows, which is what a
+  background wants: Android masks and shifts that layer, so anything it does
+  not reach shows through. Note `SVGVD023` names how much was cropped. Use
+  `contain` only when the user says the whole background image must stay
+  visible; it letterboxes non-square art and then earns warning `SVGVD020`.
 - `--fit` is the square, in dp, the foreground and monochrome art is scaled to,
-  centered on the 108dp layer. For a plain logo on a transparent canvas use 66
-  (the safe zone no launcher mask hides) or smaller, down to 48. Keep the
-  default 108 only when the SVG was drawn on the full 108dp adaptive layer with
-  its padding built in. Warning `SVGVD019` means the art leaves the safe zone.
+  centered on the 108dp layer. Keep the default 108 only when the SVG was drawn
+  on the full 108dp adaptive layer with its padding built in; otherwise start at
+  66 and let `SVGVD019` correct you. Do not assume 66 is safe: a launcher mask
+  is a *circle*, so the fit a logo needs depends on its shape. A round mark can
+  fill 66, while one drawn into the corners of the box needs about 47, because
+  the corners of a 66dp box sit 46.7dp from the centre and the mask shows only
+  36dp. `SVGVD019` measures the painted pixels and names the fit that works —
+  warning when the artwork is clipped, note when it is past the 33dp Android
+  recommends. Pass the fit it suggests rather than guessing.
 - `--monochrome` adds the layer Android 13+ uses for themed icons. Pass the
   foreground again if the logo is a single shape that reads well as a
   silhouette; recommend it, since without it themed launchers show the icon
@@ -170,7 +199,8 @@ follow it. As a rule:
   outside the safe zone or a notification icon that tints into a solid square.
   These are usually fixed with an option such as `--fit` or `--size`.
 - `info` needs no action, except `SVGVD004` when the module's `minSdk` is
-  below 24.
+  below 24, and `SVGVD023`, which is worth repeating to the user because it
+  says part of their background artwork was cropped away.
 
 Most errors are fixed in the design tool that produced the SVG. When the fix
 is a mechanical SVG edit that does not change the look (inlining a `<use>`,

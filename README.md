@@ -47,6 +47,7 @@ vdt inspect icon.svg --format json     # diagnostics, min API, metrics
 vdt inspect bell.svg --as notification --format json  # would it make a good notification icon?
 vdt optimize icon.svg -o ic_icon.xml   # convert with shorter numbers and path data, same rendering
 vdt adaptive --foreground fg.svg --background-color '#3DDC84' -o app/src/main/res
+vdt adaptive --foreground fg.svg --background-image hero.webp -o app/src/main/res
 vdt notification bell.svg -o res/drawable-anydpi/ic_stat_bell.xml
 vdt convert icon.svg --pretty          # human-readable XML instead of the default compact format
 ```
@@ -98,18 +99,28 @@ a viewBox larger than 200 is drawn at 24dp: a Material Symbols download on its
 vdt convert hero.svg --size 24 -o res/drawable-anydpi/ic_hero.xml
 ```
 
+A launcher mask is a circle inscribed in the 72dp visible window, so what
+decides whether artwork survives is its distance from the centre, not its
+bounding box. The corners of the 66dp box sit 46.7dp out while the mask shows
+36dp, so a square logo filling that box is clipped and a round one filling the
+same box is not. vdt renders the layer and measures the painted pixels, which
+is why `--fit 66` is safe for some artwork and not for other artwork of the
+same size.
+
 `check` and `inspect` take `--as <kind>` to also report what making the SVG
 into that kind of icon would find, exactly as `notification` or `adaptive`
 would, without writing anything. The kinds are `notification`,
 `adaptive-foreground` (a monochrome layer follows the same rules), and
 `adaptive-background`; `--fit <dp>` is the generator's fit and defaults to the
-whole canvas. The report's metrics describe the fitted result, and in JSON an
+whole canvas, and `--background-fit` mirrors the generator's option for
+`--as adaptive-background`. The report's metrics describe the fitted result, and in JSON an
 `icon` object names the kind and fit. Compatibility and the exit code are
 unchanged: these findings are warnings and notes.
 
 ```sh
 vdt inspect icons/ --as notification --format json
 vdt check logo.svg --as adaptive-foreground --fit 66
+vdt inspect hero.svg --as adaptive-background --background-fit contain
 ```
 
 | Exit code | Meaning |
@@ -162,30 +173,51 @@ vdt adaptive --foreground logo.svg --background bg.svg --monochrome logo.svg \
 
 | Option | Meaning |
 | --- | --- |
-| `--foreground <svg>` | Foreground layer. Required. |
-| `--background <svg>` or `--background-color <#RRGGBB>` | Background layer, as a drawable or a color resource. Exactly one is required. |
+| `--foreground <svg>` or `--foreground-image <png\|webp>` | Foreground layer, as an SVG or a raster image. Exactly one is required. |
+| `--foreground-image <image>`, `--monochrome-image <image>` | Use a PNG or WebP as the layer. It is copied unchanged into `mipmap-nodpi/`, and must already be drawn on the full square layer with its artwork inside the 66dp safe zone: `--fit` places vector artwork, and vdt cannot scale a raster layer without resampling it. A JPEG is rejected here, because a layer with no alpha channel would hide the background. `--legacy` is rejected with `--foreground-image`. |
+| `--background <svg>`, `--background-color <#RRGGBB>`, or `--background-image <image>` | Background layer, as a converted drawable, a color resource, or a raster image. Exactly one is required. |
+| `--background-image <image>` | Use a PNG, WebP, or JPEG from anywhere on disk as the background. It is copied unchanged into `mipmap-nodpi/<name>_background.<ext>`, where Android draws it onto the layer without scaling it for density, and the icon points at it. The format is read from the file's own header, not its name, so a mislabeled file is still written under the extension it really is. vdt never resamples the image; it decodes it only to report `SVGVD024`, `SVGVD025`, and `SVGVD020`. A JPEG has no alpha channel, so it can never raise `SVGVD020`. An animated WebP and `--legacy`, which composes both layers into one vector, are both rejected alongside it. |
+| `--background-fit cover\|contain` | How a background SVG is scaled onto the 108dp layer. `cover`, the default, fills the layer and lets it crop whatever overflows, so non-square artwork still reaches every edge. `contain` scales all of the artwork in, which leaves non-square artwork letterboxed. |
 | `--monochrome <svg>` | Optional monochrome layer for themed icons on Android 13 and newer. |
-| `--fit <dp>` | Square that the foreground and monochrome artwork is scaled to fit, centered on the 108dp layer. Defaults to 108 for artwork drawn on the full layer. For a plain logo, Android recommends 48 to 66; 66 is the safe zone that no launcher mask hides. |
+| `--fit <dp>` | Square that the foreground and monochrome *vector* artwork is scaled to fit, centered on the 108dp layer. Defaults to 108 for artwork drawn on the full layer. A launcher mask is a circle, so the fit a logo needs depends on its shape: a round mark can fill 66, while one drawn edge to edge into the corners of the box needs about 47. `SVGVD019` measures the artwork and names the fit that works for it. |
 | `--name <name>` | Resource name, `ic_launcher` by default. Layers use it as a prefix. |
-| `--legacy` | Also write a legacy icon for devices below API 26, with the 72dp visible area on the 44dp circle keyline of a 48dp icon. It is a vector in `mipmap/`. When the art needs API 24, because of gradients, even-odd fills, or clips, it is a vector in `mipmap-anydpi-v24/` for API 24 and 25 plus PNGs rendered from that vector in `mipmap-mdpi/` through `mipmap-xxxhdpi/` for API 21 to 23. Regenerating a name switches layouts cleanly: files of the layout no longer used are removed. |
+| `--legacy` | Also write a legacy icon for devices below API 26, with the 72dp visible area on the 44dp circle keyline of a 48dp icon. It is a vector in `mipmap/`. When the art needs API 24, because of gradients, even-odd fills, or clips, it is a vector in `mipmap-anydpi-v24/` for API 24 and 25 plus PNGs rendered from that vector in `mipmap-mdpi/` through `mipmap-xxxhdpi/` for API 21 to 23. Every other version of the legacy icon in a mipmap folder is removed, in any format, including the `ic_launcher.webp` files Android Studio writes into every density folder, so regenerating a name switches layouts cleanly and replaces Studio's icon. |
 | `--optimize` | Shorten numbers and path data in every layer drawable and the legacy vector where it cannot change rendering, as the `optimize` command does. It runs after the fit, which is what introduces long decimals, so placement is unchanged. Legacy PNGs are rendered from the exact vector either way. |
 
 The files written are `mipmap-anydpi-v26/<name>.xml`,
 `mipmap-anydpi-v26/<name>_round.xml`, `drawable-anydpi/<name>_foreground.xml`, either
-`drawable-anydpi/<name>_background.xml` or `values/<name>_background.xml`, and
+`drawable-anydpi/<name>_background.xml`, `values/<name>_background.xml`, or
+`mipmap-nodpi/<name>_background.png`, `.webp`, or `.jpg`, and
 `drawable-anydpi/<name>_monochrome.xml` when a monochrome layer is given. Artwork is
-scaled uniformly and centered, so rendering is unchanged apart from placement;
-a background SVG always fills the whole layer. Placement findings carry
+scaled uniformly and centered, so rendering is unchanged apart from placement.
+A background SVG is scaled to cover the whole layer, because Android crops that
+layer with launcher masks and shifts it for parallax, so anything it does not
+reach shows through; the layer crops what overflows, and `--background-fit
+contain` scales all of the artwork in instead. Placement findings carry
 diagnostic codes, so `inspect --as adaptive-foreground --fit 66` or
 `--as adaptive-background` can report them before anything is written:
 
 | Code | Meaning |
 | --- | --- |
-| `SVGVD019` | Warning: foreground or monochrome content leaves the 66dp safe zone, so launcher masks may hide it. |
-| `SVGVD020` | Warning: the background leaves part of the 108dp layer unpainted, which shows through launcher masks and parallax. Non-square artwork is scaled to fit, not cropped, so it leaves transparent bands, as do inset clips and holes. |
+| `SVGVD019` | How far the foreground or monochrome artwork reaches from the centre of the layer, measured from the painted pixels. A warning past 36dp, which is what a circular launcher mask shows, so the artwork is clipped; a note past 33dp, the radius Android asks key content to stay inside, which `adaptive` prints as well as `inspect`. The remedy names the `--fit` that would bring it in. |
+| `SVGVD020` | Warning: the background leaves part of the 108dp layer unpainted, which shows through launcher masks and parallax. Inset clips, holes, and transparent paint all leave gaps, as does non-square artwork under `--background-fit contain`. |
+| `SVGVD023` | Note: the background was scaled to cover the layer, naming what percentage of the artwork the layer cropped. Square artwork is unchanged and gets no note. |
+| `SVGVD024` | Warning: a layer image is not square, so Android stretches it onto the square layer and the artwork is distorted. |
+| `SVGVD026` | Warning: a `--foreground-image` has no transparent pixels, so it covers the background layer and the icon is flat. |
+| `SVGVD025` | A layer image does not carry the 432px an xxxhdpi device draws the layer at: a warning when it is smaller, so the icon is upscaled and soft, and a note when it is larger, so the extra pixels are decoded and scaled away on every draw. |
 
 Every layer is converted before anything is written, and a layer that fails
-leaves the directory untouched.
+leaves the directory untouched, and every raster layer is decoded in full, so
+an image with damaged data is refused before it can replace a working one.
+Regenerating a name removes a file an earlier run left behind only when keeping
+it would break the build: a raster layer that changes format, say from `.png`
+to `.webp`, would otherwise leave two files with one resource name in one
+folder, and a raster layer's versions in density folders such as
+`mipmap-xxhdpi/`, which Android Studio writes, would be picked over
+`mipmap-nodpi/` and keep the old icon showing. Any other leftover, such as a
+vector layer replaced by an image, is a different resource type that collides
+with nothing, and vdt cannot tell whether the rest of the project still uses
+it, so it is named in a note and left alone.
 Add `android:icon="@mipmap/<name>"` and `android:roundIcon="@mipmap/<name>_round"`
 to the `<application>` element of the manifest.
 
@@ -222,6 +254,7 @@ becomes, with `--pretty` (by default the same XML is written on one line)
 | `<use>`, `<defs>`, inherited CSS styles | DTDs, entity declarations, external references |
 | Nested affine transforms (flattened into geometry) | Strokes under non-uniform scale or skew |
 | Solid fills, fill opacity, fill rules | Alpha or grayscale masks, even-odd or multi-path clips |
+| Wide-gamut `color()` values, resolved to the sRGB they render as | Color spaces that are not Display P3, sRGB, or linear sRGB |
 | Linear gradients and circular radial gradients, including stop opacity and spread methods | Radial gradients with a focal point, a focal radius, or an elliptical shape |
 | Solid strokes: opacity, width, caps, joins | Nested effects or paint effects inside `<clipPath>`/`<mask>` |
 | Single-path clips and hard white single-shape masks (lowered to clips) | |
@@ -235,7 +268,10 @@ Plain paths and a single clip target API 21. Drawables that need multiple clips,
 `android:fillType`, or gradients target API 24, and `inspect` then adds an
 `SVGVD004` note naming which of those raised it, with how to stay on API 21.
 The note is informational: it does not change compatibility, the exit code, or
-what `convert` prints. Gradients are written inline
+what `convert` prints. `inspect` adds an `SVGVD022` note in the same way when a
+design tool wrote a wide-gamut `color()` value, naming how many were resolved to
+sRGB; VectorDrawable has no wide-gamut color, so the resolved value is what
+Android draws either way. Gradients are written inline
 with the `aapt` namespace, which the Android build tools compile into color
 resources. See [docs/research.md](docs/research.md)
 for the renderer findings behind those levels.

@@ -41,7 +41,10 @@ function runExportCommand(selection, command = "export-vector-drawables") {
     currentPage: { selection },
     showUI: (_html, options) => calls.showUI.push(options),
     notify: (message) => calls.notify.push(message),
-    closePlugin: () => (calls.closed = true),
+    closePlugin: (message) => {
+      calls.closed = true;
+      if (message !== undefined) calls.notify.push(message);
+    },
     getNodeByIdAsync: async (id) => selection.find((node) => node.id === id) ?? null,
     viewport: { scrollAndZoomIntoView: (nodes) => calls.zoomed.push(...nodes.map((node) => node.id)) },
     ui: { onmessage: undefined, postMessage: (message) => calls.posted.push(message) },
@@ -77,6 +80,7 @@ test("notification command selects notification conversion and labels its UI", a
   assert.equal(calls.posted[0].kind, "notification");
   figma.ui.onmessage({ type: "exported", count: 2 });
   assert.equal(calls.notify.at(-1), "Exported 2 notification icons");
+  assert.equal(calls.closed, true, "the dialog closes once the zip is saved");
 });
 
 test("export command sends every selected layer to the dialog, explaining skipped ones", async () => {
@@ -229,6 +233,26 @@ test("notification review exports a white 24dp icon with icon diagnostics", () =
   assert.deepEqual([row.exportWidth, row.exportHeight, row.resized], [24, 24, false]);
   assert.match(row.xml, /android:fillColor="#FFFFFF"/);
   assert.ok(row.warnings.some((warning) => warning.code === "SVGVD017"));
+});
+
+test("wide-gamut colors are resolved without saying so in the export dialog", () => {
+  // Figma writes the sRGB fallback first and the wide-gamut color after it.
+  // The stroke has to survive, but a notification icon flattens every color
+  // to white, so saying anything about color would only be noise.
+  const folder = new TextEncoder().encode(
+    '<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">' +
+      '<path d="M3.25 3.25H16.75V16.75H3.25Z" stroke="#6C707E" stroke-width="1.5"' +
+      ' style="stroke:#6C707E;stroke:color(display-p3 0.4235 0.4392 0.4941);stroke-opacity:1;"/></svg>',
+  );
+  const [row] = reviewCandidates(
+    [{ nodeId: "1", name: "Project", source: folder, width: 20, height: 20 }],
+    (input) => wasm.convertNotificationSvg(input, true),
+    "notification",
+  );
+
+  assert.equal(row.status, "ready");
+  assert.match(row.xml, /android:strokeColor="#FFFFFF"/);
+  assert.deepEqual(row.warnings, [], "no color note, and no empty-artwork warning");
 });
 
 test("size is never listed as a reason a large layer can't be exported", () => {

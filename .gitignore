@@ -1,4 +1,5 @@
 /target
+/build
 /tools/android-renderer/build
 /tools/android-renderer/compose/.gradle
 /tools/android-renderer/compose/**/build

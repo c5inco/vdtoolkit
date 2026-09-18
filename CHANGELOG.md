@@ -6,8 +6,50 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-16
+
 ### Added
 
+- `adaptive --foreground-image <png|webp>` and `--monochrome-image` take a
+  raster foreground or monochrome layer and place it the same way. Because
+  `--fit` places vector artwork and vdt will not resample a bitmap, the image
+  must already be drawn on the full square layer: `SVGVD019` measures the
+  painted pixels against the 66dp safe zone and says when it is not, with half
+  a dp of tolerance for antialiased edges. A foreground is judged the opposite
+  way round to a background — the new `SVGVD026` reports one with no
+  transparent pixels, which covers the background entirely, and `SVGVD018`
+  reports one with nothing painted. A JPEG is rejected for these layers, since
+  a layer with no alpha channel cannot sit over anything. `--fit` is rejected
+  when every layer it would place is a raster image, and `--legacy` alongside
+  `--foreground-image`.
+- `adaptive --background-image <png|webp|jpg>` takes a raster background from
+  anywhere on disk and places it, so a bitmap background no longer needs a res
+  folder laid out or the icon XML wired up by hand. The file is copied byte for
+  byte into `mipmap-nodpi/<name>_background.<ext>`, where Android draws it onto
+  the layer without scaling it for density; vdt never resamples it. The format
+  is read from the file's own header, so a mislabeled file is still written
+  under the extension it really is; `.jpeg` is normalized to `.jpg`. Every
+  image is decoded in full before anything is written, so one whose header
+  reads but whose data is cut short or damaged is refused, rather than copied
+  into the project to fail when Android packages or draws it. A JPEG carries no
+  alpha channel, so it can never raise `SVGVD020`; it has no checksum either, so
+  data damaged into bytes that still decode is caught by no decoder. An
+  animated WebP and `--legacy`, which composes both layers into one vector, are
+  both rejected alongside it.
+- `SVGVD024` and `SVGVD025`, which report a background image that is not square
+  or does not carry the 432px an xxxhdpi device draws the 108dp layer at.
+  `SVGVD020` now also reports a background image that is not fully opaque, the
+  same finding a vector background that leaves gaps gets. vdt decodes the image
+  without changing it, so the layer it does not convert is still checked.
+- `adaptive --background-fit cover|contain` chooses how a background SVG is
+  scaled onto the 108dp layer. `cover` fills the layer and lets it crop
+  whatever overflows; `contain` is the previous behavior. `inspect` and
+  `check` take the same option with `--as adaptive-background`, and their
+  JSON `icon` object gained a `fit_mode` field.
+- `SVGVD023`, a note naming what percentage of a background the layer cropped
+  when covering it. Like `SVGVD021` it is printed by the generator, because it
+  names something the generator changed about the artwork rather than
+  something the source already had.
 - The Figma plugin can batch-export selected frames, components, and instances
   as optimized white 24dp notification icons. It uses the existing review UI,
   reports notification-specific plate and empty-artwork warnings, and bundles
@@ -15,6 +57,28 @@ follow [Semantic Versioning](https://semver.org/).
 - Optional Hugeicons stress suite, `tools/check-hugeicons.py`, covering all
   6,143 free Stroke Rounded icons from a pinned commit. It checks a coverage
   floor and repeated-output determinism.
+
+### Fixed
+
+- `adaptive --legacy` now replaces the legacy icon Android Studio leaves in a
+  project. Studio writes it as `ic_launcher.webp` and `ic_launcher_round.webp`
+  in every density folder, for new projects and from its Image Asset wizard,
+  and vdt only removed `.png` copies. With art that needs API 24, vdt's PNGs
+  landed beside Studio's WebPs and the build failed with a conflicting
+  resource; with API 21 art the build succeeded but Studio's icons could be
+  chosen over vdt's on devices below API 26. Every other version of the legacy
+  icon in any mipmap folder, in any format, is now removed when `--legacy`
+  writes one. Without `--legacy`, Studio's icon is still the project's icon
+  for older devices and is left alone.
+- Wide-gamut `color()` values, which Figma writes into `style` after an sRGB
+  fallback, are resolved to sRGB before parsing. The SVG parser dropped the
+  declaration it could not read, and the `style` attribute outranks the
+  matching presentation attribute, so strokes silently vanished and fills
+  silently turned black. Display P3, sRGB, and linear sRGB resolve; other
+  color spaces are left untouched. `inspect` reports the resolution as a new
+  `SVGVD022` note; like the other informational notes it does not reach
+  `convert` output or the Figma export dialog, where every notification icon
+  flattens to white anyway.
 
 ### Changed
 
@@ -29,6 +93,46 @@ follow [Semantic Versioning](https://semver.org/).
   documented or supported: its items are hidden from generated docs and exist
   only so the `vdt` binary, WebAssembly bindings, and tests can share code.
   Use `vdt` instead of depending on the crate.
+- **`SVGVD019` now measures distance from the centre of the layer, not a
+  bounding box, and reports against the circle a launcher mask actually shows.**
+  The old check asked whether content stayed inside a 66dp *square*, but a mask
+  is a circle: the corners of that square sit 46.7dp from the centre while a
+  circular mask shows 36dp, so artwork drawn edge to edge at the recommended
+  `--fit 66` passed the check and was visibly clipped on a device. vdt now
+  renders the layer and measures the painted pixels, which also removes the
+  false positive a box test would have: a round logo filling the 66dp box
+  reaches only 33dp and is fine. Past 36dp is a warning, because the clipping is
+  certain; between 33 and 36dp is a note, because a circular mask still shows it
+  but another mask may not. `adaptive` prints the note as well as `inspect`. The finding names the `--fit` that would bring the
+  artwork in. Expect new warnings on unchanged input: artwork that was certified
+  before and is genuinely clipped now says so.
+- Regenerating an adaptive icon removes a file an earlier run left behind only
+  when keeping it would break the build, the way switching legacy layouts
+  already did to avoid showing the old icon: changing a raster layer's format,
+  say from `.png` to `.webp`, leaves two files with one resource name in one
+  folder, which `aapt2` refuses to build. Writing a raster layer also removes
+  the versions of it in density folders such as `mipmap-xxhdpi/`, which
+  Android Studio's Image Asset wizard writes for every density: Android picks
+  those over `mipmap-nodpi/` on a device of that density, so a project moved
+  from Studio to vdt kept showing its old icon. Verified on an emulator at API
+  36. Any other leftover, such as a vector layer replaced by an image or a
+  color background replaced by an SVG, is a different resource type that
+  collides with nothing. vdt cannot tell whether the rest of the project still
+  refers to it, and deleting a resource in use would break the build itself,
+  so it names the file in a note and leaves it.
+- **Adaptive backgrounds now cover the layer by default.** Android crops the
+  background layer with launcher masks and shifts it for parallax, so a
+  background that does not reach every edge shows through. Non-square
+  background artwork was scaled to fit and left letterboxed, which earned an
+  `SVGVD020` warning that nothing but redrawing the artwork could clear;
+  it now fills the layer. Regenerating an icon from non-square background
+  artwork produces a different drawable than 0.3.0 did, and part of that
+  artwork is cropped; pass `--background-fit contain` to restore the old
+  result. Square backgrounds are unaffected.
+- The Figma export dialog closes once the zip is handed to the browser, and
+  reports the count as it closes instead of leaving itself open behind the
+  save prompt. Enter now runs Export, the way a dialog's default button does,
+  except while a button or the filter box has focus.
 - Vector drawables packaged by the Figma exporter and adaptive icon layers
   now use `drawable-anydpi/`. CLI examples recommend the same directory for
   caller-selected `convert`, `optimize`, and `notification` outputs.
@@ -203,7 +307,8 @@ follow [Semantic Versioning](https://semver.org/).
 - Paired Material corpus conformance, Studio Icons stress coverage, release
   packaging, and optional Android pixel-renderer verification.
 
-[Unreleased]: https://github.com/c5inco/vdtoolkit/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/c5inco/vdtoolkit/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/c5inco/vdtoolkit/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/c5inco/vdtoolkit/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/c5inco/vdtoolkit/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/c5inco/vdtoolkit/releases/tag/v0.1.0

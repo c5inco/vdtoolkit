@@ -7,6 +7,8 @@
 
 mod adaptive;
 mod analysis;
+mod bitmap;
+mod css;
 mod error;
 mod icon;
 mod notification;
@@ -21,13 +23,17 @@ use std::path::Path;
 
 #[doc(hidden)]
 pub use adaptive::{
-    ADAPTIVE_ICON_SAFE_ZONE, ADAPTIVE_ICON_SIZE, ADAPTIVE_ICON_VISIBLE_DIAMETER,
-    LEGACY_ICON_DENSITIES, LEGACY_ICON_KEYLINE, LEGACY_ICON_SIZE, adaptive_icon_xml,
-    color_resource_xml,
+    ADAPTIVE_ICON_MASK_RADIUS, ADAPTIVE_ICON_SAFE_RADIUS, ADAPTIVE_ICON_SAFE_ZONE,
+    ADAPTIVE_ICON_SIZE, ADAPTIVE_ICON_VISIBLE_DIAMETER, Fit, FitMode, LEGACY_ICON_DENSITIES,
+    LEGACY_ICON_KEYLINE, LEGACY_ICON_SIZE, adaptive_icon_xml, color_resource_xml,
 };
 #[doc(hidden)]
 pub use analysis::{
     Analysis, Bounds, Compatibility, Diagnostic, DiagnosticCode, ElementLocation, Metrics, Severity,
+};
+#[doc(hidden)]
+pub use bitmap::{
+    ADAPTIVE_ICON_MAX_PIXELS, ImageFormat, LayerImage, LayerKind, analyze_layer_image,
 };
 #[doc(hidden)]
 pub use error::{Error, Result};
@@ -136,17 +142,21 @@ impl Asset {
 
     /// Turn this asset into an adaptive icon layer: a 108dp square drawable
     /// whose content is scaled uniformly and centered so the source viewport
-    /// fits inside a `fit` dp square.
+    /// fits inside, or covers, a `fit` dp square.
     ///
-    /// Use [`ADAPTIVE_ICON_SIZE`] to fill the whole layer and
-    /// [`ADAPTIVE_ICON_SAFE_ZONE`] to keep artwork inside the area no launcher
-    /// mask hides. Rendering is unchanged apart from placement, so the
-    /// compatibility and minimum API are preserved.
-    pub fn fit_adaptive_layer(&mut self, fit: f32) -> Result<()> {
-        if !(fit > 0.0 && fit <= adaptive::ADAPTIVE_ICON_SIZE) {
+    /// Use [`Fit::contain`] with [`ADAPTIVE_ICON_SIZE`] to scale the whole
+    /// artwork onto the layer and [`ADAPTIVE_ICON_SAFE_ZONE`] to keep it
+    /// inside the area no launcher mask hides. Use [`Fit::cover`] for a
+    /// background, which must paint every pixel: non-square artwork then fills
+    /// the layer and the layer crops what overflows. Rendering is unchanged
+    /// apart from placement and that cropping, so the compatibility and
+    /// minimum API are preserved.
+    pub fn fit_adaptive_layer(&mut self, fit: Fit) -> Result<()> {
+        if !(fit.size > 0.0 && fit.size <= adaptive::ADAPTIVE_ICON_SIZE) {
             return Err(Error::InvalidInput(format!(
-                "adaptive layer fit must be between 0 and {} dp, got {fit}",
-                adaptive::ADAPTIVE_ICON_SIZE
+                "adaptive layer fit must be between 0 and {} dp, got {}",
+                adaptive::ADAPTIVE_ICON_SIZE,
+                fit.size
             )));
         }
         self.fit_canvas(adaptive::ADAPTIVE_ICON_SIZE, fit);
@@ -163,11 +173,12 @@ impl Asset {
     /// survive. Use [`NOTIFICATION_ICON_SIZE`] as the fit for artwork that
     /// already carries its own padding, such as a Material system icon, and
     /// [`NOTIFICATION_ICON_LIVE_AREA`] for artwork drawn edge to edge.
-    pub fn to_notification_icon(&mut self, fit: f32) -> Result<Flattening> {
-        if !(fit > 0.0 && fit <= notification::NOTIFICATION_ICON_SIZE) {
+    pub fn to_notification_icon(&mut self, fit: Fit) -> Result<Flattening> {
+        if !(fit.size > 0.0 && fit.size <= notification::NOTIFICATION_ICON_SIZE) {
             return Err(Error::InvalidInput(format!(
-                "notification icon fit must be between 0 and {} dp, got {fit}",
-                notification::NOTIFICATION_ICON_SIZE
+                "notification icon fit must be between 0 and {} dp, got {}",
+                notification::NOTIFICATION_ICON_SIZE,
+                fit.size
             )));
         }
         let flattening = notification::whiten(&mut self.drawable);
@@ -190,14 +201,12 @@ impl Asset {
         Ok(flattening)
     }
 
-    /// Scale the content uniformly into a centered `fit` dp square on a
-    /// `canvas` dp square, updating the metrics that placement changes.
-    fn fit_canvas(&mut self, canvas: f32, fit: f32) {
-        let metrics = &mut self.analysis.metrics;
-        let extent = metrics.viewport_width.max(metrics.viewport_height);
-        let scale = fit / extent;
-        let dx = (canvas - metrics.viewport_width * scale) / 2.0;
-        let dy = (canvas - metrics.viewport_height * scale) / 2.0;
+    /// Scale the content uniformly into, or over, a centered `fit` dp square
+    /// on a `canvas` dp square, updating the metrics that placement changes.
+    fn fit_canvas(&mut self, canvas: f32, fit: Fit) {
+        let metrics = &self.analysis.metrics;
+        let (scale, dx, dy) =
+            fit.placement(metrics.viewport_width, metrics.viewport_height, canvas);
         adaptive::fit_square(&mut self.drawable, canvas, fit);
         // The canvas replaces the source size, so a large-dimensions warning
         // about the source no longer describes the output.
@@ -218,16 +227,29 @@ impl Asset {
         self.analysis.metrics.estimated_xml_bytes = self.to_xml().len();
     }
 
-    /// Content bounds of a fitted adaptive layer that reach outside the
-    /// centered 66dp safe zone, which launcher masks may hide. `None` when
-    /// the content stays inside or there is no painted content.
-    pub fn outside_adaptive_safe_zone(&self) -> Option<Bounds> {
-        let bounds = self.analysis.metrics.content_bounds?;
-        let inset = (adaptive::ADAPTIVE_ICON_SIZE - adaptive::ADAPTIVE_ICON_SAFE_ZONE) / 2.0;
-        let (low, high) = (inset - 1e-3, adaptive::ADAPTIVE_ICON_SIZE - inset + 1e-3);
-        let outside =
-            bounds.left < low || bounds.top < low || bounds.right > high || bounds.bottom > high;
-        outside.then_some(bounds)
+    /// How far painted content reaches from the centre of a fitted adaptive
+    /// layer, in dp, or `None` when nothing is painted.
+    ///
+    /// The layer is rendered and measured pixel by pixel, because a launcher
+    /// mask is a circle and a bounding box cannot answer a question about
+    /// distance from the centre: the corners of a box are further out than
+    /// the artwork inside it, so a round logo would look like it leaves the
+    /// safe zone when it does not.
+    pub fn painted_reach(&self) -> Option<f32> {
+        let size = bitmap::ADAPTIVE_ICON_MAX_PIXELS;
+        let pixmap = render::render(&self.drawable, size, size)?;
+        pixmap
+            .pixels()
+            .iter()
+            .enumerate()
+            .filter(|(_, pixel)| pixel.alpha() > adaptive::PAINTED_ALPHA)
+            .map(|(index, _)| {
+                let index = index as u32;
+                adaptive::reach_dp(index % size, index / size, size, size)
+            })
+            .fold(None, |best: Option<f32>, reach| {
+                Some(best.map_or(reach, |best| best.max(reach)))
+            })
     }
 
     /// Whether a fitted adaptive layer paints every pixel of the 108dp layer.
@@ -421,7 +443,7 @@ pub fn analyze(source: &[u8]) -> Result<Analysis> {
 /// Analyze an SVG file as an icon of `kind` fitted to `fit` dp, without
 /// writing anything, as [`analyze_as`] does.
 #[doc(hidden)]
-pub fn analyze_file_as(path: &Path, kind: IconKind, fit: f32) -> Result<Analysis> {
+pub fn analyze_file_as(path: &Path, kind: IconKind, fit: Fit) -> Result<Analysis> {
     let source = std::fs::read(path).map_err(|source| Error::Read {
         path: path.to_owned(),
         source,
@@ -437,7 +459,7 @@ pub fn analyze_file_as(path: &Path, kind: IconKind, fit: f32) -> Result<Analysis
 /// metrics of the fitted result. An SVG that cannot be converted yields its
 /// compatibility analysis alone, as [`analyze`] would.
 #[doc(hidden)]
-pub fn analyze_as(source: &[u8], kind: IconKind, fit: f32) -> Result<Analysis> {
+pub fn analyze_as(source: &[u8], kind: IconKind, fit: Fit) -> Result<Analysis> {
     match convert(source) {
         Ok(mut asset) => {
             asset.to_icon(kind, fit)?;

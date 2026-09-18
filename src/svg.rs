@@ -25,7 +25,28 @@ pub(crate) fn process(source: &[u8], keep_drawable: bool) -> Result<Processed> {
         },
         ..Default::default()
     };
-    let tree = usvg::Tree::from_data(source, &options)?;
+    // Wide-gamut colors have to be resolved before parsing: the parser drops
+    // the `color()` functions it cannot read, along with the sRGB fallbacks
+    // beside them, leaving strokes unpainted and fills black.
+    let resolved = crate::css::resolve_color_functions(text, &document);
+    if let Some(ref resolved) = resolved {
+        diagnostics.push(Diagnostic {
+            code: DiagnosticCode::WideGamutColor,
+            severity: Severity::Info,
+            message: format!(
+                "resolved {} to sRGB; VectorDrawable has no wide-gamut color",
+                plural(resolved.colors, "wide-gamut color")
+            ),
+            location: None,
+            suggestion: None,
+        });
+    }
+    let tree = usvg::Tree::from_data(
+        resolved
+            .as_ref()
+            .map_or(source, |resolved| resolved.source.as_bytes()),
+        &options,
+    )?;
     let mut metrics = Metrics::default();
     let drawable = vector::lower(&tree, &mut compatibility, &mut diagnostics, &mut metrics);
     if let Some(ref drawable) = drawable {
@@ -276,6 +297,11 @@ fn preflight(document: &roxmltree::Document<'_>) -> (Compatibility, Vec<Diagnost
         }
     }
     (compatibility, diagnostics)
+}
+
+/// `1 thing` or `2 things`, for counted diagnostics.
+fn plural(count: usize, noun: &str) -> String {
+    format!("{count} {noun}{}", if count == 1 { "" } else { "s" })
 }
 
 fn href<'a, 'input>(node: &roxmltree::Node<'a, 'input>) -> Option<&'a str> {

@@ -28,3 +28,28 @@ jobs:
         with:
           toolchain: 1.85.0
       - run: cargo test --locked
+
+  # The WebAssembly binding is its own workspace with its own lock file, so a
+  # dependency added to vdtoolkit leaves that lock file stale without failing
+  # any of the crate's own --locked checks above.
+  wasm:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bindings/wasm
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          targets: wasm32-unknown-unknown
+      # Resolving without compiling separates a stale lock file from a build
+      # failure, and cargo's own message suggests dropping --locked, which is
+      # the wrong fix here.
+      - name: Check the lock file is up to date
+        run: |
+          if ! cargo metadata --locked --format-version 1 > /dev/null; then
+            echo "::error file=bindings/wasm/Cargo.lock::bindings/wasm/Cargo.lock does not match vdtoolkit's dependencies. Run 'cargo check' in bindings/wasm and commit the updated lock file."
+            exit 1
+          fi
+      - name: Build for WebAssembly
+        run: cargo check --locked --target wasm32-unknown-unknown

@@ -128,12 +128,16 @@ export function renderExportDialog(rows: ReviewRow[], kind: ExportKind, post: Po
     update();
   });
 
+  let exporting = false;
   const exportButton = element("button", { className: "primary" });
   exportButton.addEventListener("click", () => {
     const chosen = ready.filter((row, index) => checkboxes[index].checked && isShown(row));
     if (chosen.length === 0) return;
-    download(chosen, kind);
-    post({ type: "exported", count: chosen.length });
+    // Latched rather than only disabled, so toggling a row in the moment
+    // before the dialog closes cannot re-enable the button and export twice.
+    exporting = true;
+    update();
+    void download(chosen, kind).then(() => post({ type: "exported", count: chosen.length }));
   });
   const cancelButton = element("button", {}, "Cancel");
   cancelButton.addEventListener("click", () => post({ type: "close" }));
@@ -181,10 +185,23 @@ export function renderExportDialog(rows: ReviewRow[], kind: ExportKind, post: Po
     empty,
   );
 
-  // Esc closes the dialog, except that it first clears a filter being typed in, as search boxes do.
+  // Enter exports and Esc closes, the way a dialog's default and cancel buttons do.
+  // Esc first clears a filter being typed in, as search boxes do.
   // Assigned rather than added, so a refresh doesn't stack a second handler.
   document.onkeydown = (event) => {
-    if (event.key !== "Escape" || event.defaultPrevented) return;
+    if (event.defaultPrevented) return;
+    if (event.key === "Enter") {
+      // A focused button runs its own action on Enter, a composing IME is using
+      // the key to commit text, and Enter in the filter would export whatever
+      // the filter happens to be showing, which is rarely what was meant.
+      if (event.isComposing || document.activeElement === filter) return;
+      if (document.activeElement instanceof HTMLButtonElement) return;
+      if (exportButton.disabled) return;
+      event.preventDefault();
+      exportButton.click();
+      return;
+    }
+    if (event.key !== "Escape") return;
     if (document.activeElement === filter && filter.value !== "") return;
     post({ type: "close" });
   };
@@ -229,7 +246,7 @@ export function renderExportDialog(rows: ReviewRow[], kind: ExportKind, post: Po
 
     selectAll.checked = count > 0 && count === shownReady;
     selectAll.indeterminate = count > 0 && count < shownReady;
-    exportButton.disabled = count === 0;
+    exportButton.disabled = count === 0 || exporting;
     exportButton.textContent =
       kind === "notification"
         ? count === 1
@@ -362,7 +379,15 @@ function issueList(issues: Issue[], kind: "warning" | "error"): HTMLElement {
 }
 
 // Keep the Android resource directory in every download, including for one icon.
-function download(rows: ReadyRow[], kind: ExportKind): void {
+// How long the object URL is kept alive after the click. A blob download has
+// no completion event, so this is also how long the dialog stays up: closing
+// the plugin tears down the iframe the blob belongs to, and doing that in the
+// same moment as the click risks cancelling the download.
+const DOWNLOAD_HANDOFF_MS = 1_000;
+
+// Resolves once the browser has taken the file, which is when the dialog can
+// close. The save prompt, if the browser shows one, outlives both.
+function download(rows: ReadyRow[], kind: ExportKind): Promise<void> {
   const encoder = new TextEncoder();
   const bytes = createDrawableZip(rows.map((row) => ({ path: row.fileName, data: encoder.encode(row.xml) })));
   const url = URL.createObjectURL(new Blob([bytes as Uint8Array<ArrayBuffer>], { type: "application/zip" }));
@@ -371,7 +396,12 @@ function download(rows: ReadyRow[], kind: ExportKind): void {
   document.body.append(link);
   link.click();
   link.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1_000);
+  return new Promise((resolve) =>
+    setTimeout(() => {
+      URL.revokeObjectURL(url);
+      resolve();
+    }, DOWNLOAD_HANDOFF_MS),
+  );
 }
 
 function element<K extends keyof HTMLElementTagNameMap>(

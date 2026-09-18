@@ -163,6 +163,31 @@ rendered from the emitted vector, not the source SVG, so both share geometry,
 mask, and gradients. The renderer harness verified the selection and the
 gradient colors on emulator.wtf Pixel 7 at API 21, 23, 24, 25, 26, and 36.
 
+## Adaptive icon safe zone
+
+`SVGVD019` used to ask whether foreground content stayed inside a 66dp square
+centered on the 108dp layer. A launcher mask is a circle, though: the 72dp
+visible window inscribed as a circle shows 36dp from the center, while the
+corners of the 66dp square sit 46.7dp out. On an API 36 emulator, a
+logo drawn edge to edge at `--fit 66` passed that check and lost its
+lower corners to the round mask. The check now renders the layer at 432px and
+measures how far the painted pixels reach from the center: a warning past 36dp,
+where clipping is certain, and a note past 33dp, the radius Android asks key
+content to stay inside, each with half a dp of tolerance for antialiased edges.
+Measuring pixels rather than a bounding box keeps a round logo that fills the
+66dp box, which reaches only 33dp, free of findings. The same logo on the same
+emulator rendered without clipping at the `--fit 54` the warning suggests.
+
+At commit `8059d26`, the 200 sampled Material icons that `tools/accept-v1.sh`
+turns into adaptive icons at `--fit 66`, 100 outlined Material Symbols and 100
+legacy Two Tone icons, give 48 warnings, reaching 36.6 to 46.5dp, and 45 notes.
+Material glyphs are drawn on a 24-unit grid with about 2 units of padding, so a
+squarish glyph filling its 20-unit live area becomes a 55dp box at `--fit 66`,
+whose corners reach 38.9dp, the most common value among the warnings. Those
+icons really are clipped by a round mask; glyphs that are round or leave their
+corners empty stay inside. The suite checks conversion and determinism, not
+findings, so these counts are recorded here rather than gated.
+
 ## Complex-illustration corpus
 
 _Figures below are from the pinned commits in `tests/illustrations.txt` on

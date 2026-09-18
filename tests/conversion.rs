@@ -1761,6 +1761,112 @@ fn cli_adaptive_clears_mipmap_versions_that_would_shadow_a_raster_layer() {
 }
 
 #[test]
+fn cli_legacy_replaces_the_icon_android_studio_left_behind() {
+    let temp = tempfile::tempdir().unwrap();
+    // Flat art needs API 21 and gets a vector in mipmap/; a gradient needs
+    // API 24 and gets PNGs in every density folder.
+    let flat = temp.path().join("flat.svg");
+    let gradient = temp.path().join("gradient.svg");
+    fs::write(
+        &flat,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M8 8H16V16H8Z" fill="#102030"/></svg>"##,
+    )
+    .unwrap();
+    fs::write(
+        &gradient,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><defs><linearGradient id="g"><stop offset="0" stop-color="#000"/><stop offset="1" stop-color="#fff"/></linearGradient></defs><path d="M8 8H16V16H8Z" fill="url(#g)"/></svg>"##,
+    )
+    .unwrap();
+    let densities = ["mdpi", "hdpi", "xhdpi", "xxhdpi", "xxxhdpi"];
+    // What Android Studio writes for a new project: the legacy icon as WebP in
+    // every density folder, and, with minSdk 26 or higher, the adaptive icon
+    // in an unversioned anydpi folder. Plus a file that is not the icon.
+    let studio = |res: &std::path::Path| {
+        for density in densities {
+            let dir = res.join(format!("mipmap-{density}"));
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("ic_launcher.webp"), b"studio").unwrap();
+            fs::write(dir.join("ic_launcher_round.webp"), b"studio").unwrap();
+            fs::write(dir.join("ic_launcher_old.webp"), b"keep").unwrap();
+        }
+        fs::create_dir_all(res.join("mipmap-anydpi")).unwrap();
+        fs::write(res.join("mipmap-anydpi/ic_launcher.xml"), b"studio").unwrap();
+    };
+    let run = |art: &std::path::Path, res: &std::path::Path, legacy: bool| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_vdt"));
+        command
+            .args(["adaptive", "--foreground"])
+            .arg(art)
+            .args(["--background-color", "#FFFFFF", "--fit", "56", "-o"])
+            .arg(res);
+        if legacy {
+            command.arg("--legacy");
+        }
+        let output = command.output().unwrap();
+        assert!(output.status.success(), "{output:?}");
+        String::from_utf8(output.stderr).unwrap()
+    };
+    let studio_left = |res: &std::path::Path| -> Vec<String> {
+        let mut left = Vec::new();
+        for density in densities {
+            for name in ["ic_launcher.webp", "ic_launcher_round.webp"] {
+                let relative = format!("mipmap-{density}/{name}");
+                if res.join(&relative).exists() {
+                    left.push(relative);
+                }
+            }
+        }
+        if res.join("mipmap-anydpi/ic_launcher.xml").exists() {
+            left.push("mipmap-anydpi/ic_launcher.xml".to_owned());
+        }
+        left
+    };
+
+    for (art, writes) in [
+        (
+            &flat,
+            vec!["mipmap/ic_launcher.xml", "mipmap/ic_launcher_round.xml"],
+        ),
+        (
+            &gradient,
+            vec![
+                "mipmap-anydpi-v24/ic_launcher.xml",
+                "mipmap-mdpi/ic_launcher.png",
+                "mipmap-xxxhdpi/ic_launcher_round.png",
+            ],
+        ),
+    ] {
+        let res = temp.path().join(art.file_stem().unwrap());
+        studio(&res);
+        let stderr = run(art, &res, true);
+        // Left in place, Studio's copies are the same resource as vdt's:
+        // beside the gradient's PNGs they fail the build, and beside the flat
+        // art's vector they are chosen over it on older devices.
+        assert!(
+            studio_left(&res).is_empty(),
+            "{:?}\n{stderr}",
+            studio_left(&res)
+        );
+        for relative in writes {
+            assert!(res.join(relative).is_file(), "{relative}");
+        }
+        assert!(res.join("mipmap-anydpi-v26/ic_launcher.xml").is_file());
+        for density in densities {
+            let other = format!("mipmap-{density}/ic_launcher_old.webp");
+            assert!(res.join(&other).is_file(), "{other} was removed");
+        }
+    }
+
+    // Without --legacy, vdt writes no legacy icon, so Studio's is still the
+    // project's icon for older devices and is left alone.
+    let res = temp.path().join("no-legacy");
+    studio(&res);
+    let stderr = run(&flat, &res, false);
+    assert_eq!(studio_left(&res).len(), 11, "{stderr}");
+    assert!(!stderr.contains("removed stale resource"), "{stderr}");
+}
+
+#[test]
 fn cli_adaptive_prints_the_safe_zone_note() {
     let temp = tempfile::tempdir().unwrap();
     let round = temp.path().join("round.svg");

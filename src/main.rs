@@ -668,7 +668,6 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
             for path in plain {
                 files.push((path, xml.clone()));
             }
-            stale.extend(split);
         } else {
             // Gradients, even-odd fills, or a second clip need API 24. The exact
             // vector serves API 24 and 25 from an anydpi folder, which outranks
@@ -685,7 +684,30 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
                 images.push((pair[0].clone(), png.clone()));
                 images.push((pair[1].clone(), png));
             }
-            stale.extend(plain);
+        }
+        // Every other file named for the legacy icon in any mipmap folder is a
+        // version of the resource this run writes, and it breaks the icon: in
+        // a folder vdt writes to it is the same resource twice, which aapt2
+        // refuses to build, and anywhere else it is chosen over vdt's version on
+        // some device. Android Studio writes the legacy icon as .webp into every
+        // density folder, so a Studio project hits both cases. The adaptive
+        // icon in mipmap-anydpi-v26 is written this run, so it stays.
+        let written: Vec<&PathBuf> = files
+            .iter()
+            .map(|(path, _)| path)
+            .chain(images.iter().map(|(path, _)| path))
+            .collect();
+        for name in names {
+            stale.extend(
+                mipmap_dirs
+                    .iter()
+                    .flat_map(|dir| {
+                        MIPMAP_EXTENSIONS
+                            .iter()
+                            .map(move |extension| dir.join(name).with_extension(extension))
+                    })
+                    .filter(|path| !written.contains(&path)),
+            );
         }
     }
 

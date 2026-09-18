@@ -57,6 +57,16 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- `adaptive --legacy` now replaces the legacy icon Android Studio leaves in a
+  project. Studio writes it as `ic_launcher.webp` and `ic_launcher_round.webp`
+  in every density folder, for new projects and from its Image Asset wizard,
+  and vdt only removed `.png` copies. With art that needs API 24, vdt's PNGs
+  landed beside Studio's WebPs and the build failed with a conflicting
+  resource; with API 21 art the build succeeded but Studio's icons could be
+  chosen over vdt's on devices below API 26. Every other version of the legacy
+  icon in any mipmap folder, in any format, is now removed when `--legacy`
+  writes one. Without `--legacy`, Studio's icon is still the project's icon
+  for older devices and is left alone.
 - Wide-gamut `color()` values, which Figma writes into `style` after an sRGB
   fallback, are resolved to sRGB before parsing. The SVG parser dropped the
   declaration it could not read, and the `style` attribute outranks the

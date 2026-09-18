@@ -4,7 +4,7 @@ import vdtWasm from "../vendor/vdtoolkit-wasm/vdtoolkit_wasm_bg.wasm";
 import { note } from "./columns.ts";
 import { DrawableTool } from "./tool-drawable.ts";
 import { IconTool } from "./tool-icon.ts";
-import { initXmlPane } from "./xml-pane.ts";
+import { initXmlPane, placeXmlPane } from "./xml-pane.ts";
 
 interface Tool {
   id: string;
@@ -26,6 +26,7 @@ async function main(): Promise<void> {
   const switchTo = (tool: Tool, hash: string) => {
     active = tool;
     document.body.dataset.tool = tool.id;
+    placeXmlPane(tool.id);
     for (const other of tools) other.section.hidden = other !== tool;
     for (const button of document.querySelectorAll<HTMLButtonElement>(".tools button")) {
       button.setAttribute("aria-pressed", String(button.dataset.tool === tool.id));

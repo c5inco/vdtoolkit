@@ -1,4 +1,4 @@
-// Drawable tool: convert one SVG and compare how three Androids draw it.
+// Drawable tool: convert one SVG and compare how Android 7 and the latest Android draw it.
 
 import type { CanvasKit } from "canvaskit-wasm";
 import { convertSvg } from "../vendor/vdtoolkit-wasm/vdtoolkit_wasm.js";
@@ -6,22 +6,25 @@ import type { Analysis, ConvertResult } from "../vendor/vdtoolkit-wasm/vdtoolkit
 import type { AndroidVersion } from "./android/render.ts";
 import { renderColumns } from "./columns.ts";
 import { resourceName, showXml } from "./xml-pane.ts";
-import nestedClips from "../samples/nested-clips.svg";
-import mask from "../samples/mask.svg";
-import radialGradient from "../samples/radial-gradient.svg";
+import alphaGradient from "../samples/alpha-gradient.svg";
+import angledClip from "../samples/angled-clip.svg";
+import scaledStroke from "../samples/scaled-stroke.xml";
 import stopwatch from "../samples/stopwatch.svg";
 
+// Each sample exists because it exposes one way Android 7's renderer loses to
+// the current one — except the stopwatch, the control that draws the same.
 const SAMPLES = [
-  { slug: "nested-clips", name: "Nested clips", source: nestedClips },
-  { slug: "mask", name: "Mask", source: mask },
-  { slug: "radial-gradient", name: "Radial gradient", source: radialGradient },
+  { slug: "alpha-gradient", name: "Alpha gradient", source: alphaGradient },
+  { slug: "angled-clip", name: "Angled clip", source: angledClip },
+  { slug: "scaled-stroke", name: "Scaled stroke", source: scaledStroke },
   { slug: "stopwatch", name: "Stopwatch", source: stopwatch },
 ];
 
-// Why a version disagrees, in the words a developer needs.
+// Why Android 7 disagrees, in the words a developer needs.
 const REASONS: Record<string, Partial<Record<AndroidVersion, string>>> = {
-  "nested-clips": { api21: "Android 5.0 never restores a clip when its group ends, so the green bar is cut by the inner clip too." },
-  "mask": { api21: "Android 5.0 replaces the clip instead of intersecting, so only the second clip applies." },
+  "alpha-gradient": { api24: "Android 7 mixes gradient stops without premultiplying alpha, so the fade passes through a darker, muddier color." },
+  "angled-clip": { api24: "Android 7 does not antialias clip edges, so the diagonal seam is jagged." },
+  "scaled-stroke": { api24: "Android 7 scales a stroke by the group's smaller axis, so the ring stays 2dp all around instead of thickening at the sides." },
 };
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -38,7 +41,6 @@ export class DrawableTool {
   readonly id = "drawable";
   readonly section = $("tool-drawable");
   private readonly el = {
-    fileName: $("file-name"),
     samples: $("samples"),
     density: $<HTMLSelectElement>("density"),
     zoom: $<HTMLInputElement>("zoom"),
@@ -80,7 +82,6 @@ export class DrawableTool {
   }
 
   private load(name: string, text: string, slug: string | null = null): void {
-    this.el.fileName.textContent = name.replace(/\.(svg|xml)$/i, "");
     if (/<vector[\s>]/.test(text)) {
       this.loaded = { name, slug, xml: text, analysis: null, error: null };
     } else {
@@ -115,7 +116,6 @@ export class DrawableTool {
       name: this.loaded.name,
       xml: this.loaded.xml,
       error: this.loaded.error,
-      minimumApi: this.loaded.analysis?.minimum_api ?? null,
       reasons: this.loaded.slug ? REASONS[this.loaded.slug] : undefined,
       density: Number(this.el.density.value),
       zoom,

@@ -340,7 +340,6 @@ export class IconTool {
     renderColumns(this.el.legacyColumns, this.ck, {
       name: `${options.name} legacy icon`,
       xml: legacy.xml,
-      minimumApi: this.result.layers.legacy?.minimum_api ?? null,
       density: Number(this.el.density.value),
       zoom: Number(this.el.zoom.value),
     });

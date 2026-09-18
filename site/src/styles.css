@@ -12,6 +12,12 @@
   --differs-ink: #7a4506;
   --fails: #b3261e;
 
+  /* Code hues avoid the semantic colors: on this page green/ochre/red mean agreement. */
+  --code-tag: #0e7490;
+  --code-value: #6d28d9;
+  --code-number: #2563eb;
+  --code-bg: #fcfcf9;
+
   --font: "Recursive", ui-sans-serif, system-ui, sans-serif;
   --mono: "MONO" 1;
 
@@ -41,12 +47,18 @@ a { color: inherit; }
 /* Toolbar */
 
 .bar {
+  position: sticky;
+  top: 0;
+  z-index: 30;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 0.5rem 1.5rem;
   padding: 0.85rem clamp(1rem, 3vw, 2rem);
   border-bottom: 1px solid var(--rule);
+  background: rgb(246 247 244 / 0.88);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
 }
 
 .mark {
@@ -58,7 +70,8 @@ a { color: inherit; }
   line-height: 1;
 }
 
-.claim { color: var(--ink-2); }
+.claim { color: var(--ink-2); font-size: var(--s-1); }
+@media (max-width: 72rem) { .claim { display: none; } }
 
 .open {
   position: relative;
@@ -72,7 +85,8 @@ a { color: inherit; }
 .open:focus-within { outline: 2px solid var(--ink); outline-offset: 3px; }
 .open input { position: absolute; inset: 0; opacity: 0; width: 100%; cursor: pointer; }
 
-.samples { display: flex; flex-wrap: wrap; gap: 0.25rem; }
+.samples { display: flex; flex-wrap: wrap; gap: 0.25rem; min-width: 0; }
+.samples button { white-space: nowrap; }
 .samples button {
   padding: 0.35rem 0.7rem;
   border: 0;
@@ -84,70 +98,166 @@ a { color: inherit; }
 .samples button:hover { color: var(--ink); background: var(--frame); }
 .samples button[aria-pressed="true"] { color: var(--ink); background: var(--frame); font-weight: 600; }
 
-.repo { margin-left: auto; color: var(--ink-2); text-underline-offset: 0.2em; }
+.repo {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--ink-2);
+  text-decoration: none;
+}
+.repo:hover { color: var(--ink); }
+.repo svg { display: block; }
 
-/* The light table */
+/* The specimen sheet: ruled strips, then a heavy rule over the grid. */
 
-.table { padding: 2rem clamp(1rem, 3vw, 2rem) 1.5rem; }
+.table { padding: 1rem clamp(1rem, 3vw, 2rem) 1.5rem; }
 
-.table-head {
+/* A ruled strip is one row of the sheet's apparatus. */
+.strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1.25rem;
+  padding: 0.7rem 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.strip-tag, .details-label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink);
+  font-variation-settings: var(--mono);
+}
+.strip-tag { min-width: 8.5rem; }
+
+.details-tag {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   justify-content: space-between;
   gap: 0.5rem 2rem;
-  margin-bottom: 1.5rem;
+  padding-bottom: 1rem;
 }
 
-.table-head h1 {
-  font-size: var(--s3);
-  font-weight: 500;
-  letter-spacing: -0.025em;
-  line-height: 1.05;
-}
-.table-head h1 span { font-weight: 800; }
+.source-or { color: var(--ink-3); font-size: var(--s-1); }
 
 .controls { display: flex; flex-wrap: wrap; gap: 0.5rem 1.5rem; color: var(--ink-2); font-size: var(--s-1); }
 .controls label { display: flex; align-items: center; gap: 0.5rem; }
 .controls select { padding: 0.2rem 0.4rem; border: 1px solid var(--rule); border-radius: 4px; background: var(--paper); }
 .controls output { min-width: 2.5ch; color: var(--ink); font-variation-settings: var(--mono); }
-#zoom { accent-color: var(--ink); width: 8rem; }
+.controls input[type="range"] { width: 8rem; }
+
+/* The grid of evidence: the two renders share half, the XML takes half. Head
+   rules reach into the gutters with negative margins, so the lines join. */
+.details {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  row-gap: 1.5rem;
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 2px solid var(--ink);
+}
+.details > .columns { display: contents; }
+.details .xml-slot { min-width: 0; }
+
+@media (min-width: 64rem) {
+  .details { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .details-tag { grid-column: 1 / -1; }
+  .details .column { padding-right: 1.25rem; }
+  .details .column + .column { border-left: 1px solid var(--rule); padding-left: 1.25rem; }
+  /* Head is always two rows — version, then verdict — so the rule under it
+     sits at the same height in every column, wrapped chip or not. */
+  .details .column-head { flex-direction: column; align-items: flex-start; row-gap: 0.3rem; }
+  .details .status { margin-left: 0; padding-block: 0.18rem; }
+  .details .column:first-child .column-head { margin-right: -1.25rem; padding-right: 1.25rem; }
+  .details .column + .column .column-head { margin-left: -1.25rem; padding-left: 1.25rem; }
+  .details .xml-slot { grid-column: 1 / -1; padding-top: 1.5rem; border-top: 1px solid var(--rule); }
+}
+
+@media (min-width: 84rem) {
+  .details { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 2fr); }
+  .details .column + .column .column-head { margin-right: -1.25rem; padding-right: 1.25rem; }
+  .details .xml-slot {
+    grid-column: auto;
+    padding-top: 0;
+    padding-left: 1.25rem;
+    border-top: 0;
+    border-left: 1px solid var(--rule);
+  }
+}
+
+/* Sliders and toggles are instrument chrome: hairline track, square thumb. */
+input[type="range"] {
+  appearance: none;
+  -webkit-appearance: none;
+  height: 1.1rem;
+  background: transparent;
+  cursor: pointer;
+}
+input[type="range"]::-webkit-slider-runnable-track { height: 2px; border-radius: 2px; background: var(--ink-3); }
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 0.75rem;
+  height: 0.75rem;
+  margin-top: calc((2px - 0.75rem) / 2);
+  border: 0;
+  border-radius: 3px;
+  background: var(--ink);
+}
+input[type="range"]::-moz-range-track { height: 2px; border-radius: 2px; background: var(--ink-3); }
+input[type="range"]::-moz-range-thumb { width: 0.75rem; height: 0.75rem; border: 0; border-radius: 3px; background: var(--ink); }
+input[type="checkbox"], input[type="radio"] { accent-color: var(--ink); }
 
 .columns {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 2rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2rem 2.5rem;
 }
 
 .column { display: grid; align-content: start; gap: 0.75rem; min-width: 0; }
 
 .column-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: 0.5rem;
+  row-gap: 0.35rem;
+  column-gap: 0.5rem;
   padding-bottom: 0.5rem;
   border-bottom: 1px solid var(--rule);
 }
 .title { font-size: var(--s1); font-weight: 700; }
-.source { color: var(--ink-3); font-size: var(--s-1); font-variation-settings: var(--mono); }
-.status { margin-left: auto; font-size: var(--s-1); font-weight: 600; white-space: nowrap; }
+.source { color: var(--ink-3); font-size: var(--s-1); font-variation-settings: var(--mono); min-width: 0; }
+
+/* Verdict chips: a tinted lozenge is scannable from across the room; the
+   reference stays quiet text. */
+.status {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45em;
+  padding: 0.18rem 0.65rem;
+  border-radius: 999px;
+  font-size: var(--s-1);
+  font-weight: 600;
+  white-space: nowrap;
+}
 .status::before {
   content: "";
-  display: inline-block;
-  width: 0.55em;
-  height: 0.55em;
-  margin-right: 0.4em;
+  width: 0.5em;
+  height: 0.5em;
   border-radius: 50%;
   background: currentColor;
-  vertical-align: 0.05em;
 }
-.column[data-state="reference"] .status { color: var(--ink-3); font-weight: 400; }
+.column[data-state="reference"] .status { color: var(--ink-3); font-weight: 400; padding-inline: 0; }
 .column[data-state="reference"] .status::before { display: none; }
-.column[data-state="same"] .status { color: var(--same-ink); }
+.column[data-state="same"] .status { color: var(--same-ink); background: color-mix(in srgb, var(--same) 13%, transparent); }
 .column[data-state="same"] .status::before { background: var(--same); }
-.column[data-state="differs"] .status { color: var(--differs-ink); }
+.column[data-state="differs"] .status { color: var(--differs-ink); background: color-mix(in srgb, var(--differs) 15%, transparent); }
 .column[data-state="differs"] .status::before { background: var(--differs); }
-.column[data-state="error"] .status { color: var(--fails); }
+.column[data-state="error"] .status { color: var(--fails); background: color-mix(in srgb, var(--fails) 11%, transparent); }
 
 /* The render sits on its own viewport-unit grid; the drawable's edge is the only box. */
 .stage {
@@ -165,10 +275,9 @@ a { color: inherit; }
     linear-gradient(to right, var(--rule) 1px, transparent 1px),
     linear-gradient(to bottom, var(--rule) 1px, transparent 1px);
   background-size: var(--unit) var(--unit);
-  outline: 1px solid var(--rule);
+  outline: 1px solid color-mix(in srgb, var(--ink) 25%, transparent);
   outline-offset: -1px;
-  touch-action: none;
-  cursor: crosshair;
+  box-shadow: 0 1px 3px rgb(16 26 22 / 0.08);
 }
 .frame canvas { display: block; image-rendering: pixelated; }
 
@@ -181,42 +290,52 @@ a { color: inherit; }
   border: 1px dashed var(--rule);
 }
 
-.loupe {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  display: none;
-  grid-template-rows: auto auto;
-  background: var(--paper);
-  box-shadow: 0 0 0 1px var(--rule);
-}
-.stage.inspecting .loupe { display: grid; }
-.loupe canvas { display: block; }
-.loupe-caption {
-  padding: 0.15rem 0.4rem;
-  font-size: var(--s-1);
-  font-variation-settings: var(--mono);
-  color: var(--ink-2);
-  white-space: nowrap;
-}
-
 .meta { display: flex; gap: 1rem; font-size: var(--s-1); color: var(--ink-3); font-variation-settings: var(--mono); }
 
 .note { font-size: var(--s-1); line-height: 1.45; max-width: 40ch; }
 .note.differs { color: var(--differs-ink); }
 .note.error { color: var(--fails); }
-.note.never { color: var(--ink-2); }
 
-.method { max-width: 66ch; margin-top: 2rem; color: var(--ink-2); font-size: var(--s-1); }
+.method { max-width: 66ch; margin-top: 1.5rem; padding-top: 0.75rem; border-top: 1px solid var(--rule); color: var(--ink-3); font-size: var(--s-1); }
 
-/* XML */
+/* XML: one pane, two costumes — a column of the details grid for the
+   drawable tool, a wide side-by-side card for the icon tool. */
 
 .xml-section {
   display: grid;
   grid-template-columns: minmax(16rem, 22rem) minmax(0, 1fr);
   gap: 2rem;
-  padding: 1.5rem clamp(1rem, 3vw, 2rem) 3rem;
-  border-top: 1px solid var(--rule);
+  min-width: 0;
+}
+main > .xml-section { padding: 1.5rem clamp(1rem, 3vw, 2rem) 3rem; border-top: 1px solid var(--rule); }
+
+#icon-xml-slot { margin-top: 2.5rem; padding-top: 1.5rem; border-top: 2px solid var(--ink); }
+
+/* In the details grid the pane stacks: head, card, then ruled facts. */
+@media (min-width: 84rem) {
+  #drawable-xml-slot .xml-section { display: flex; flex-direction: column; gap: 1rem; }
+  #drawable-xml-slot .xml-side { display: contents; }
+  #drawable-xml-slot .xml-side h2 {
+    order: 0;
+    /* Matches the two-row render heads: 1.5·s1 + 0.3 gap + 1.5·s-1 + 2·0.18 + 0.5 pad. */
+    min-height: 4.07rem;
+    margin-left: -1.25rem;
+    padding-left: 1.25rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--rule);
+  }
+  #drawable-xml-slot .xml-card { order: 1; align-self: stretch; }
+  #drawable-xml-slot .facts { order: 2; }
+  #drawable-xml-slot .diagnostics { order: 3; }
+  /* A plain ruled table: no column gap, so every line spans the whole width. */
+  #drawable-xml-slot .facts {
+    grid-template-columns: minmax(0, 1fr) max-content;
+    gap: 0;
+    border-top: 1px solid var(--rule);
+  }
+  #drawable-xml-slot .facts dt, #drawable-xml-slot .facts dd { padding: 0.3rem 0; border-bottom: 1px solid var(--rule); }
+  #drawable-xml-slot .facts dd { padding-left: 1rem; text-align: right; }
+  #drawable-xml-slot .xml { max-height: 24rem; }
 }
 
 .xml-side { display: grid; align-content: start; gap: 1rem; }
@@ -226,18 +345,46 @@ a { color: inherit; }
 .facts dt { color: var(--ink-2); }
 .facts dd { font-variation-settings: var(--mono); }
 
-.actions { display: flex; gap: 0.5rem; }
+/* The file card: the pane's actions live on the card, as icon buttons. */
+.xml-card {
+  align-self: start;
+  min-width: 0;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--code-bg);
+  overflow: clip;
+}
+.xml-card-head {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.35rem 0.5rem 0.35rem 1rem;
+  border-bottom: 1px solid var(--rule);
+}
+.xml-file {
+  font-size: var(--s-1);
+  font-variation-settings: var(--mono);
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+.actions { display: flex; gap: 0.25rem; margin-left: auto; }
 .actions button {
-  padding: 0.4rem 0.9rem;
-  border: 1px solid var(--ink);
-  border-radius: 999px;
-  background: var(--ink);
-  color: var(--paper);
-  font-weight: 600;
+  display: grid;
+  place-items: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--ink-2);
   cursor: pointer;
 }
-.actions button + button { background: none; color: var(--ink); }
-.actions button:disabled { opacity: 0.4; cursor: not-allowed; }
+.actions button:hover { background: var(--frame); color: var(--ink); }
+.actions button:disabled { opacity: 0.35; cursor: not-allowed; }
+.actions button.copied { color: var(--same-ink); }
+.actions button svg { width: 1rem; height: 1rem; }
 
 .diagnostics { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.4rem; font-size: var(--s-1); line-height: 1.45; }
 .diagnostics .code { font-variation-settings: var(--mono); margin-right: 0.4em; }
@@ -249,17 +396,38 @@ a { color: inherit; }
   max-height: 32rem;
   overflow: auto;
   padding: 1rem 1.25rem;
-  border-left: 1px solid var(--rule);
   font: 400 var(--s-1) / 1.6 var(--font);
   font-variation-settings: var(--mono);
   white-space: pre;
   tab-size: 4;
 }
 
+/* XML highlighting. Hues stay clear of the agreement colors. */
+.xml .x-tag { color: var(--code-tag); font-weight: 500; }
+.xml .x-bracket { color: var(--ink-3); }
+.xml .x-attr { color: var(--ink-2); }
+.xml .x-value { color: var(--code-value); }
+.xml .x-comment, .xml .x-decl { color: var(--ink-3); }
+.xml .x-comment { font-style: italic; }
+.xml .x-number { color: var(--code-number); }
+
+/* An IDE-style chip in front of every hex color literal. */
+.xml .sw {
+  display: inline-block;
+  width: 0.8em;
+  height: 0.8em;
+  margin-right: 0.3em;
+  border-radius: 2px;
+  background: var(--c);
+  box-shadow: inset 0 0 0 1px rgb(16 26 22 / 0.2);
+  vertical-align: -0.05em;
+}
+
 /* Drag anywhere */
 .drop-veil {
   position: fixed;
   inset: 0;
+  z-index: 60;
   display: none;
   place-items: center;
   background: rgb(246 247 244 / 0.92);
@@ -269,10 +437,30 @@ a { color: inherit; }
 }
 body.dragging .drop-veil { display: grid; }
 
+/* Colophon: the method note, said once, big enough to read. */
+
+.colophon {
+  padding: 2rem clamp(1rem, 3vw, 2rem) 3rem;
+  border-top: 2px solid var(--ink);
+}
+.colophon-lede { max-width: 76ch; font-size: var(--s1); line-height: 1.55; color: var(--ink-2); }
+.colophon code { font-variation-settings: var(--mono); font-size: 0.88em; color: var(--ink); }
+
 @media (max-width: 64rem) {
   .columns { grid-template-columns: 1fr; gap: 2.5rem; }
   .xml-section { grid-template-columns: 1fr; }
-  .xml { border-left: 0; padding-left: 0; }
+  .details .column, .details .xml-slot { border-left: 0; padding-left: 0; }
+}
+
+@media (max-width: 48rem) {
+  .samples {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    mask-image: linear-gradient(to right, #000 90%, transparent);
+    -webkit-mask-image: linear-gradient(to right, #000 90%, transparent);
+  }
+  .samples::-webkit-scrollbar { display: none; }
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -293,7 +481,6 @@ body.dragging .drop-veil { display: grid; }
 }
 .tools button:hover { color: var(--ink); background: var(--frame); }
 .tools button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
-body[data-tool="icon"] .samples { display: none; }
 
 /* Launcher icon tool */
 
@@ -302,9 +489,21 @@ body[data-tool="icon"] .samples { display: none; }
   grid-template-columns: minmax(16rem, 20rem) minmax(0, 1fr) minmax(14rem, 17rem);
   gap: 2.5rem;
   align-items: start;
+  padding-top: 0.75rem;
+  border-top: 2px solid var(--ink);
 }
 
 .icon-grid h2 { font-size: var(--s1); font-weight: 700; margin-bottom: 0.75rem; }
+
+.block-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem 2rem;
+  margin-bottom: 0.75rem;
+}
+.block-head h2 { margin-bottom: 0; }
 
 .inputs { display: grid; gap: 1.25rem; }
 .inputs fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }

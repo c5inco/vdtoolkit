@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>vdt: SVG to Android VectorDrawable, drawn by Android</title>
-  <meta name="description" content="Convert an SVG to VectorDrawable XML or an adaptive launcher icon in your browser and see how Android 5.0, 7.0, and current Android draw it.">
+  <title>vdt: SVG to Android VectorDrawable</title>
+  <meta name="description" content="Convert an SVG to VectorDrawable XML or an adaptive launcher icon in your browser and see how Android 7 and current Android draw it.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Recursive:slnt,wght,CASL,CRSV,MONO@-15..0,300..1000,0..1,0..1,0..1&display=swap">
@@ -13,68 +13,53 @@
 <body data-tool="drawable">
   <header class="bar">
     <a class="mark" href="./">vdt</a>
+    <span class="claim">SVG to VectorDrawable</span>
     <nav class="tools" aria-label="Tools">
       <button type="button" data-tool="drawable">Drawable</button>
       <button type="button" data-tool="icon">Launcher icon</button>
     </nav>
-    <label class="open">
-      <input type="file" id="file" accept=".svg,.xml,image/svg+xml,text/xml">
-      Open an SVG or XML
-    </label>
-    <nav class="samples" id="samples" aria-label="Samples"></nav>
-    <a class="repo" href="https://github.com/c5inco/vdtoolkit">GitHub</a>
+    <a class="repo" href="https://github.com/c5inco/vdtoolkit">
+      <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M8 .2a7.8 7.8 0 0 0-2.47 15.2c.39.07.53-.17.53-.37v-1.31c-2.16.47-2.62-1.04-2.62-1.04-.35-.9-.86-1.14-.86-1.14-.71-.48.05-.47.05-.47.78.06 1.2.8 1.2.8.69 1.19 1.82.85 2.27.65.07-.5.27-.85.5-1.05-1.73-.2-3.55-.87-3.55-3.86 0-.85.3-1.55.8-2.1-.08-.2-.35-.99.08-2.07 0 0 .65-.21 2.14.8a7.4 7.4 0 0 1 3.9 0c1.49-1.01 2.14-.8 2.14-.8.43 1.08.16 1.87.08 2.07.5.55.8 1.25.8 2.1 0 3-1.82 3.66-3.56 3.85.28.24.53.72.53 1.45v2.15c0 .2.14.45.54.37A7.8 7.8 0 0 0 8 .2Z"/></svg>
+      GitHub
+    </a>
   </header>
 
   <main>
-    <section class="table" id="tool-drawable" aria-labelledby="table-heading">
-      <div class="table-head">
-        <h1 id="table-heading"><span id="file-name">Nested clips</span> on three Androids</h1>
-        <div class="controls">
-          <label>Density
-            <select id="density">
-              <option value="1">mdpi</option>
-              <option value="1.5">hdpi</option>
-              <option value="2">xhdpi</option>
-              <option value="3" selected>xxhdpi</option>
-              <option value="4">xxxhdpi</option>
-            </select>
-          </label>
-          <label>Zoom
-            <input type="range" id="zoom" min="1" max="12" step="1" value="5">
-            <output id="zoom-value" for="zoom">5×</output>
-          </label>
-        </div>
+    <section class="table" id="tool-drawable" aria-label="Drawable">
+      <div class="strip">
+        <span class="strip-tag">Source</span>
+        <label class="open">
+          <input type="file" id="file" accept=".svg,.xml,image/svg+xml,text/xml">
+          Open an SVG or XML
+        </label>
+        <span class="source-or">or try a sample</span>
+        <nav class="samples" id="samples" aria-label="Samples"></nav>
       </div>
-      <div class="columns" id="columns"></div>
-      <p class="method">
-        Each view runs a line-by-line port of that Android version's drawing code on Skia,
-        here in your browser. Shapes, clips and gradients match the devices we test on. Edge
-        smoothing comes from today's Skia, so an edge can differ by a pixel. Hover a render
-        to compare the same pixels across all three.
-      </p>
+      <div class="details">
+        <div class="details-tag">
+          <span class="details-label">Compare — Android 7 vs latest</span>
+          <div class="controls">
+            <label>Density
+              <select id="density">
+                <option value="1">mdpi</option>
+                <option value="1.5">hdpi</option>
+                <option value="2">xhdpi</option>
+                <option value="3" selected>xxhdpi</option>
+                <option value="4">xxxhdpi</option>
+              </select>
+            </label>
+            <label>Zoom
+              <input type="range" id="zoom" min="1" max="12" step="1" value="5">
+              <output id="zoom-value" for="zoom">5×</output>
+            </label>
+          </div>
+        </div>
+        <div class="columns" id="columns"></div>
+        <div class="xml-slot" id="drawable-xml-slot"></div>
+      </div>
     </section>
 
-    <section class="table" id="tool-icon" aria-labelledby="icon-heading" hidden>
-      <div class="table-head">
-        <h1 id="icon-heading">Launcher icon from two layers</h1>
-        <div class="controls">
-          <label>Density
-            <select id="icon-density">
-              <option value="1">mdpi</option>
-              <option value="1.5">hdpi</option>
-              <option value="2">xhdpi</option>
-              <option value="3" selected>xxhdpi</option>
-              <option value="4">xxxhdpi</option>
-            </select>
-          </label>
-          <label>Zoom
-            <input type="range" id="icon-zoom" min="1" max="8" step="1" value="2">
-            <output id="icon-zoom-value" for="icon-zoom">2×</output>
-          </label>
-          <label><input type="checkbox" id="safe-zone" checked> Safe zone</label>
-        </div>
-      </div>
-
+    <section class="table" id="tool-icon" aria-label="Launcher icon" hidden>
       <div class="icon-grid">
         <form class="inputs" id="icon-form">
           <fieldset class="layer">
@@ -132,7 +117,25 @@
         </form>
 
         <div class="previews-block">
-          <h2>Under launcher masks</h2>
+          <div class="block-head">
+            <h2>Under launcher masks</h2>
+            <div class="controls">
+              <label>Density
+                <select id="icon-density">
+                  <option value="1">mdpi</option>
+                  <option value="1.5">hdpi</option>
+                  <option value="2">xhdpi</option>
+                  <option value="3" selected>xxhdpi</option>
+                  <option value="4">xxxhdpi</option>
+                </select>
+              </label>
+              <label>Zoom
+                <input type="range" id="icon-zoom" min="1" max="8" step="1" value="1">
+                <output id="icon-zoom-value" for="icon-zoom">1×</output>
+              </label>
+              <label><input type="checkbox" id="safe-zone" checked> Safe zone</label>
+            </div>
+          </div>
           <div class="previews" id="previews"></div>
           <p class="method">
             Launchers show the central 72dp of each 108dp layer and cut it with their own
@@ -149,24 +152,44 @@
       </div>
 
       <div id="legacy-block" class="legacy-block" hidden>
-        <h2>The legacy icon on three Androids</h2>
+        <h2>The legacy icon: Android 7 vs latest</h2>
         <div class="columns" id="icon-columns"></div>
       </div>
+
+      <div id="icon-xml-slot"></div>
     </section>
 
-    <section class="xml-section" aria-labelledby="xml-heading">
+    <section class="xml-section" id="xml-section" aria-labelledby="xml-heading">
       <div class="xml-side">
         <h2 id="xml-heading">VectorDrawable XML</h2>
         <dl class="facts" id="facts"></dl>
-        <div class="actions">
-          <button type="button" id="copy">Copy XML</button>
-          <button type="button" id="download">Download</button>
-        </div>
         <ul class="diagnostics" id="diagnostics"></ul>
       </div>
-      <pre class="xml"><code id="xml"></code></pre>
+      <div class="xml-card">
+        <div class="xml-card-head">
+          <span class="xml-file" id="xml-file"></span>
+          <div class="actions">
+            <button type="button" id="copy" aria-label="Copy XML" title="Copy XML">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8.5" rx="1.5"/><path d="M10.5 5.5v-2A1.5 1.5 0 0 0 9 2H3.5A1.5 1.5 0 0 0 2 3.5V9A1.5 1.5 0 0 0 3.5 10.5h2"/></svg>
+            </button>
+            <button type="button" id="download" aria-label="Download XML" title="Download XML">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.5v6.5M5.25 6.75 8 9.5l2.75-2.75"/><path d="M2.75 11.25v1.5A1.5 1.5 0 0 0 4.25 14.25h7.5a1.5 1.5 0 0 0 1.5-1.5v-1.5"/></svg>
+            </button>
+          </div>
+        </div>
+        <pre class="xml"><code id="xml"></code></pre>
+      </div>
     </section>
   </main>
+
+  <footer class="colophon">
+    <p class="colophon-lede">Each view runs a line-by-line port of that Android version's own
+      drawing code — AOSP <code>VectorDrawable</code> at <code>android-7.0.0_r1</code> and main —
+      on Skia via CanvasKit, right here in your browser. Shapes, clips and gradients match the
+      devices we test on; edge smoothing comes from today's Skia, so an edge can differ by a
+      pixel. Icon geometry follows <code>AdaptiveIconDrawable</code> and
+      <code>config_icon_mask</code>. Your files never leave the page.</p>
+  </footer>
 
   <div class="drop-veil" id="drop-veil" aria-hidden="true">Drop to open</div>
   <script type="module" src="main.js"></script>

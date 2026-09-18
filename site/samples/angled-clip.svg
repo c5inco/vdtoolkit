@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+  <defs>
+    <clipPath id="diagonal"><path d="M0 0H24L0 24Z"/></clipPath>
+  </defs>
+  <rect width="24" height="24" fill="#E8B34A"/>
+  <g clip-path="url(#diagonal)">
+    <rect width="24" height="24" fill="#1A5FB4"/>
+  </g>
+</svg>

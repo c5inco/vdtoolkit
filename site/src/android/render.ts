@@ -13,8 +13,8 @@ export { DrawableLoadError } from "./values.ts";
 export type AndroidVersion = "api21" | "api24" | "latest";
 
 export const ANDROID_VERSIONS: { id: AndroidVersion; label: string; source: string }[] = [
-  { id: "api21", label: "API 21", source: "android-5.0.0_r1" },
-  { id: "api24", label: "API 24", source: "android-7.0.0_r1" },
+  { id: "api21", label: "Android 5", source: "Lollipop · API 21" },
+  { id: "api24", label: "Android 7", source: "Nougat · API 24" },
   { id: "latest", label: "Latest", source: "AOSP main" },
 ];
 

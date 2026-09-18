@@ -12,7 +12,7 @@ await build({
   format: "esm",
   // canvaskit.js only reaches for these when it runs under Node.
   external: ["fs", "path"],
-  loader: { ".svg": "text", ".wasm": "file" },
+  loader: { ".svg": "text", ".xml": "text", ".wasm": "file" },
   assetNames: "[name]-[hash]",
   minify: true,
   logLevel: "info",

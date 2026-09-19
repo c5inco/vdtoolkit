@@ -32,6 +32,11 @@ pub struct Analysis {
     pub diagnostics: Vec<Diagnostic>,
     /// Geometry and output-size measurements.
     pub metrics: Metrics,
+    /// Raster format when this analysis is of a layer image rather than an SVG.
+    ///
+    /// `"png"`, `"webp"`, or `"jpg"`. Omitted from JSON for SVG input.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
 }
 
 /// Measurements collected while analyzing an SVG.

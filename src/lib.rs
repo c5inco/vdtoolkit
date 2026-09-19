@@ -406,6 +406,7 @@ impl Asset {
                 minimum_api,
                 diagnostics,
                 metrics,
+                image: None,
             },
             declared_size: true,
             short_paths: false,
@@ -437,6 +438,13 @@ pub fn analyze_file(path: &Path) -> Result<Analysis> {
 /// Analyze SVG bytes without converting them.
 #[doc(hidden)]
 pub fn analyze(source: &[u8]) -> Result<Analysis> {
+    if bitmap::ImageFormat::sniff(source).is_some() {
+        return Err(Error::InvalidInput(
+            "this is a raster image, not an SVG; pass --as adaptive-foreground or \
+             --as adaptive-background to inspect it as an adaptive layer"
+                .to_owned(),
+        ));
+    }
     Ok(svg::process(source, false)?.analysis)
 }
 
@@ -458,8 +466,17 @@ pub fn analyze_file_as(path: &Path, kind: IconKind, fit: Fit) -> Result<Analysis
 /// [`Asset::to_icon`], so the analysis carries the kind's findings and the
 /// metrics of the fitted result. An SVG that cannot be converted yields its
 /// compatibility analysis alone, as [`analyze`] would.
+///
+/// A PNG, WebP, or JPEG is decoded as an adaptive layer image instead, the
+/// way `adaptive --foreground-image` and `--background-image` do. `--fit`
+/// does not apply: a raster layer is placed, never resampled. A raster
+/// notification icon is rejected, because `notification` only writes a
+/// vector drawable.
 #[doc(hidden)]
 pub fn analyze_as(source: &[u8], kind: IconKind, fit: Fit) -> Result<Analysis> {
+    if bitmap::ImageFormat::sniff(source).is_some() {
+        return analyze_layer_as(source, kind);
+    }
     match convert(source) {
         Ok(mut asset) => {
             asset.to_icon(kind, fit)?;
@@ -468,6 +485,36 @@ pub fn analyze_as(source: &[u8], kind: IconKind, fit: Fit) -> Result<Analysis> {
         Err(Error::Incompatible(analysis)) => Ok(*analysis),
         Err(error) => Err(error),
     }
+}
+
+/// Decode a raster file as an adaptive icon layer and report the same
+/// findings `adaptive` would, without writing anything.
+fn analyze_layer_as(source: &[u8], kind: IconKind) -> Result<Analysis> {
+    let layer = match kind {
+        IconKind::AdaptiveForeground => bitmap::LayerKind::Foreground,
+        IconKind::AdaptiveBackground => bitmap::LayerKind::Background,
+        IconKind::Notification => {
+            return Err(Error::InvalidInput(
+                "notification icons are vector drawables; a raster file is an adaptive icon layer"
+                    .to_owned(),
+            ));
+        }
+    };
+    let (image, diagnostics) = bitmap::analyze_layer_image(source, layer)?;
+    Ok(Analysis {
+        compatibility: Compatibility::Exact,
+        minimum_api: None,
+        diagnostics,
+        metrics: Metrics {
+            width: image.width as f32,
+            height: image.height as f32,
+            viewport_width: adaptive::ADAPTIVE_ICON_SIZE,
+            viewport_height: adaptive::ADAPTIVE_ICON_SIZE,
+            content_bounds: image.content,
+            ..Metrics::default()
+        },
+        image: Some(image.format.extension().to_owned()),
+    })
 }
 
 /// Convert an SVG file exactly or with safe normalization.

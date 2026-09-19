@@ -107,19 +107,25 @@ same box is not. vdt renders the layer and measures the painted pixels, which
 is why `--fit 66` is safe for some artwork and not for other artwork of the
 same size.
 
-`check` and `inspect` take `--as <kind>` to also report what making the SVG
+`check` and `inspect` take `--as <kind>` to also report what making the file
 into that kind of icon would find, exactly as `notification` or `adaptive`
 would, without writing anything. The kinds are `notification`,
 `adaptive-foreground` (a monochrome layer follows the same rules), and
 `adaptive-background`; `--fit <dp>` is the generator's fit and defaults to the
 whole canvas, and `--background-fit` mirrors the generator's option for
-`--as adaptive-background`. The report's metrics describe the fitted result, and in JSON an
-`icon` object names the kind and fit. Compatibility and the exit code are
-unchanged: these findings are warnings and notes.
+`--as adaptive-background`. A PNG, WebP, or JPEG is inspected as an adaptive
+layer image, the way `--foreground-image` and `--background-image` are: the
+same `SVGVD018`–`SVGVD026` findings, with `--fit` recorded but unused because
+a raster layer is placed, never resampled. The report's metrics describe the
+fitted vector or the image on the 108dp layer, and in JSON an `icon` object
+names the kind and fit. A raster entry also carries `image`: `png`, `webp`,
+or `jpg`. Compatibility and the exit code are unchanged: these findings are
+warnings and notes.
 
 ```sh
 vdt inspect icons/ --as notification --format json
 vdt check logo.svg --as adaptive-foreground --fit 66
+vdt inspect fg.webp --as adaptive-foreground --format json
 vdt inspect hero.svg --as adaptive-background --background-fit contain
 ```
 
@@ -195,7 +201,8 @@ layer with launcher masks and shifts it for parallax, so anything it does not
 reach shows through; the layer crops what overflows, and `--background-fit
 contain` scales all of the artwork in instead. Placement findings carry
 diagnostic codes, so `inspect --as adaptive-foreground --fit 66` or
-`--as adaptive-background` can report them before anything is written:
+`--as adaptive-background` can report them before anything is written,
+including for a PNG or WebP passed the same way as `--foreground-image`:
 
 | Code | Meaning |
 | --- | --- |

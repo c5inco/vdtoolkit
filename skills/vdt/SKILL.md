@@ -52,6 +52,7 @@ VectorDrawableCompat must load them below API 21, where `anydpi` is unavailable.
 
    ```sh
    vdt inspect logo.svg --as adaptive-foreground --fit 66 --format json
+   vdt inspect fg.webp --as adaptive-foreground --format json
    vdt inspect bg.svg --as adaptive-background --format json
    vdt inspect bell.svg --as notification --format json
    ```
@@ -59,7 +60,9 @@ VectorDrawableCompat must load them below API 21, where `anydpi` is unavailable.
    `--as` takes `notification`, `adaptive-foreground` (also used for a
    monochrome layer), or `adaptive-background`. `--fit`, and
    `--background-fit` for a background, must match the values you will pass to
-   the generator.
+   the generator. A PNG, WebP, or JPEG with `--as adaptive-foreground` or
+   `--as adaptive-background` is inspected as a layer image; `--fit` does not
+   place it. Without `--as`, a raster file is refused.
 
 2. **Read the report.** Each file gives:
 

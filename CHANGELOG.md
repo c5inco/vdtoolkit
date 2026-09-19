@@ -6,14 +6,6 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Fixed
-
-- `convert`, `optimize`, and `notification`, including the default
-  `vdt <file>` form, recognize PNG, WebP, and JPEG headers and refuse those
-  files as raster images instead of reporting UTF-8 or malformed XML errors.
-  The CLI points to adaptive icon image options and `inspect --as`; the Rust
-  and WebAssembly conversion APIs keep the flag-free error.
-
 ### Added
 
 - `inspect --as adaptive-foreground` and `--as adaptive-background` (and
@@ -31,6 +23,14 @@ follow [Semantic Versioning](https://semver.org/).
   (`png`, `webp`, or `jpg`) on those entries, `compatibility` is then
   `not_applicable`, `metrics.width` / `height` are pixels of the image, and
   `content_bounds` / `viewport_*` stay dp on the 108dp layer.
+
+### Fixed
+
+- `convert`, `optimize`, and `notification`, including the default
+  `vdt <file>` form, recognize PNG, WebP, and JPEG headers and refuse those
+  files as raster images instead of reporting UTF-8 or malformed XML errors.
+  The CLI points to adaptive icon image options and `inspect --as`; the Rust
+  and WebAssembly conversion APIs keep the flag-free error.
 
 ## [0.4.0] - 2026-09-18
 

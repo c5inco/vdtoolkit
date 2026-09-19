@@ -287,6 +287,26 @@ mod tests {
     }
 
     #[test]
+    fn raster_conversion_errors_do_not_name_cli_flags() {
+        let png = b"\x89PNG\r\n\x1a\n";
+        for result in [
+            convert_result(png, false, None, false),
+            notification_result(png, false, 24.0, false),
+        ] {
+            let result = json(&result);
+            assert_eq!(result["error"]["kind"], "invalid_input");
+            assert_eq!(
+                result["error"]["message"],
+                "this is a raster image, not an SVG"
+            );
+            assert!(!result["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("--"));
+        }
+    }
+
+    #[test]
     fn optimization_and_determinism_match_the_native_api() {
         let mut native = vdtoolkit::convert(DECIMALS).unwrap();
         native.optimize();

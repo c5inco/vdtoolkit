@@ -36,6 +36,108 @@ fn converts_viewbox_geometry_colors_and_fill_rule() {
 }
 
 #[test]
+fn convert_refuses_raster_formats_before_parsing_them_as_svg() {
+    for source in [
+        &b"\x89PNG\r\n\x1a\n"[..],
+        &b"\xff\xd8\xff"[..],
+        &b"RIFF\0\0\0\0WEBP"[..],
+    ] {
+        assert!(matches!(
+            vdtoolkit::convert(source),
+            Err(Error::InvalidInput(message)) if message == "this is a raster image, not an SVG"
+        ));
+    }
+}
+
+#[test]
+fn cli_conversion_commands_refuse_rasters_with_cli_only_guidance() {
+    let temp = tempfile::tempdir().unwrap();
+    let formats: [(&str, &[u8]); 3] = [
+        ("png", b"\x89PNG\r\n\x1a\n"),
+        ("jpg", b"\xff\xd8\xff"),
+        ("webp", b"RIFF\0\0\0\0WEBP"),
+    ];
+
+    for (extension, bytes) in formats {
+        let input = temp.path().join(format!("logo.{extension}"));
+        fs::write(&input, bytes).unwrap();
+        for command in ["convert", "optimize", "notification"] {
+            let output = Command::new(env!("CARGO_BIN_EXE_vdt"))
+                .arg(command)
+                .arg(&input)
+                .output()
+                .unwrap();
+            assert_eq!(output.status.code(), Some(1), "{command} {extension}");
+            assert!(output.stdout.is_empty(), "{command} {extension}");
+            let stderr = String::from_utf8(output.stderr).unwrap();
+            assert!(
+                stderr.contains("this is a raster image, not an SVG"),
+                "{command} {extension}: {stderr}"
+            );
+            assert!(
+                stderr.contains("--foreground-image")
+                    && stderr.contains("--background-image")
+                    && stderr.contains("inspect --as adaptive-foreground"),
+                "{command} {extension}: {stderr}"
+            );
+        }
+    }
+
+    let png = temp.path().join("logo.png");
+    let output = Command::new(env!("CARGO_BIN_EXE_vdt"))
+        .arg(&png)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("this is a raster image, not an SVG")
+            && stderr.contains("--foreground-image")
+            && stderr.contains("inspect --as adaptive-foreground"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn cli_adaptive_redirects_rasters_from_vector_to_image_flags() {
+    let temp = tempfile::tempdir().unwrap();
+    let raster = temp.path().join("logo.png");
+    fs::write(&raster, b"\x89PNG\r\n\x1a\n").unwrap();
+    let vector = temp.path().join("logo.svg");
+    fs::write(
+        &vector,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M2 2H22V22H2Z"/></svg>"##,
+    )
+    .unwrap();
+
+    for (flag, image_flag, extra) in [
+        ("--foreground", "--foreground-image", None),
+        ("--background", "--background-image", Some("--foreground")),
+        ("--monochrome", "--monochrome-image", Some("--foreground")),
+    ] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_vdt"));
+        command.arg("adaptive").arg(flag).arg(&raster);
+        if let Some(extra) = extra {
+            command.arg(extra).arg(&vector);
+        }
+        if flag == "--background" {
+            command.arg("-o").arg(temp.path().join("background-res"));
+        } else {
+            command
+                .args(["--background-color", "#FFFFFF", "-o"])
+                .arg(temp.path().join(format!("{}-res", &flag[2..])));
+        }
+        let output = command.output().unwrap();
+        assert_eq!(output.status.code(), Some(1), "{flag}: {output:?}");
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(
+            stderr.contains("this is a raster image, not an SVG") && stderr.contains(image_flag),
+            "{flag}: {stderr}"
+        );
+    }
+}
+
+#[test]
 fn api_level_note_names_every_api_24_feature_without_changing_exit_codes() {
     let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
         <defs>

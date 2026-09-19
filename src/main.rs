@@ -352,7 +352,7 @@ fn notification(args: NotificationArgs) -> Result<Outcome> {
 }
 
 fn notification_one(args: &NotificationArgs, input: &Path, output: Option<Output>) -> Result<()> {
-    let mut asset = vdtoolkit::convert_file(input)?;
+    let mut asset = vdtoolkit::convert_file(input).map_err(hint_raster_convert)?;
     if args.strict && asset.analysis.compatibility != Compatibility::Exact {
         return Err(Error::InvalidInput(
             "requires normalization and was rejected by --strict".to_owned(),
@@ -465,9 +465,13 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
     // leaves the resource directory untouched.
     let (foreground, foreground_reference) = match (&args.foreground, &args.foreground_image) {
         (Some(path), _) => {
-            let Some(layer) =
-                adaptive_layer(&args, path, Fit::contain(fit), IconKind::AdaptiveForeground)
-            else {
+            let Some(layer) = adaptive_layer(
+                &args,
+                path,
+                Fit::contain(fit),
+                IconKind::AdaptiveForeground,
+                "--foreground-image",
+            ) else {
                 return Ok(Outcome::Failed);
             };
             files.push((
@@ -501,6 +505,7 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
                     ),
                 },
                 IconKind::AdaptiveBackground,
+                "--background-image",
             ) else {
                 return Ok(Outcome::Failed);
             };
@@ -542,9 +547,13 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
     };
     let monochrome_reference = match (&args.monochrome, &args.monochrome_image) {
         (Some(path), _) => {
-            let Some(layer) =
-                adaptive_layer(&args, path, Fit::contain(fit), IconKind::AdaptiveForeground)
-            else {
+            let Some(layer) = adaptive_layer(
+                &args,
+                path,
+                Fit::contain(fit),
+                IconKind::AdaptiveForeground,
+                "--monochrome-image",
+            ) else {
                 return Ok(Outcome::Failed);
             };
             files.push((
@@ -822,9 +831,22 @@ fn raster_layer(
 
 /// Convert and fit one layer as `kind`, printing its findings, or report the
 /// failure with its path and return `None`.
-fn adaptive_layer(args: &AdaptiveArgs, input: &Path, fit: Fit, kind: IconKind) -> Option<Asset> {
+fn adaptive_layer(
+    args: &AdaptiveArgs,
+    input: &Path,
+    fit: Fit,
+    kind: IconKind,
+    image_flag: &str,
+) -> Option<Asset> {
     let layer = || -> Result<Asset> {
-        let mut asset = vdtoolkit::convert_file(input)?;
+        let mut asset = vdtoolkit::convert_file(input).map_err(|error| match error {
+            Error::InvalidInput(message) if message == "this is a raster image, not an SVG" => {
+                Error::InvalidInput(format!(
+                    "{message}; use {image_flag} for a raster adaptive layer"
+                ))
+            }
+            error => error,
+        })?;
         if args.strict && asset.analysis.compatibility != Compatibility::Exact {
             return Err(Error::InvalidInput(
                 "requires normalization and was rejected by --strict".to_owned(),
@@ -1047,7 +1069,7 @@ fn convert_one(
     output: Option<Output>,
     optimize: bool,
 ) -> Result<()> {
-    let mut asset = vdtoolkit::convert_file(input)?;
+    let mut asset = vdtoolkit::convert_file(input).map_err(hint_raster_convert)?;
     if args.strict && asset.analysis.compatibility != Compatibility::Exact {
         return Err(Error::InvalidInput(
             "requires normalization and was rejected by --strict".to_owned(),
@@ -1396,6 +1418,19 @@ fn hint_raster_inspect(error: Error) -> Error {
             Error::InvalidInput(format!(
                 "{message}; pass --as adaptive-foreground or --as adaptive-background to inspect \
                  it as an adaptive layer"
+            ))
+        }
+        error => error,
+    }
+}
+
+/// Point conversion commands at the adaptive image options and at inspect.
+fn hint_raster_convert(error: Error) -> Error {
+    match error {
+        Error::InvalidInput(message) if message == "this is a raster image, not an SVG" => {
+            Error::InvalidInput(format!(
+                "{message}; pass it to adaptive with --foreground-image or --background-image, \
+                 or use inspect --as adaptive-foreground or --as adaptive-background"
             ))
         }
         error => error,

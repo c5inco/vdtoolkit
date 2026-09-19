@@ -3625,6 +3625,8 @@ fn cli_inspect_as_reports_icon_findings_without_writing() {
         logo_entry["icon"],
         serde_json::json!({"kind": "notification", "fit": 24.0, "fit_mode": "contain"})
     );
+    assert!(logo_entry["metrics"].get("paths").is_some());
+    assert!(logo_entry["metrics"].get("estimated_xml_bytes").is_some());
     assert_eq!(codes(logo_entry), ["SVGVD021"]);
     assert_eq!(codes(plate_entry), ["SVGVD011", "SVGVD021", "SVGVD017"]);
     assert_eq!(plate_entry["diagnostics"][2]["severity"], "warning");
@@ -3750,11 +3752,26 @@ fn cli_inspect_as_reports_raster_foreground_findings_without_writing() {
     assert_eq!(report[0]["image"], "webp");
     assert_eq!(
         report[0]["icon"],
-        serde_json::json!({"kind": "adaptive-foreground", "fit": 66.0, "fit_mode": "contain"})
+        serde_json::json!({"kind": "adaptive-foreground"})
     );
     assert!(json_codes(&stdout).is_empty(), "{stdout}");
     assert_eq!(report[0]["metrics"]["width"], 432.0);
+    assert_eq!(report[0]["metrics"]["height"], 432.0);
     assert_eq!(report[0]["metrics"]["viewport_width"], 108.0);
+    assert_eq!(report[0]["metrics"]["viewport_height"], 108.0);
+    for vector_metric in [
+        "paths",
+        "path_commands",
+        "groups",
+        "gradients",
+        "clip_paths",
+        "estimated_xml_bytes",
+    ] {
+        assert!(
+            report[0]["metrics"].get(vector_metric).is_none(),
+            "{vector_metric} in {stdout}"
+        );
+    }
     assert_eq!(report[0]["compatibility"], "not_applicable");
     assert!(report[0]["minimum_api"].is_null());
     let bounds = &report[0]["metrics"]["content_bounds"];
@@ -3837,9 +3854,11 @@ fn cli_inspect_as_reports_raster_foreground_findings_without_writing() {
     );
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(json_codes(&stdout), ["SVGVD024", "SVGVD025"]);
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(report[0]["image"], "jpg");
     assert_eq!(
-        serde_json::from_str::<serde_json::Value>(&stdout).unwrap()[0]["image"],
-        "jpg"
+        report[0]["icon"],
+        serde_json::json!({"kind": "adaptive-background"})
     );
 
     // Without --as, a raster file is not an SVG. The --as hint is CLI-only:

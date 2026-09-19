@@ -22,13 +22,9 @@ follow [Semantic Versioning](https://semver.org/).
   itself to see that rejection. The JSON report gains an `image` field
   (`png`, `webp`, or `jpg`) on those entries, `compatibility` is then
   `not_applicable`, `metrics.width` / `height` are pixels of the image, and
-  `content_bounds` / `viewport_*` stay dp on the 108dp layer.
-
-### Fixed
-
-- Raster `inspect` and `check` JSON entries no longer include the unused
-  `icon.fit` / `fit_mode` values or zeroed vector-only metrics. Pixel
-  `width` / `height` and dp `content_bounds` / `viewport_*` remain unchanged.
+  `content_bounds` / `viewport_*` stay dp on the 108dp layer. Their JSON
+  `icon` keeps the layer kind but omits the unused `fit` / `fit_mode`, and
+  zeroed vector-only metrics are omitted.
 
 ## [0.4.0] - 2026-09-18
 

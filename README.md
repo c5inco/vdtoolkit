@@ -120,11 +120,12 @@ A raster foreground can raise `SVGVD018`, `SVGVD019`, `SVGVD024`, `SVGVD025`,
 and `SVGVD026`; a raster background can raise `SVGVD020`, `SVGVD024`, and
 `SVGVD025`. The report's metrics describe the fitted vector or the image on
 the 108dp layer. In JSON, a vector entry has an `icon` object naming its kind
-and fit. A raster entry omits that unused object and carries `image`: `png`,
-`webp`, or `jpg`. Its metrics contain pixel `width` and `height`, plus
-`content_bounds` and `viewport_*` in dp on the 108dp layer; vector-only counts
-and estimated XML size are omitted. Its `compatibility` is `not_applicable`
-because a raster layer is not a VectorDrawable. A raster *file* without
+and fit. A raster entry's `icon` keeps the kind but omits the unused `fit` and
+`fit_mode`, and the entry carries `image`: `png`, `webp`, or `jpg`. Its metrics
+contain pixel `width` and `height`, plus `content_bounds` and `viewport_*` in dp
+on the 108dp layer; vector-only counts and estimated XML size are omitted. Its
+`compatibility` is `not_applicable` because a raster layer is not a
+VectorDrawable. A raster *file* without
 `--as`, or with `--as notification`, is refused; a directory with
 `--as notification` still keeps only SVGs, and a directory with
 `--as adaptive-foreground` skips JPEGs the same way. These findings are

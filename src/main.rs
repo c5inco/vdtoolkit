@@ -251,7 +251,7 @@ enum Format {
 struct FileAnalysis<'a> {
     path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    icon: Option<IconTarget>,
+    icon: Option<ReportIcon>,
     compatibility: Compatibility,
     minimum_api: Option<u32>,
     diagnostics: &'a [Diagnostic],
@@ -265,7 +265,13 @@ impl<'a> FileAnalysis<'a> {
         let raster = analysis.image.is_some();
         Self {
             path,
-            icon: icon.filter(|_| !raster),
+            icon: icon.map(|icon| {
+                if raster {
+                    ReportIcon::Raster { kind: icon.kind }
+                } else {
+                    ReportIcon::Vector(icon)
+                }
+            }),
             compatibility: analysis.compatibility,
             minimum_api: analysis.minimum_api,
             diagnostics: &analysis.diagnostics,
@@ -277,6 +283,13 @@ impl<'a> FileAnalysis<'a> {
             image: analysis.image,
         }
     }
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+enum ReportIcon {
+    Vector(IconTarget),
+    Raster { kind: IconKind },
 }
 
 #[derive(Serialize)]

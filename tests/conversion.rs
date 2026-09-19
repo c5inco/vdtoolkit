@@ -3523,6 +3523,8 @@ fn cli_inspect_as_reports_icon_findings_without_writing() {
         logo_entry["icon"],
         serde_json::json!({"kind": "notification", "fit": 24.0, "fit_mode": "contain"})
     );
+    assert!(logo_entry["metrics"].get("paths").is_some());
+    assert!(logo_entry["metrics"].get("estimated_xml_bytes").is_some());
     assert_eq!(codes(logo_entry), ["SVGVD021"]);
     assert_eq!(codes(plate_entry), ["SVGVD011", "SVGVD021", "SVGVD017"]);
     assert_eq!(plate_entry["diagnostics"][2]["severity"], "warning");
@@ -3646,7 +3648,10 @@ fn cli_inspect_as_reports_raster_foreground_findings_without_writing() {
     assert_eq!(code, Some(0), "{stdout}");
     let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(report[0]["image"], "webp");
-    assert!(report[0].get("icon").is_none(), "{stdout}");
+    assert_eq!(
+        report[0]["icon"],
+        serde_json::json!({"kind": "adaptive-foreground"})
+    );
     assert!(json_codes(&stdout).is_empty(), "{stdout}");
     assert_eq!(report[0]["metrics"]["width"], 432.0);
     assert_eq!(report[0]["metrics"]["height"], 432.0);

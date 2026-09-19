@@ -34,6 +34,36 @@ follow [Semantic Versioning](https://semver.org/).
   ellipse's short axis stays exact rather than being stretched to match.
   Verified on Android across API 21 to 36.
 
+## [0.5.0] - 2026-09-19
+
+### Added
+
+- `inspect --as adaptive-foreground` and `--as adaptive-background` (and
+  `check` with the same flags) accept a PNG, WebP, or JPEG layer image and
+  report the same findings `adaptive --foreground-image` and
+  `--background-image` would, without writing anything. A directory mixes
+  SVGs and layer images. `--fit` does not place a raster layer, which is
+  copied, never resampled. A JPEG foreground is still rejected (no alpha).
+  A raster file argument without
+  `--as`, or with `--as notification`, is refused rather than parsed as SVG;
+  a directory with `--as notification` still keeps only SVGs. A JPEG in a
+  directory scanned as `--as adaptive-foreground` is skipped the same way,
+  because a JPEG has no alpha and would fail the whole run; pass the file
+  itself to see that rejection. The JSON report gains an `image` field
+  (`png`, `webp`, or `jpg`) on those entries, `compatibility` is then
+  `not_applicable`, `metrics.width` / `height` are pixels of the image, and
+  `content_bounds` / `viewport_*` stay dp on the 108dp layer. Their JSON
+  `icon` keeps the layer kind but omits the unused `fit` / `fit_mode`, and
+  zeroed vector-only metrics are omitted.
+
+### Fixed
+
+- `convert`, `optimize`, and `notification`, including the default
+  `vdt <file>` form, recognize PNG, WebP, and JPEG headers and refuse those
+  files as raster images instead of reporting UTF-8 or malformed XML errors.
+  The CLI points to adaptive icon image options and `inspect --as`; the Rust
+  and WebAssembly conversion APIs keep the flag-free error.
+
 ## [0.4.0] - 2026-09-18
 
 ### Added
@@ -335,7 +365,8 @@ follow [Semantic Versioning](https://semver.org/).
 - Paired Material corpus conformance, Studio Icons stress coverage, release
   packaging, and optional Android pixel-renderer verification.
 
-[Unreleased]: https://github.com/c5inco/vdtoolkit/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/c5inco/vdtoolkit/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/c5inco/vdtoolkit/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/c5inco/vdtoolkit/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/c5inco/vdtoolkit/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/c5inco/vdtoolkit/compare/v0.1.0...v0.2.0

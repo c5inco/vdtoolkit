@@ -74,6 +74,7 @@ pub(crate) fn process(
             minimum_api,
             diagnostics,
             metrics,
+            image: None,
         },
         drawable: keep_drawable.then_some(drawable).flatten(),
         declared_size: ["width", "height"]

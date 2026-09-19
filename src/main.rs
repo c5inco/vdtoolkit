@@ -7,8 +7,8 @@ use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 use unicode_normalization::UnicodeNormalization;
 use vdtoolkit::{
-    Analysis, Asset, Compatibility, Diagnostic, DiagnosticCode, Error, Fit, FitMode, IconKind,
-    Result, Severity,
+    Analysis, Asset, Bounds, Compatibility, Diagnostic, DiagnosticCode, Error, Fit, FitMode,
+    IconKind, ImageFormat, Metrics, Result, Severity,
 };
 use walkdir::WalkDir;
 
@@ -169,14 +169,16 @@ struct AdaptiveArgs {
 
 #[derive(Args)]
 struct ReportArgs {
-    /// SVG file or directory to inspect.
+    /// SVG file or directory to inspect. With `--as adaptive-foreground` or
+    /// `--as adaptive-background`, a PNG, WebP, or JPEG layer image too.
     input: PathBuf,
     /// Report format.
     #[arg(long, value_enum, default_value_t = Format::Human)]
     format: Format,
-    /// Also report what making the SVG into this kind of icon would find,
+    /// Also report what making the file into this kind of icon would find,
     /// as `notification` or `adaptive` would, without writing anything.
-    /// A monochrome layer follows the adaptive-foreground rules.
+    /// A monochrome layer follows the adaptive-foreground rules. A PNG,
+    /// WebP, or JPEG is inspected as an adaptive layer image.
     #[arg(long = "as", value_enum, value_name = "KIND")]
     as_kind: Option<IconKindArg>,
     /// Size in dp of the centered square the artwork is scaled to fit on the
@@ -261,9 +263,73 @@ enum Format {
 struct FileAnalysis<'a> {
     path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    icon: Option<IconTarget>,
-    #[serde(flatten)]
-    analysis: &'a Analysis,
+    icon: Option<ReportIcon>,
+    compatibility: Compatibility,
+    minimum_api: Option<u32>,
+    diagnostics: &'a [Diagnostic],
+    metrics: ReportMetrics<'a>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    image: Option<ImageFormat>,
+}
+
+impl<'a> FileAnalysis<'a> {
+    fn new(path: String, icon: Option<IconTarget>, analysis: &'a Analysis) -> Self {
+        let raster = analysis.image.is_some();
+        Self {
+            path,
+            icon: icon.map(|icon| {
+                if raster {
+                    ReportIcon::Raster { kind: icon.kind }
+                } else {
+                    ReportIcon::Vector(icon)
+                }
+            }),
+            compatibility: analysis.compatibility,
+            minimum_api: analysis.minimum_api,
+            diagnostics: &analysis.diagnostics,
+            metrics: if raster {
+                ReportMetrics::Raster(RasterMetrics::from(&analysis.metrics))
+            } else {
+                ReportMetrics::Vector(&analysis.metrics)
+            },
+            image: analysis.image,
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+enum ReportIcon {
+    Vector(IconTarget),
+    Raster { kind: IconKind },
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+enum ReportMetrics<'a> {
+    Vector(&'a Metrics),
+    Raster(RasterMetrics<'a>),
+}
+
+#[derive(Serialize)]
+struct RasterMetrics<'a> {
+    width: f32,
+    height: f32,
+    viewport_width: f32,
+    viewport_height: f32,
+    content_bounds: &'a Option<Bounds>,
+}
+
+impl<'a> From<&'a Metrics> for RasterMetrics<'a> {
+    fn from(metrics: &'a Metrics) -> Self {
+        Self {
+            width: metrics.width,
+            height: metrics.height,
+            viewport_width: metrics.viewport_width,
+            viewport_height: metrics.viewport_height,
+            content_bounds: &metrics.content_bounds,
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -362,7 +428,8 @@ fn notification(args: NotificationArgs) -> Result<Outcome> {
 }
 
 fn notification_one(args: &NotificationArgs, input: &Path, output: Option<Output>) -> Result<()> {
-    let mut asset = vdtoolkit::convert_file_with_options(input, args.allow_approximate)?;
+    let mut asset = vdtoolkit::convert_file_with_options(input, args.allow_approximate)
+        .map_err(hint_raster_convert)?;
     if args.strict && asset.analysis.compatibility != Compatibility::Exact {
         return Err(Error::InvalidInput(
             "requires normalization and was rejected by --strict".to_owned(),
@@ -475,9 +542,13 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
     // leaves the resource directory untouched.
     let (foreground, foreground_reference) = match (&args.foreground, &args.foreground_image) {
         (Some(path), _) => {
-            let Some(layer) =
-                adaptive_layer(&args, path, Fit::contain(fit), IconKind::AdaptiveForeground)
-            else {
+            let Some(layer) = adaptive_layer(
+                &args,
+                path,
+                Fit::contain(fit),
+                IconKind::AdaptiveForeground,
+                "--foreground-image",
+            ) else {
                 return Ok(Outcome::Failed);
             };
             files.push((
@@ -511,6 +582,7 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
                     ),
                 },
                 IconKind::AdaptiveBackground,
+                "--background-image",
             ) else {
                 return Ok(Outcome::Failed);
             };
@@ -552,9 +624,13 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
     };
     let monochrome_reference = match (&args.monochrome, &args.monochrome_image) {
         (Some(path), _) => {
-            let Some(layer) =
-                adaptive_layer(&args, path, Fit::contain(fit), IconKind::AdaptiveForeground)
-            else {
+            let Some(layer) = adaptive_layer(
+                &args,
+                path,
+                Fit::contain(fit),
+                IconKind::AdaptiveForeground,
+                "--monochrome-image",
+            ) else {
                 return Ok(Outcome::Failed);
             };
             files.push((
@@ -832,9 +908,23 @@ fn raster_layer(
 
 /// Convert and fit one layer as `kind`, printing its findings, or report the
 /// failure with its path and return `None`.
-fn adaptive_layer(args: &AdaptiveArgs, input: &Path, fit: Fit, kind: IconKind) -> Option<Asset> {
+fn adaptive_layer(
+    args: &AdaptiveArgs,
+    input: &Path,
+    fit: Fit,
+    kind: IconKind,
+    image_flag: &str,
+) -> Option<Asset> {
     let layer = || -> Result<Asset> {
-        let mut asset = vdtoolkit::convert_file_with_options(input, args.allow_approximate)?;
+        let mut asset = vdtoolkit::convert_file_with_options(input, args.allow_approximate)
+            .map_err(|error| match error {
+                Error::InvalidInput(message) if message == "this is a raster image, not an SVG" => {
+                    Error::InvalidInput(format!(
+                        "{message}; use {image_flag} for a raster adaptive layer"
+                    ))
+                }
+                error => error,
+            })?;
         if args.strict && asset.analysis.compatibility != Compatibility::Exact {
             return Err(Error::InvalidInput(
                 "requires normalization and was rejected by --strict".to_owned(),
@@ -1057,7 +1147,8 @@ fn convert_one(
     output: Option<Output>,
     optimize: bool,
 ) -> Result<()> {
-    let mut asset = vdtoolkit::convert_file_with_options(input, args.allow_approximate)?;
+    let mut asset = vdtoolkit::convert_file_with_options(input, args.allow_approximate)
+        .map_err(hint_raster_convert)?;
     if args.strict && asset.analysis.compatibility != Compatibility::Exact {
         return Err(Error::InvalidInput(
             "requires normalization and was rejected by --strict".to_owned(),
@@ -1138,7 +1229,25 @@ fn is_large(analysis: &Analysis) -> bool {
 }
 
 fn report(args: ReportArgs, inspect: bool) -> Result<Outcome> {
-    let inputs = inputs(&args.input)?;
+    let adaptive_layer = matches!(
+        args.as_kind,
+        Some(IconKindArg::AdaptiveForeground | IconKindArg::AdaptiveBackground)
+    );
+    let inputs = collect_inputs(
+        &args.input,
+        |path| {
+            is_svg(path)
+                || (adaptive_layer
+                    && is_layer_image(path)
+                    && !(matches!(args.as_kind, Some(IconKindArg::AdaptiveForeground))
+                        && is_jpeg(path)))
+        },
+        if adaptive_layer {
+            "SVG or layer image files"
+        } else {
+            "SVG files"
+        },
+    )?;
     if args.background_fit.is_some()
         && !matches!(args.as_kind, Some(IconKindArg::AdaptiveBackground))
     {
@@ -1172,17 +1281,20 @@ fn report(args: ReportArgs, inspect: bool) -> Result<Outcome> {
                 icon.placement(),
                 args.allow_approximate,
             ),
-            None => vdtoolkit::analyze_file_with_options(input, args.allow_approximate),
+            None => vdtoolkit::analyze_file_with_options(input, args.allow_approximate)
+                .map_err(hint_raster_inspect),
         };
         match &result {
             Ok(analysis) => {
-                passed &= if args.strict {
-                    analysis.compatibility == Compatibility::Exact
-                } else {
-                    analysis
-                        .compatibility
-                        .is_convertible(args.allow_approximate)
-                };
+                if analysis.image.is_none() {
+                    passed &= if args.strict {
+                        analysis.compatibility == Compatibility::Exact
+                    } else {
+                        analysis
+                            .compatibility
+                            .is_convertible(args.allow_approximate)
+                    };
+                }
             }
             Err(_) => failed += 1,
         }
@@ -1193,11 +1305,11 @@ fn report(args: ReportArgs, inspect: bool) -> Result<Outcome> {
             let values: Vec<_> = reports
                 .iter()
                 .map(|(path, result)| match result {
-                    Ok(analysis) => ReportEntry::Analysis(FileAnalysis {
-                        path: path.display().to_string(),
+                    Ok(analysis) => ReportEntry::Analysis(FileAnalysis::new(
+                        path.display().to_string(),
                         icon,
                         analysis,
-                    }),
+                    )),
                     Err(error) => ReportEntry::Failed(FileFailure {
                         path: path.display().to_string(),
                         error: error.to_string(),
@@ -1239,15 +1351,22 @@ fn report(args: ReportArgs, inspect: bool) -> Result<Outcome> {
 }
 
 fn print_human(analysis: &Analysis, inspect: bool, allow_approximate: bool) {
+    let raster = analysis.image.is_some();
     let compatible = analysis.compatibility.is_convertible(allow_approximate);
-    let verdict = if !compatible {
+    let verdict = if raster {
+        "Adaptive layer image"
+    } else if !compatible {
         "Not exactly representable as VectorDrawable"
     } else if analysis.compatibility == Compatibility::Approximate {
         "VectorDrawable compatible with --allow-approximate"
     } else {
         "VectorDrawable compatible"
     };
-    println!("{} {}", if compatible { "✓" } else { "✗" }, verdict);
+    println!(
+        "{} {}",
+        if raster || compatible { "✓" } else { "✗" },
+        verdict
+    );
     for diagnostic in &analysis.diagnostics {
         let location = diagnostic
             .location
@@ -1266,45 +1385,76 @@ fn print_human(analysis: &Analysis, inspect: bool, allow_approximate: bool) {
     }
     if inspect {
         let metrics = &analysis.metrics;
-        println!("Dimensions: {} × {}", metrics.width, metrics.height);
-        println!(
-            "Viewport: {} × {}",
-            metrics.viewport_width, metrics.viewport_height
-        );
-        println!("Paths: {}", metrics.paths);
-        println!("Path commands: {}", metrics.path_commands);
-        println!("Groups: {}", metrics.groups);
-        println!("Clip paths: {}", metrics.clip_paths);
-        println!("Gradients: {}", metrics.gradients);
+        if raster {
+            println!(
+                "Dimensions: {} × {} px",
+                metrics.width as u32, metrics.height as u32
+            );
+            println!(
+                "Layer: {} × {} dp",
+                metrics.viewport_width, metrics.viewport_height
+            );
+        } else {
+            println!("Dimensions: {} × {}", metrics.width, metrics.height);
+            println!(
+                "Viewport: {} × {}",
+                metrics.viewport_width, metrics.viewport_height
+            );
+            println!("Paths: {}", metrics.paths);
+            println!("Path commands: {}", metrics.path_commands);
+            println!("Groups: {}", metrics.groups);
+            println!("Clip paths: {}", metrics.clip_paths);
+            println!("Gradients: {}", metrics.gradients);
+        }
         match metrics.content_bounds {
             Some(bounds) => println!(
-                "Content bounds: left {}, top {}, right {}, bottom {}",
-                bounds.left, bounds.top, bounds.right, bounds.bottom
+                "Content bounds: left {}, top {}, right {}, bottom {}{}",
+                bounds.left,
+                bounds.top,
+                bounds.right,
+                bounds.bottom,
+                if raster { " dp" } else { "" }
             ),
             None => println!("Content bounds: none"),
         }
-        println!("Estimated XML size: {} bytes", metrics.estimated_xml_bytes);
+        if !raster {
+            println!("Estimated XML size: {} bytes", metrics.estimated_xml_bytes);
+        }
     }
-    println!("Compatibility: {:?}", analysis.compatibility);
-    match analysis.minimum_api {
-        Some(api) => println!("Minimum API for exact rendering: {api}"),
-        None => println!("Minimum API for exact rendering: n/a"),
+    if raster {
+        if let Some(format) = analysis.image {
+            println!("Format: {}", format.extension());
+        }
+    } else {
+        println!("Compatibility: {:?}", analysis.compatibility);
+        match analysis.minimum_api {
+            Some(api) => println!("Minimum API for exact rendering: {api}"),
+            None => println!("Minimum API for exact rendering: n/a"),
+        }
     }
 }
 
 fn print_summary(reports: &[(&PathBuf, Result<Analysis>)]) {
+    let rasters = reports
+        .iter()
+        .filter(|(_, result)| {
+            result
+                .as_ref()
+                .is_ok_and(|analysis| analysis.image.is_some())
+        })
+        .count();
     let count = |compatibility: Compatibility| {
         reports
             .iter()
             .filter(|(_, result)| {
-                result
-                    .as_ref()
-                    .is_ok_and(|analysis| analysis.compatibility == compatibility)
+                result.as_ref().is_ok_and(|analysis| {
+                    analysis.image.is_none() && analysis.compatibility == compatibility
+                })
             })
             .count()
     };
     let failed = reports.iter().filter(|(_, result)| result.is_err()).count();
-    println!("\n{} SVGs checked", reports.len());
+    println!("\n{} files checked", reports.len());
     println!("{} exact", count(Compatibility::Exact));
     println!(
         "{} exact with normalization",
@@ -1312,12 +1462,19 @@ fn print_summary(reports: &[(&PathBuf, Result<Analysis>)]) {
     );
     println!("{} approximate", count(Compatibility::Approximate));
     println!("{} unsupported", count(Compatibility::Unsupported));
+    if rasters > 0 {
+        println!("{rasters} adaptive layer images");
+    }
     if failed > 0 {
         println!("{failed} could not be analyzed");
     }
 }
 
 fn inputs(path: &Path) -> Result<Vec<PathBuf>> {
+    collect_inputs(path, is_svg, "SVG files")
+}
+
+fn collect_inputs(path: &Path, keep: impl Fn(&Path) -> bool, what: &str) -> Result<Vec<PathBuf>> {
     if path.is_file() {
         return Ok(vec![path.to_owned()]);
     }
@@ -1332,19 +1489,61 @@ fn inputs(path: &Path) -> Result<Vec<PathBuf>> {
         .filter_map(std::result::Result::ok)
         .filter(|entry| entry.file_type().is_file())
         .map(|entry| entry.into_path())
-        .filter(|path| {
-            path.extension()
-                .is_some_and(|extension| extension.eq_ignore_ascii_case("svg"))
-        })
+        .filter(|path| keep(path))
         .collect();
     files.sort();
     if files.is_empty() {
         return Err(Error::InvalidInput(format!(
-            "no SVG files found in {}",
+            "no {what} found in {}",
             path.display()
         )));
     }
     Ok(files)
+}
+
+/// Point inspect/check at `--as` when a raster file is given without a kind.
+fn hint_raster_inspect(error: Error) -> Error {
+    match error {
+        Error::InvalidInput(message) if message == "this is a raster image, not an SVG" => {
+            Error::InvalidInput(format!(
+                "{message}; pass --as adaptive-foreground or --as adaptive-background to inspect \
+                 it as an adaptive layer"
+            ))
+        }
+        error => error,
+    }
+}
+
+/// Point conversion commands at the adaptive image options and at inspect.
+fn hint_raster_convert(error: Error) -> Error {
+    match error {
+        Error::InvalidInput(message) if message == "this is a raster image, not an SVG" => {
+            Error::InvalidInput(format!(
+                "{message}; pass it to adaptive with --foreground-image or --background-image, \
+                 or use inspect --as adaptive-foreground or --as adaptive-background"
+            ))
+        }
+        error => error,
+    }
+}
+
+fn is_svg(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("svg"))
+}
+
+fn is_layer_image(path: &Path) -> bool {
+    path.extension().is_some_and(|extension| {
+        ["png", "webp", "jpg", "jpeg"]
+            .iter()
+            .any(|name| extension.eq_ignore_ascii_case(name))
+    })
+}
+
+fn is_jpeg(path: &Path) -> bool {
+    path.extension().is_some_and(|extension| {
+        extension.eq_ignore_ascii_case("jpg") || extension.eq_ignore_ascii_case("jpeg")
+    })
 }
 
 /// Where a converted file is written, and the name it would have had when

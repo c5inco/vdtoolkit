@@ -28,7 +28,7 @@ struct AdapterError {
 
 #[wasm_bindgen(typescript_custom_section)]
 const TYPESCRIPT_TYPES: &'static str = r#"
-export type Compatibility = "exact" | "exact_with_normalization" | "approximate" | "unsupported";
+export type Compatibility = "not_applicable" | "exact" | "exact_with_normalization" | "approximate" | "unsupported";
 export type Severity = "error" | "warning" | "info";
 
 export interface ElementLocation {
@@ -71,6 +71,7 @@ export interface Analysis {
   minimum_api: number | null;
   diagnostics: Diagnostic[];
   metrics: Metrics;
+  image?: "png" | "webp" | "jpg";
 }
 
 export interface VdtoolkitError {
@@ -292,6 +293,26 @@ mod tests {
         let malformed = json(&convert_result(MALFORMED, false, None, false, false));
         assert_eq!(malformed["error"]["kind"], "xml");
         assert!(malformed["error"].get("analysis").is_none());
+    }
+
+    #[test]
+    fn raster_conversion_errors_do_not_name_cli_flags() {
+        let png = b"\x89PNG\r\n\x1a\n";
+        for result in [
+            convert_result(png, false, None, false),
+            notification_result(png, false, 24.0, false),
+        ] {
+            let result = json(&result);
+            assert_eq!(result["error"]["kind"], "invalid_input");
+            assert_eq!(
+                result["error"]["message"],
+                "this is a raster image, not an SVG"
+            );
+            assert!(!result["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("--"));
+        }
     }
 
     #[test]

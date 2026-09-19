@@ -13,8 +13,10 @@ exactly is rejected with a diagnostic code instead of being approximated.
 Prefer it over writing `<vector>` XML by hand: hand-written conversions of real
 artwork are usually wrong in ways that only show on a device.
 
-It only reads SVG. It does not take PNG, WebP, or JPEG, read existing
-VectorDrawable XML, or make iOS or web assets.
+Convert, optimize, notification, and inspect without `--as` only read SVG.
+`adaptive` and `inspect`/`check --as adaptive-foreground` or
+`--as adaptive-background` also take PNG, WebP, or JPEG as layer images.
+It does not read existing VectorDrawable XML, or make iOS or web assets.
 
 ## Before you start
 
@@ -52,6 +54,7 @@ VectorDrawableCompat must load them below API 21, where `anydpi` is unavailable.
 
    ```sh
    vdt inspect logo.svg --as adaptive-foreground --fit 66 --format json
+   vdt inspect fg.webp --as adaptive-foreground --format json
    vdt inspect bg.svg --as adaptive-background --format json
    vdt inspect bell.svg --as notification --format json
    ```
@@ -59,7 +62,9 @@ VectorDrawableCompat must load them below API 21, where `anydpi` is unavailable.
    `--as` takes `notification`, `adaptive-foreground` (also used for a
    monochrome layer), or `adaptive-background`. `--fit`, and
    `--background-fit` for a background, must match the values you will pass to
-   the generator.
+   the generator. A PNG, WebP, or JPEG with `--as adaptive-foreground` or
+   `--as adaptive-background` is inspected as a layer image; `--fit` does not
+   place it. Without `--as`, a raster file is refused.
 
 2. **Read the report.** Each file gives:
 
@@ -79,7 +84,12 @@ VectorDrawableCompat must load them below API 21, where `anydpi` is unavailable.
    `compatibility` is `exact`, `exact_with_normalization`, `approximate`, or
    `unsupported`. The first two convert; `--allow-approximate` also allows
    `approximate` (e.g. centering radial gradients with focal offsets). `--strict`
-   accepts only `exact`, so do not pass it unless the user asks. A diagnostic
+   accepts only `exact`, so do not pass it unless the user asks. A raster layer
+   image instead has `"image": "png"` / `"webp"` / `"jpg"` and
+   `"compatibility": "not_applicable"`: it is not a VectorDrawable. Its `icon`
+   keeps `kind` but omits the unused `fit` / `fit_mode`, and vector-only metrics
+   are omitted. `metrics.width` and `metrics.height` are pixels of the file;
+   `viewport_*` and `content_bounds` are dp on the 108dp layer. A diagnostic
    with severity `error` blocks conversion; `warning` and `info` do not, but
    warnings about icons mean the result will look wrong on a device. A file
    that could not be read or parsed appears as `{ "path", "error" }` instead.

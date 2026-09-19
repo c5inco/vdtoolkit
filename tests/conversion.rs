@@ -36,6 +36,108 @@ fn converts_viewbox_geometry_colors_and_fill_rule() {
 }
 
 #[test]
+fn convert_refuses_raster_formats_before_parsing_them_as_svg() {
+    for source in [
+        &b"\x89PNG\r\n\x1a\n"[..],
+        &b"\xff\xd8\xff"[..],
+        &b"RIFF\0\0\0\0WEBP"[..],
+    ] {
+        assert!(matches!(
+            vdtoolkit::convert(source),
+            Err(Error::InvalidInput(message)) if message == "this is a raster image, not an SVG"
+        ));
+    }
+}
+
+#[test]
+fn cli_conversion_commands_refuse_rasters_with_cli_only_guidance() {
+    let temp = tempfile::tempdir().unwrap();
+    let formats: [(&str, &[u8]); 3] = [
+        ("png", b"\x89PNG\r\n\x1a\n"),
+        ("jpg", b"\xff\xd8\xff"),
+        ("webp", b"RIFF\0\0\0\0WEBP"),
+    ];
+
+    for (extension, bytes) in formats {
+        let input = temp.path().join(format!("logo.{extension}"));
+        fs::write(&input, bytes).unwrap();
+        for command in ["convert", "optimize", "notification"] {
+            let output = Command::new(env!("CARGO_BIN_EXE_vdt"))
+                .arg(command)
+                .arg(&input)
+                .output()
+                .unwrap();
+            assert_eq!(output.status.code(), Some(1), "{command} {extension}");
+            assert!(output.stdout.is_empty(), "{command} {extension}");
+            let stderr = String::from_utf8(output.stderr).unwrap();
+            assert!(
+                stderr.contains("this is a raster image, not an SVG"),
+                "{command} {extension}: {stderr}"
+            );
+            assert!(
+                stderr.contains("--foreground-image")
+                    && stderr.contains("--background-image")
+                    && stderr.contains("inspect --as adaptive-foreground"),
+                "{command} {extension}: {stderr}"
+            );
+        }
+    }
+
+    let png = temp.path().join("logo.png");
+    let output = Command::new(env!("CARGO_BIN_EXE_vdt"))
+        .arg(&png)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("this is a raster image, not an SVG")
+            && stderr.contains("--foreground-image")
+            && stderr.contains("inspect --as adaptive-foreground"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn cli_adaptive_redirects_rasters_from_vector_to_image_flags() {
+    let temp = tempfile::tempdir().unwrap();
+    let raster = temp.path().join("logo.png");
+    fs::write(&raster, b"\x89PNG\r\n\x1a\n").unwrap();
+    let vector = temp.path().join("logo.svg");
+    fs::write(
+        &vector,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M2 2H22V22H2Z"/></svg>"##,
+    )
+    .unwrap();
+
+    for (flag, image_flag, extra) in [
+        ("--foreground", "--foreground-image", None),
+        ("--background", "--background-image", Some("--foreground")),
+        ("--monochrome", "--monochrome-image", Some("--foreground")),
+    ] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_vdt"));
+        command.arg("adaptive").arg(flag).arg(&raster);
+        if let Some(extra) = extra {
+            command.arg(extra).arg(&vector);
+        }
+        if flag == "--background" {
+            command.arg("-o").arg(temp.path().join("background-res"));
+        } else {
+            command
+                .args(["--background-color", "#FFFFFF", "-o"])
+                .arg(temp.path().join(format!("{}-res", &flag[2..])));
+        }
+        let output = command.output().unwrap();
+        assert_eq!(output.status.code(), Some(1), "{flag}: {output:?}");
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(
+            stderr.contains("this is a raster image, not an SVG") && stderr.contains(image_flag),
+            "{flag}: {stderr}"
+        );
+    }
+}
+
+#[test]
 fn api_level_note_names_every_api_24_feature_without_changing_exit_codes() {
     let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
         <defs>
@@ -3775,6 +3877,8 @@ fn cli_inspect_as_reports_icon_findings_without_writing() {
         logo_entry["icon"],
         serde_json::json!({"kind": "notification", "fit": 24.0, "fit_mode": "contain"})
     );
+    assert!(logo_entry["metrics"].get("paths").is_some());
+    assert!(logo_entry["metrics"].get("estimated_xml_bytes").is_some());
     assert_eq!(codes(logo_entry), ["SVGVD021"]);
     assert_eq!(codes(plate_entry), ["SVGVD011", "SVGVD021", "SVGVD017"]);
     assert_eq!(plate_entry["diagnostics"][2]["severity"], "warning");
@@ -3819,6 +3923,278 @@ fn cli_inspect_as_reports_icon_findings_without_writing() {
     assert_eq!(code, Some(1));
     assert!(
         stderr.contains("--fit must be between 0 and 24 dp, got 30"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn cli_inspect_as_reports_raster_foreground_findings_without_writing() {
+    let temp = tempfile::tempdir().unwrap();
+    // Circles of known radius on a 432px layer: the 66dp safe zone is the
+    // middle 264px, so r=120 sits inside it and r=200 runs past it.
+    let disc = |radius: f32, alpha: u8| {
+        let size = 432u32;
+        let mut pixels = vec![0u8; (size * size * 4) as usize];
+        let center = size as f32 / 2.0;
+        for y in 0..size {
+            for x in 0..size {
+                let (dx, dy) = (x as f32 + 0.5 - center, y as f32 + 0.5 - center);
+                if dx * dx + dy * dy <= radius * radius {
+                    let at = ((y * size + x) * 4) as usize;
+                    pixels[at..at + 4].copy_from_slice(&[0xFF, 0xFF, 0xFF, alpha]);
+                }
+            }
+        }
+        let mut out = Vec::new();
+        image_webp::WebPEncoder::new(std::io::Cursor::new(&mut out))
+            .encode(&pixels, size, size, image_webp::ColorType::Rgba8)
+            .unwrap();
+        out
+    };
+    let write = |name: &str, bytes: &[u8]| {
+        let path = temp.path().join(name);
+        fs::write(&path, bytes).unwrap();
+        path
+    };
+    let inside = write("inside.webp", &disc(120.0, 0xFF));
+    let outside = write("outside.webp", &disc(200.0, 0xFF));
+    let opaque = write("opaque.webp", &disc(1000.0, 0xFF));
+    let empty = write("empty.webp", &disc(0.0, 0xFF));
+    let jpeg = write("fg.jpg", include_bytes!("fixtures/background_square.jpg"));
+
+    let inspect = |args: &[&str], input: &std::path::Path| {
+        let output = Command::new(env!("CARGO_BIN_EXE_vdt"))
+            .args(args)
+            .arg(input)
+            .output()
+            .unwrap();
+        (
+            output.status.code(),
+            String::from_utf8(output.stdout).unwrap(),
+            String::from_utf8(output.stderr).unwrap(),
+        )
+    };
+    let json_codes = |stdout: &str| -> Vec<String> {
+        let report: serde_json::Value = serde_json::from_str(stdout).unwrap();
+        report[0]["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|diagnostic| diagnostic["code"].as_str().unwrap().to_owned())
+            .collect()
+    };
+
+    // Artwork inside the safe zone, with transparency around it, is what a
+    // foreground should be. --fit is ignored: a raster layer is placed, never
+    // resampled.
+    let (code, stdout, _) = inspect(
+        &[
+            "inspect",
+            "--as",
+            "adaptive-foreground",
+            "--fit",
+            "66",
+            "--format",
+            "json",
+        ],
+        &inside,
+    );
+    assert_eq!(code, Some(0), "{stdout}");
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(report[0]["image"], "webp");
+    assert_eq!(
+        report[0]["icon"],
+        serde_json::json!({"kind": "adaptive-foreground"})
+    );
+    assert!(json_codes(&stdout).is_empty(), "{stdout}");
+    assert_eq!(report[0]["metrics"]["width"], 432.0);
+    assert_eq!(report[0]["metrics"]["height"], 432.0);
+    assert_eq!(report[0]["metrics"]["viewport_width"], 108.0);
+    assert_eq!(report[0]["metrics"]["viewport_height"], 108.0);
+    for vector_metric in [
+        "paths",
+        "path_commands",
+        "groups",
+        "gradients",
+        "clip_paths",
+        "estimated_xml_bytes",
+    ] {
+        assert!(
+            report[0]["metrics"].get(vector_metric).is_none(),
+            "{vector_metric} in {stdout}"
+        );
+    }
+    assert_eq!(report[0]["compatibility"], "not_applicable");
+    assert!(report[0]["minimum_api"].is_null());
+    let bounds = &report[0]["metrics"]["content_bounds"];
+    // r=120px on a 432px layer is 30dp, so the disc sits at 24..84 dp.
+    assert!(
+        (bounds["left"].as_f64().unwrap() - 24.0).abs() < 0.5,
+        "{bounds}"
+    );
+    assert!(
+        (bounds["right"].as_f64().unwrap() - 84.0).abs() < 0.5,
+        "{bounds}"
+    );
+    assert!(!inside.with_extension("xml").exists());
+
+    // PNG is the same findings path, with image: png.
+    let png = write(
+        "inside.png",
+        &vdtoolkit::convert(
+            br##"<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108"><circle cx="54" cy="54" r="30" fill="#fff"/></svg>"##,
+        )
+        .unwrap()
+        .to_png(432, 432)
+        .unwrap(),
+    );
+    let (code, stdout, _) = inspect(
+        &["inspect", "--as", "adaptive-foreground", "--format", "json"],
+        &png,
+    );
+    assert_eq!(code, Some(0), "{stdout}");
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(report[0]["image"], "png");
+    assert_eq!(report[0]["compatibility"], "not_applicable");
+    assert!(json_codes(&stdout).is_empty(), "{stdout}");
+
+    let (code, stdout, _) = inspect(&["inspect", "--as", "adaptive-foreground"], &outside);
+    assert_eq!(code, Some(0), "{stdout}");
+    assert!(stdout.contains("Adaptive layer image"), "{stdout}");
+    assert!(stdout.contains("SVGVD019"), "{stdout}");
+    assert!(stdout.contains("Format: webp"), "{stdout}");
+    assert!(stdout.contains("Dimensions: 432 × 432 px"), "{stdout}");
+    assert!(stdout.contains("Layer: 108 × 108 dp"), "{stdout}");
+    assert!(
+        stdout.contains("Content bounds:") && stdout.contains(" dp"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("VectorDrawable compatible"), "{stdout}");
+    assert!(!stdout.contains("Estimated XML size"), "{stdout}");
+
+    let (code, stdout, _) = inspect(
+        &["inspect", "--as", "adaptive-foreground", "--format", "json"],
+        &opaque,
+    );
+    assert_eq!(code, Some(0), "{stdout}");
+    assert_eq!(json_codes(&stdout), ["SVGVD026"]);
+
+    let (code, stdout, _) = inspect(
+        &["inspect", "--as", "adaptive-foreground", "--format", "json"],
+        &empty,
+    );
+    assert_eq!(code, Some(0), "{stdout}");
+    assert_eq!(json_codes(&stdout), ["SVGVD018"]);
+
+    // A JPEG has no alpha, so as a foreground it would hide the background.
+    let (code, stdout, stderr) = inspect(
+        &["inspect", "--as", "adaptive-foreground", "--format", "json"],
+        &jpeg,
+    );
+    assert_eq!(code, Some(1), "{stdout}\n{stderr}");
+    assert!(
+        stderr.contains("a JPEG has no alpha channel"),
+        "{stdout}\n{stderr}"
+    );
+
+    // The same JPEG is a valid opaque background. A non-square JPEG still
+    // reports the shape and resolution findings a background image gets.
+    let wide = write("wide.jpg", include_bytes!("fixtures/background_wide.jpg"));
+    let (code, stdout, _) = inspect(
+        &["inspect", "--as", "adaptive-background", "--format", "json"],
+        &wide,
+    );
+    assert_eq!(code, Some(0), "{stdout}");
+    assert_eq!(json_codes(&stdout), ["SVGVD024", "SVGVD025"]);
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(report[0]["image"], "jpg");
+    assert_eq!(
+        report[0]["icon"],
+        serde_json::json!({"kind": "adaptive-background"})
+    );
+
+    // Without --as, a raster file is not an SVG. The --as hint is CLI-only:
+    // analyze() itself does not name flags the WASM binding cannot pass.
+    assert!(matches!(
+        vdtoolkit::analyze(&fs::read(&inside).unwrap()),
+        Err(Error::InvalidInput(message)) if message == "this is a raster image, not an SVG"
+    ));
+    let (code, stdout, stderr) = inspect(&["inspect", "--format", "json"], &inside);
+    assert_eq!(code, Some(1), "{stdout}\n{stderr}");
+    assert!(
+        stderr.contains("this is a raster image, not an SVG"),
+        "{stdout}\n{stderr}"
+    );
+    assert!(
+        stderr.contains("--as adaptive-foreground"),
+        "{stdout}\n{stderr}"
+    );
+
+    // A notification icon is always a vector drawable.
+    let (code, stdout, stderr) = inspect(
+        &["inspect", "--as", "notification", "--format", "json"],
+        &inside,
+    );
+    assert_eq!(code, Some(1), "{stdout}\n{stderr}");
+    assert!(
+        stderr.contains("notification icons are vector drawables"),
+        "{stdout}\n{stderr}"
+    );
+
+    // A directory with --as adaptive-foreground keeps both SVGs and layer images.
+    let mixed = temp.path().join("mixed");
+    fs::create_dir(&mixed).unwrap();
+    fs::write(
+        mixed.join("logo.svg"),
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M12 2L2 22h20z" fill="#3DDC84"/></svg>"##,
+    )
+    .unwrap();
+    fs::copy(&outside, mixed.join("outside.webp")).unwrap();
+    fs::copy(&jpeg, mixed.join("photo.jpg")).unwrap();
+    let (code, stdout, _) = inspect(
+        &["inspect", "--as", "adaptive-foreground", "--format", "json"],
+        &mixed,
+    );
+    assert_eq!(code, Some(0), "{stdout}");
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let entries = report.as_array().unwrap();
+    assert_eq!(entries.len(), 2, "{stdout}");
+    assert!(entries[0]["path"].as_str().unwrap().ends_with("logo.svg"));
+    assert!(entries[0].get("image").is_none());
+    assert_eq!(entries[1]["image"], "webp");
+    assert!(
+        !entries
+            .iter()
+            .any(|entry| entry["path"].as_str().unwrap().ends_with("photo.jpg")),
+        "{stdout}"
+    );
+    assert!(
+        entries[1]["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|diagnostic| diagnostic["code"] == "SVGVD019")
+    );
+
+    // --as notification on a directory still keeps only SVGs; the WebP is not
+    // refused, it is skipped.
+    let (code, stdout, _) = inspect(
+        &["inspect", "--as", "notification", "--format", "json"],
+        &mixed,
+    );
+    assert_eq!(code, Some(0), "{stdout}");
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let entries = report.as_array().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert!(entries[0]["path"].as_str().unwrap().ends_with("logo.svg"));
+
+    // An empty tree with --as adaptive-foreground names layer images, not SVGs.
+    let empty_dir = temp.path().join("empty");
+    fs::create_dir(&empty_dir).unwrap();
+    let (code, _, stderr) = inspect(&["inspect", "--as", "adaptive-foreground"], &empty_dir);
+    assert_eq!(code, Some(1), "{stderr}");
+    assert!(
+        stderr.contains("no SVG or layer image files found"),
         "{stderr}"
     );
 }

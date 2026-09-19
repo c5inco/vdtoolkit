@@ -13,8 +13,8 @@ follow [Semantic Versioning](https://semver.org/).
   report the same findings `adaptive --foreground-image` and
   `--background-image` would, without writing anything. A directory mixes
   SVGs and layer images. `--fit` does not place a raster layer, which is
-  copied, never resampled. A JPEG
-  foreground is still rejected (no alpha). A raster file argument without
+  copied, never resampled. A JPEG foreground is still rejected (no alpha).
+  A raster file argument without
   `--as`, or with `--as notification`, is refused rather than parsed as SVG;
   a directory with `--as notification` still keeps only SVGs. A JPEG in a
   directory scanned as `--as adaptive-foreground` is skipped the same way,

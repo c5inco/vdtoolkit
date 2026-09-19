@@ -3752,9 +3752,11 @@ fn cli_inspect_as_reports_raster_foreground_findings_without_writing() {
     );
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(json_codes(&stdout), ["SVGVD024", "SVGVD025"]);
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(report[0]["image"], "jpg");
     assert_eq!(
-        serde_json::from_str::<serde_json::Value>(&stdout).unwrap()[0]["image"],
-        "jpg"
+        report[0]["icon"],
+        serde_json::json!({"kind": "adaptive-background"})
     );
 
     // Without --as, a raster file is not an SVG. The --as hint is CLI-only:

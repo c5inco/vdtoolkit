@@ -91,8 +91,11 @@ export type ConvertResult =
 
 /// Analyze SVG bytes and return a structured JavaScript result.
 #[wasm_bindgen(js_name = analyzeSvg, skip_typescript)]
-pub fn analyze_svg(source: &[u8]) -> JsValue {
-    serialize(&analyze_result(source))
+pub fn analyze_svg(source: &[u8], allow_approximate: Option<bool>) -> JsValue {
+    serialize(&analyze_result(
+        source,
+        allow_approximate.unwrap_or(false),
+    ))
 }
 
 /// Convert SVG bytes to VectorDrawable XML, optionally optimizing numbers and
@@ -105,12 +108,14 @@ pub fn convert_svg(
     optimize: bool,
     max_size_dp: Option<f32>,
     pretty: Option<bool>,
+    allow_approximate: Option<bool>,
 ) -> JsValue {
     serialize(&convert_result(
         source,
         optimize,
         max_size_dp,
         pretty.unwrap_or(false),
+        allow_approximate.unwrap_or(false),
     ))
 }
 
@@ -122,24 +127,26 @@ pub fn convert_notification_svg(
     optimize: bool,
     fit_dp: Option<f32>,
     pretty: Option<bool>,
+    allow_approximate: Option<bool>,
 ) -> JsValue {
     serialize(&notification_result(
         source,
         optimize,
         fit_dp.unwrap_or(vdtoolkit::NOTIFICATION_ICON_SIZE),
         pretty.unwrap_or(false),
+        allow_approximate.unwrap_or(false),
     ))
 }
 
 #[wasm_bindgen(typescript_custom_section)]
 const TYPESCRIPT_FUNCTIONS: &'static str = r#"
-export function analyzeSvg(source: Uint8Array): AnalyzeResult;
-export function convertSvg(source: Uint8Array, optimize: boolean, maxSizeDp?: number, pretty?: boolean): ConvertResult;
-export function convertNotificationSvg(source: Uint8Array, optimize: boolean, fitDp?: number, pretty?: boolean): ConvertResult;
+export function analyzeSvg(source: Uint8Array, allowApproximate?: boolean): AnalyzeResult;
+export function convertSvg(source: Uint8Array, optimize: boolean, maxSizeDp?: number, pretty?: boolean, allowApproximate?: boolean): ConvertResult;
+export function convertNotificationSvg(source: Uint8Array, optimize: boolean, fitDp?: number, pretty?: boolean, allowApproximate?: boolean): ConvertResult;
 "#;
 
-fn analyze_result(source: &[u8]) -> OperationResult {
-    match vdtoolkit::analyze(source) {
+fn analyze_result(source: &[u8], allow_approximate: bool) -> OperationResult {
+    match vdtoolkit::analyze_with_options(source, allow_approximate) {
         Ok(analysis) => OperationResult::Success {
             ok: true,
             analysis,
@@ -154,8 +161,9 @@ fn convert_result(
     optimize: bool,
     max_size_dp: Option<f32>,
     pretty: bool,
+    allow_approximate: bool,
 ) -> OperationResult {
-    match vdtoolkit::convert(source) {
+    match vdtoolkit::convert_with_options(source, allow_approximate) {
         Ok(mut asset) => {
             if optimize {
                 asset.optimize();
@@ -182,8 +190,9 @@ fn notification_result(
     optimize: bool,
     fit_dp: f32,
     pretty: bool,
+    allow_approximate: bool,
 ) -> OperationResult {
-    match vdtoolkit::convert(source).and_then(|mut asset| {
+    match vdtoolkit::convert_with_options(source, allow_approximate).and_then(|mut asset| {
         asset.to_icon(vdtoolkit::IconKind::Notification, vdtoolkit::Fit::contain(fit_dp))?;
         if optimize {
             asset.optimize();
@@ -256,8 +265,8 @@ mod tests {
             let native_analysis = vdtoolkit::analyze(source).unwrap();
             let native_asset = vdtoolkit::convert(source).unwrap();
 
-            let analyzed = json(&analyze_result(source));
-            let converted = json(&convert_result(source, false, None, false));
+            let analyzed = json(&analyze_result(source, false));
+            let converted = json(&convert_result(source, false, None, false, false));
 
             assert_eq!(
                 analyzed["analysis"],
@@ -274,14 +283,14 @@ mod tests {
     #[test]
     fn unsupported_and_malformed_errors_preserve_native_information() {
         let unsupported_analysis = vdtoolkit::analyze(UNSUPPORTED).unwrap();
-        let unsupported = json(&convert_result(UNSUPPORTED, false, None, false));
+        let unsupported = json(&convert_result(UNSUPPORTED, false, None, false, false));
         assert_eq!(unsupported["error"]["kind"], "unsupported");
         assert_eq!(
             unsupported["error"]["analysis"],
             serde_json::to_value(unsupported_analysis).unwrap()
         );
 
-        let malformed = json(&convert_result(MALFORMED, false, None, false));
+        let malformed = json(&convert_result(MALFORMED, false, None, false, false));
         assert_eq!(malformed["error"]["kind"], "xml");
         assert!(malformed["error"].get("analysis").is_none());
     }
@@ -310,7 +319,7 @@ mod tests {
     fn optimization_and_determinism_match_the_native_api() {
         let mut native = vdtoolkit::convert(DECIMALS).unwrap();
         native.optimize();
-        let optimized = json(&convert_result(DECIMALS, true, None, false));
+        let optimized = json(&convert_result(DECIMALS, true, None, false, false));
         assert_eq!(optimized["xml"], native.to_compact_xml());
         assert_eq!(
             optimized["analysis"],
@@ -318,8 +327,8 @@ mod tests {
         );
 
         assert_eq!(
-            json(&convert_result(EXACT, false, None, false)),
-            json(&convert_result(EXACT, false, None, false))
+            json(&convert_result(EXACT, false, None, false, false)),
+            json(&convert_result(EXACT, false, None, false, false))
         );
     }
 
@@ -327,23 +336,23 @@ mod tests {
     fn pretty_output_matches_the_readable_native_xml() {
         let mut native = vdtoolkit::convert(DECIMALS).unwrap();
         native.optimize();
-        let pretty = json(&convert_result(DECIMALS, true, None, true));
+        let pretty = json(&convert_result(DECIMALS, true, None, true, false));
         assert_eq!(pretty["xml"], native.to_xml());
         assert_eq!(
-            json(&convert_result(DECIMALS, true, None, false))["xml"],
+            json(&convert_result(DECIMALS, true, None, false, false))["xml"],
             vdtoolkit::compact_xml(&native.to_xml())
         );
     }
 
     #[test]
     fn size_cap_matches_the_native_api() {
-        let uncapped = json(&convert_result(LARGE, false, None, false));
+        let uncapped = json(&convert_result(LARGE, false, None, false, false));
         assert_eq!(uncapped["analysis"]["diagnostics"][0]["code"], "SVGVD016");
         assert_eq!(uncapped["analysis"]["diagnostics"][0]["severity"], "warning");
 
         let mut native = vdtoolkit::convert(LARGE).unwrap();
         assert!(native.fit_within(200.0));
-        let capped = json(&convert_result(LARGE, false, Some(200.0), false));
+        let capped = json(&convert_result(LARGE, false, Some(200.0), false, false));
         assert_eq!(capped["xml"], native.to_compact_xml());
         assert_eq!(
             capped["analysis"],
@@ -360,7 +369,7 @@ mod tests {
             .unwrap();
         native.optimize();
 
-        let converted = json(&notification_result(EXACT, true, 20.0, false));
+        let converted = json(&notification_result(EXACT, true, 20.0, false, false));
         assert_eq!(converted["xml"], native.to_compact_xml());
         assert_eq!(
             converted["analysis"],
@@ -368,5 +377,30 @@ mod tests {
         );
         assert_eq!(converted["analysis"]["metrics"]["width"], 24.0);
         assert!(converted["xml"].as_str().unwrap().contains("#FFFFFF"));
+    }
+
+    #[test]
+    fn allow_approximate_enables_approximating_radial_gradients() {
+        const FOCAL_OFFSET_GRADIENT: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+            <defs>
+                <radialGradient id="g" cx="12" cy="12" r="10" fx="10" fy="10">
+                    <stop offset="0%" stop-color="#fff"/>
+                    <stop offset="100%" stop-color="#000"/>
+                </radialGradient>
+            </defs>
+            <rect width="24" height="24" fill="url(#g)"/>
+        </svg>"##;
+
+        let rejected = json(&convert_result(FOCAL_OFFSET_GRADIENT, false, None, false, false));
+        assert_eq!(rejected["error"]["kind"], "unsupported");
+
+        let allowed = json(&convert_result(FOCAL_OFFSET_GRADIENT, false, None, false, true));
+        assert_eq!(allowed["ok"], true);
+        assert_eq!(allowed["analysis"]["compatibility"], "approximate");
+        assert!(allowed["analysis"]["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d["code"] == "SVGVD003"));
     }
 }

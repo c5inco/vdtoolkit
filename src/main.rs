@@ -50,6 +50,9 @@ struct ConvertArgs {
     /// Reject SVGs that require safe normalization.
     #[arg(long)]
     strict: bool,
+    /// Allow lossy lowering for constructs VectorDrawable cannot draw exactly.
+    #[arg(long)]
+    allow_approximate: bool,
     /// Keep readable indentation and line breaks instead of compact XML.
     #[arg(long)]
     pretty: bool,
@@ -74,6 +77,9 @@ struct NotificationArgs {
     /// Reject SVGs that require safe normalization.
     #[arg(long)]
     strict: bool,
+    /// Allow lossy lowering for constructs VectorDrawable cannot draw exactly.
+    #[arg(long)]
+    allow_approximate: bool,
     /// Keep readable indentation and line breaks instead of compact XML.
     #[arg(long)]
     pretty: bool,
@@ -153,6 +159,9 @@ struct AdaptiveArgs {
     /// Reject SVGs that require safe normalization.
     #[arg(long)]
     strict: bool,
+    /// Allow lossy lowering for constructs VectorDrawable cannot draw exactly.
+    #[arg(long)]
+    allow_approximate: bool,
     /// Keep readable indentation and line breaks instead of compact XML.
     #[arg(long)]
     pretty: bool,
@@ -184,6 +193,9 @@ struct ReportArgs {
     /// Treat safe normalization as incompatible.
     #[arg(long)]
     strict: bool,
+    /// Allow lossy lowering for constructs VectorDrawable cannot draw exactly.
+    #[arg(long)]
+    allow_approximate: bool,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -416,7 +428,8 @@ fn notification(args: NotificationArgs) -> Result<Outcome> {
 }
 
 fn notification_one(args: &NotificationArgs, input: &Path, output: Option<Output>) -> Result<()> {
-    let mut asset = vdtoolkit::convert_file(input).map_err(hint_raster_convert)?;
+    let mut asset = vdtoolkit::convert_file_with_options(input, args.allow_approximate)
+        .map_err(hint_raster_convert)?;
     if args.strict && asset.analysis.compatibility != Compatibility::Exact {
         return Err(Error::InvalidInput(
             "requires normalization and was rejected by --strict".to_owned(),
@@ -903,14 +916,15 @@ fn adaptive_layer(
     image_flag: &str,
 ) -> Option<Asset> {
     let layer = || -> Result<Asset> {
-        let mut asset = vdtoolkit::convert_file(input).map_err(|error| match error {
-            Error::InvalidInput(message) if message == "this is a raster image, not an SVG" => {
-                Error::InvalidInput(format!(
-                    "{message}; use {image_flag} for a raster adaptive layer"
-                ))
-            }
-            error => error,
-        })?;
+        let mut asset = vdtoolkit::convert_file_with_options(input, args.allow_approximate)
+            .map_err(|error| match error {
+                Error::InvalidInput(message) if message == "this is a raster image, not an SVG" => {
+                    Error::InvalidInput(format!(
+                        "{message}; use {image_flag} for a raster adaptive layer"
+                    ))
+                }
+                error => error,
+            })?;
         if args.strict && asset.analysis.compatibility != Compatibility::Exact {
             return Err(Error::InvalidInput(
                 "requires normalization and was rejected by --strict".to_owned(),
@@ -1133,7 +1147,8 @@ fn convert_one(
     output: Option<Output>,
     optimize: bool,
 ) -> Result<()> {
-    let mut asset = vdtoolkit::convert_file(input).map_err(hint_raster_convert)?;
+    let mut asset = vdtoolkit::convert_file_with_options(input, args.allow_approximate)
+        .map_err(hint_raster_convert)?;
     if args.strict && asset.analysis.compatibility != Compatibility::Exact {
         return Err(Error::InvalidInput(
             "requires normalization and was rejected by --strict".to_owned(),
@@ -1260,8 +1275,14 @@ fn report(args: ReportArgs, inspect: bool) -> Result<Outcome> {
     let mut failed = 0;
     for input in &inputs {
         let result = match icon {
-            Some(icon) => vdtoolkit::analyze_file_as(input, icon.kind, icon.placement()),
-            None => vdtoolkit::analyze_file(input).map_err(hint_raster_inspect),
+            Some(icon) => vdtoolkit::analyze_file_as_with_options(
+                input,
+                icon.kind,
+                icon.placement(),
+                args.allow_approximate,
+            ),
+            None => vdtoolkit::analyze_file_with_options(input, args.allow_approximate)
+                .map_err(hint_raster_inspect),
         };
         match &result {
             Ok(analysis) => {
@@ -1269,7 +1290,9 @@ fn report(args: ReportArgs, inspect: bool) -> Result<Outcome> {
                     passed &= if args.strict {
                         analysis.compatibility == Compatibility::Exact
                     } else {
-                        analysis.compatibility.convertible()
+                        analysis
+                            .compatibility
+                            .is_convertible(args.allow_approximate)
                     };
                 }
             }
@@ -1309,7 +1332,7 @@ fn report(args: ReportArgs, inspect: bool) -> Result<Outcome> {
                     println!("{}", path.display());
                 }
                 match result {
-                    Ok(analysis) => print_human(analysis, inspect),
+                    Ok(analysis) => print_human(analysis, inspect, args.allow_approximate),
                     Err(error) => println!("✗ Could not analyze: {error}"),
                 }
             }
@@ -1327,19 +1350,22 @@ fn report(args: ReportArgs, inspect: bool) -> Result<Outcome> {
     })
 }
 
-fn print_human(analysis: &Analysis, inspect: bool) {
+fn print_human(analysis: &Analysis, inspect: bool, allow_approximate: bool) {
     let raster = analysis.image.is_some();
-    let compatible = analysis.compatibility.convertible();
+    let compatible = analysis.compatibility.is_convertible(allow_approximate);
+    let verdict = if raster {
+        "Adaptive layer image"
+    } else if !compatible {
+        "Not exactly representable as VectorDrawable"
+    } else if analysis.compatibility == Compatibility::Approximate {
+        "VectorDrawable compatible with --allow-approximate"
+    } else {
+        "VectorDrawable compatible"
+    };
     println!(
         "{} {}",
         if raster || compatible { "✓" } else { "✗" },
-        if raster {
-            "Adaptive layer image"
-        } else if compatible {
-            "VectorDrawable compatible"
-        } else {
-            "Not exactly representable as VectorDrawable"
-        }
+        verdict
     );
     for diagnostic in &analysis.diagnostics {
         let location = diagnostic

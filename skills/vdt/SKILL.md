@@ -82,16 +82,17 @@ VectorDrawableCompat must load them below API 21, where `anydpi` is unavailable.
    ```
 
    `compatibility` is `exact`, `exact_with_normalization`, `approximate`, or
-   `unsupported`. The first two convert; `--strict` accepts only `exact`, so
-   do not pass it unless the user asks. A raster layer image instead has
-   `"image": "png"` / `"webp"` / `"jpg"` and `"compatibility": "not_applicable"`:
-   it is not a VectorDrawable. Its `icon` keeps `kind` but omits the unused
-   `fit` / `fit_mode`, and vector-only metrics are omitted. `metrics.width` and
-   `metrics.height` are pixels of the file; `viewport_*` and `content_bounds`
-   are dp on the 108dp layer. A diagnostic with severity `error` blocks
-   conversion; `warning` and `info` do not, but warnings about icons mean the
-   result will look wrong on a device. A file that could not be read or parsed
-   appears as `{ "path", "error" }` instead.
+   `unsupported`. The first two convert; `--allow-approximate` also allows
+   `approximate` (e.g. centering radial gradients with focal offsets). `--strict`
+   accepts only `exact`, so do not pass it unless the user asks. A raster layer
+   image instead has `"image": "png"` / `"webp"` / `"jpg"` and
+   `"compatibility": "not_applicable"`: it is not a VectorDrawable. Its `icon`
+   keeps `kind` but omits the unused `fit` / `fit_mode`, and vector-only metrics
+   are omitted. `metrics.width` and `metrics.height` are pixels of the file;
+   `viewport_*` and `content_bounds` are dp on the 108dp layer. A diagnostic
+   with severity `error` blocks conversion; `warning` and `info` do not, but
+   warnings about icons mean the result will look wrong on a device. A file
+   that could not be read or parsed appears as `{ "path", "error" }` instead.
 
    Exit codes: `0` everything converted or is convertible, `1` a file was
    malformed, unreadable, or failed, `2` (`check` and `inspect` only) an input
@@ -215,7 +216,8 @@ follow it. As a rule:
 Most errors are fixed in the design tool that produced the SVG. When the fix
 is a mechanical SVG edit that does not change the look (inlining a `<use>`,
 setting a viewBox), you can make it; otherwise explain the trade-off and let
-the user decide.
+the user decide. For radial gradients with off-center focal points (`SVGVD003`),
+`--allow-approximate` allows lossy conversion by centering the focal point.
 
 ## In CI
 

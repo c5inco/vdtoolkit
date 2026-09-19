@@ -7,7 +7,18 @@ pub fn optimize(drawable: &mut VectorDrawable) {
 fn optimize_nodes(nodes: &mut [VectorNode]) {
     for node in nodes {
         match node {
-            VectorNode::Group(group) => optimize_nodes(&mut group.children),
+            VectorNode::Group(group) => {
+                round_all(&mut [
+                    &mut group.pivot_x,
+                    &mut group.pivot_y,
+                    &mut group.rotation,
+                    &mut group.scale_x,
+                    &mut group.scale_y,
+                    &mut group.translate_x,
+                    &mut group.translate_y,
+                ]);
+                optimize_nodes(&mut group.children);
+            }
             VectorNode::ClipPath(path_data) => optimize_path_data(path_data),
             VectorNode::Path(path) => {
                 optimize_path_data(&mut path.path_data);

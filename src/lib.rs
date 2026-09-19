@@ -428,33 +428,56 @@ pub fn compact_xml(xml: &str) -> String {
 /// Analyze an SVG file without converting it.
 #[doc(hidden)]
 pub fn analyze_file(path: &Path) -> Result<Analysis> {
+    analyze_file_with_options(path, false)
+}
+
+/// Analyze an SVG file without converting it, optionally allowing approximations.
+#[doc(hidden)]
+pub fn analyze_file_with_options(path: &Path, allow_approximate: bool) -> Result<Analysis> {
     let source = std::fs::read(path).map_err(|source| Error::Read {
         path: path.to_owned(),
         source,
     })?;
-    analyze(&source)
+    analyze_with_options(&source, allow_approximate)
 }
 
 /// Analyze SVG bytes without converting them.
 #[doc(hidden)]
 pub fn analyze(source: &[u8]) -> Result<Analysis> {
+    analyze_with_options(source, false)
+}
+
+/// Analyze SVG bytes without converting them, optionally allowing approximations.
+#[doc(hidden)]
+pub fn analyze_with_options(source: &[u8], allow_approximate: bool) -> Result<Analysis> {
     if bitmap::ImageFormat::sniff(source).is_some() {
         return Err(Error::InvalidInput(
             "this is a raster image, not an SVG".to_owned(),
         ));
     }
-    Ok(svg::process(source, false)?.analysis)
+    Ok(svg::process(source, false, allow_approximate)?.analysis)
 }
 
 /// Analyze an SVG file as an icon of `kind` fitted to `fit` dp, without
 /// writing anything, as [`analyze_as`] does.
 #[doc(hidden)]
 pub fn analyze_file_as(path: &Path, kind: IconKind, fit: Fit) -> Result<Analysis> {
+    analyze_file_as_with_options(path, kind, fit, false)
+}
+
+/// Analyze an SVG file as an icon of `kind` fitted to `fit` dp, optionally allowing approximations.
+#[doc(hidden)]
+pub fn analyze_file_as_with_options(
+    path: &Path,
+    kind: IconKind,
+    fit: Fit,
+    allow_approximate: bool,
+) -> Result<Analysis> {
     let source = std::fs::read(path).map_err(|source| Error::Read {
         path: path.to_owned(),
         source,
     })?;
-    analyze_as(&source, kind, fit)
+    analyze_as_with_options(&source, kind, fit, allow_approximate)
 }
 
 /// Analyze SVG bytes as an icon of `kind` fitted to `fit` dp, without
@@ -472,10 +495,21 @@ pub fn analyze_file_as(path: &Path, kind: IconKind, fit: Fit) -> Result<Analysis
 /// vector drawable.
 #[doc(hidden)]
 pub fn analyze_as(source: &[u8], kind: IconKind, fit: Fit) -> Result<Analysis> {
+    analyze_as_with_options(source, kind, fit, false)
+}
+
+/// Analyze SVG bytes as an icon of `kind` fitted to `fit` dp, optionally allowing approximations.
+#[doc(hidden)]
+pub fn analyze_as_with_options(
+    source: &[u8],
+    kind: IconKind,
+    fit: Fit,
+    allow_approximate: bool,
+) -> Result<Analysis> {
     if bitmap::ImageFormat::sniff(source).is_some() {
         return analyze_layer_as(source, kind);
     }
-    match convert(source) {
+    match convert_with_options(source, allow_approximate) {
         Ok(mut asset) => {
             asset.to_icon(kind, fit)?;
             Ok(asset.analysis)
@@ -518,23 +552,39 @@ fn analyze_layer_as(source: &[u8], kind: IconKind) -> Result<Analysis> {
 /// Convert an SVG file exactly or with safe normalization.
 #[doc(hidden)]
 pub fn convert_file(path: &Path) -> Result<Asset> {
+    convert_file_with_options(path, false)
+}
+
+/// Convert an SVG file, optionally allowing approximations.
+#[doc(hidden)]
+pub fn convert_file_with_options(path: &Path, allow_approximate: bool) -> Result<Asset> {
     let source = std::fs::read(path).map_err(|source| Error::Read {
         path: path.to_owned(),
         source,
     })?;
-    convert(&source)
+    convert_with_options(&source, allow_approximate)
 }
 
 /// Convert SVG bytes exactly or with safe normalization.
 #[doc(hidden)]
 pub fn convert(source: &[u8]) -> Result<Asset> {
+    convert_with_options(source, false)
+}
+
+/// Convert SVG bytes, optionally allowing approximations.
+#[doc(hidden)]
+pub fn convert_with_options(source: &[u8], allow_approximate: bool) -> Result<Asset> {
     if bitmap::ImageFormat::sniff(source).is_some() {
         return Err(Error::InvalidInput(
             "this is a raster image, not an SVG".to_owned(),
         ));
     }
-    let processed = svg::process(source, true)?;
-    if !processed.analysis.compatibility.convertible() {
+    let processed = svg::process(source, true, allow_approximate)?;
+    if !processed
+        .analysis
+        .compatibility
+        .is_convertible(allow_approximate)
+    {
         return Err(Error::Incompatible(Box::new(processed.analysis)));
     }
     Ok(Asset {

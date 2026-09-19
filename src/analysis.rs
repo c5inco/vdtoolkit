@@ -20,6 +20,18 @@ impl Compatibility {
         matches!(self, Self::Exact | Self::ExactWithNormalization)
     }
 
+    /// Whether conversion is allowed with the given options.
+    pub fn is_convertible(self, allow_approximate: bool) -> bool {
+        if allow_approximate {
+            matches!(
+                self,
+                Self::Exact | Self::ExactWithNormalization | Self::Approximate
+            )
+        } else {
+            self.convertible()
+        }
+    }
+
     pub(crate) fn worsen(&mut self, other: Self) {
         *self = (*self).max(other);
     }
@@ -136,7 +148,7 @@ pub struct ElementLocation {
 }
 
 /// Stable diagnostic identifier.
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub enum DiagnosticCode {
     #[serde(rename = "SVGVD001")]
     UnsupportedMask,

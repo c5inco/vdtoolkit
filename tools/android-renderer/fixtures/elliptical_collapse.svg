@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+  <!--
+    A 2500:1 ellipse, centred on the canvas. `cx` is pre-divided by the same
+    factor the transform multiplies by, so the gradient lands in view instead
+    of far off to the right, and the radius is chosen so the squashed short
+    axis spans the canvas vertically. The two hard stops make the elliptical
+    banding legible as bands rather than a smooth ramp.
+
+    scaleY here is ~0.0004, which `optimize` rounds to zero unless the group
+    scale is clamped, collapsing the group and erasing the drawable.
+  -->
+  <defs>
+    <radialGradient id="r" gradientUnits="userSpaceOnUse" cx="0.0048" cy="12" r="12"
+      gradientTransform="scale(2500 1)">
+      <stop offset="0" stop-color="#159A55"/>
+      <stop offset=".5" stop-color="#159A55"/>
+      <stop offset=".5" stop-color="#C52A54"/>
+      <stop offset="1" stop-color="#C52A54"/>
+    </radialGradient>
+  </defs>
+  <path d="M0 0H24V24H0Z" fill="url(#r)"/>
+</svg>

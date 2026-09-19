@@ -1,9 +1,13 @@
 use serde::Serialize;
 
+use crate::bitmap::ImageFormat;
+
 /// How faithfully an SVG can be represented as a VectorDrawable.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Compatibility {
+    /// A raster adaptive layer: not a VectorDrawable, so conversion does not apply.
+    NotApplicable,
     Exact,
     ExactWithNormalization,
     Approximate,
@@ -32,18 +36,30 @@ pub struct Analysis {
     pub diagnostics: Vec<Diagnostic>,
     /// Geometry and output-size measurements.
     pub metrics: Metrics,
+    /// Raster format when this analysis is of a layer image rather than an SVG.
+    ///
+    /// `"png"`, `"webp"`, or `"jpg"`. Omitted from JSON for SVG input. When
+    /// present, [`Metrics::width`] and [`Metrics::height`] are pixels,
+    /// [`Metrics::viewport_width`] / [`Metrics::viewport_height`] are the
+    /// 108dp layer, and [`Metrics::content_bounds`] are dp on that layer.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image: Option<ImageFormat>,
 }
 
 /// Measurements collected while analyzing an SVG.
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct Metrics {
-    /// Normalized drawable width.
+    /// Normalized drawable width in dp, or pixel width when [`Analysis::image`]
+    /// is set.
     pub width: f32,
-    /// Normalized drawable height.
+    /// Normalized drawable height in dp, or pixel height when
+    /// [`Analysis::image`] is set.
     pub height: f32,
-    /// VectorDrawable viewport width.
+    /// VectorDrawable viewport width, or the 108dp adaptive layer when
+    /// [`Analysis::image`] is set.
     pub viewport_width: f32,
-    /// VectorDrawable viewport height.
+    /// VectorDrawable viewport height, or the 108dp adaptive layer when
+    /// [`Analysis::image`] is set.
     pub viewport_height: f32,
     /// Number of visible painted paths.
     pub paths: usize,
@@ -56,13 +72,14 @@ pub struct Metrics {
     /// Number of source clip paths.
     pub clip_paths: usize,
     /// Bounds of the painted paths that are emitted, including strokes,
-    /// clamped to the viewport.
+    /// clamped to the viewport, in viewport units (dp on a fitted icon).
     ///
     /// Hidden, unpainted, and fully transparent geometry is excluded, and a
     /// transparent stroke does not widen the bounds of a visible fill.
     /// Clipping is not applied, so
     /// the bounds can be larger than what is visible. `None` when no painted
-    /// path lies inside the viewport.
+    /// path lies inside the viewport. When [`Analysis::image`] is set, this is
+    /// the painted pixel box mapped onto the 108dp layer, not pixel coordinates.
     pub content_bounds: Option<Bounds>,
     /// Serialized VectorDrawable size before optional optimization.
     pub estimated_xml_bytes: usize,

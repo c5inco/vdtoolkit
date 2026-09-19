@@ -6,6 +6,24 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `inspect --as adaptive-foreground` and `--as adaptive-background` (and
+  `check` with the same flags) accept a PNG, WebP, or JPEG layer image and
+  report the same findings `adaptive --foreground-image` and
+  `--background-image` would, without writing anything. A directory mixes
+  SVGs and layer images. `--fit` is recorded on the JSON `icon` object but
+  does not place a raster layer, which is copied, never resampled. A JPEG
+  foreground is still rejected (no alpha). A raster file argument without
+  `--as`, or with `--as notification`, is refused rather than parsed as SVG;
+  a directory with `--as notification` still keeps only SVGs. A JPEG in a
+  directory scanned as `--as adaptive-foreground` is skipped the same way,
+  because a JPEG has no alpha and would fail the whole run; pass the file
+  itself to see that rejection. The JSON report gains an `image` field
+  (`png`, `webp`, or `jpg`) on those entries, `compatibility` is then
+  `not_applicable`, `metrics.width` / `height` are pixels of the image, and
+  `content_bounds` / `viewport_*` stay dp on the 108dp layer.
+
 ## [0.4.0] - 2026-09-18
 
 ### Added

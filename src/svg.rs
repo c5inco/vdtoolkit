@@ -64,6 +64,7 @@ pub(crate) fn process(source: &[u8], keep_drawable: bool) -> Result<Processed> {
             minimum_api,
             diagnostics,
             metrics,
+            image: None,
         },
         drawable: keep_drawable.then_some(drawable).flatten(),
         declared_size: ["width", "height"]

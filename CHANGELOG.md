@@ -6,6 +6,23 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Elliptical and rotated radial gradients (arising from non-square bounding
+  boxes or non-uniform `gradientTransform` scales and rotations) are supported
+  by lowering into circular VectorDrawable radial gradients wrapped in a
+  `<group>` with `scaleY`, `pivotX`, `pivotY`, and `rotation` transforms, with
+  the path geometry counter-transformed. When a path has both an elliptical
+  radial fill and a stroke, it splits into a filled transformed `<group>` and
+  an unscaled stroked sibling path to keep the stroke uniform. Strokes using
+  an elliptical gradient remain rejected.
+- `--allow-approximate` opt-in flag on `convert`, `optimize`, `notification`,
+  `adaptive`, `check`, and `inspect` (`*_with_options` in the Rust API and
+  `allowApproximate` in WebAssembly bindings) allows lossy lowering for
+  constructs VectorDrawable cannot draw exactly. When enabled, radial gradients
+  with off-center focal points (`fx != cx` or `fy != cy`) are centered with
+  warning `SVGVD003` and reported as `approximate` compatibility, rather than
+  blocking conversion.
 ## [0.4.0] - 2026-09-18
 
 ### Added

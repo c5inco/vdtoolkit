@@ -44,8 +44,8 @@ function converter(
     try {
       if (initError !== undefined) throw initError;
       return kind === "notification"
-        ? convertNotificationSvg(new Uint8Array(source), true, undefined, pretty)
-        : convertSvg(new Uint8Array(source), true, capDrawable ? MAX_EXPORT_DP : undefined, pretty);
+        ? convertNotificationSvg(new Uint8Array(source), true, undefined, pretty, true)
+        : convertSvg(new Uint8Array(source), true, capDrawable ? MAX_EXPORT_DP : undefined, pretty, true);
     } catch (error) {
       return {
         ok: false,

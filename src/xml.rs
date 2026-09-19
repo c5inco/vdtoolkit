@@ -64,7 +64,61 @@ fn write_nodes(xml: &mut String, nodes: &[VectorNode], depth: usize, short_paths
     for node in nodes {
         match node {
             VectorNode::Group(group) => {
-                let _ = writeln!(xml, "{indent}<group>");
+                if group.is_identity() {
+                    let _ = writeln!(xml, "{indent}<group>");
+                } else {
+                    let _ = write!(xml, "{indent}<group");
+                    if group.pivot_x != 0.0 {
+                        let _ = write!(
+                            xml,
+                            "\n{attribute_indent}android:pivotX=\"{}\"",
+                            number(group.pivot_x)
+                        );
+                    }
+                    if group.pivot_y != 0.0 {
+                        let _ = write!(
+                            xml,
+                            "\n{attribute_indent}android:pivotY=\"{}\"",
+                            number(group.pivot_y)
+                        );
+                    }
+                    if group.rotation != 0.0 {
+                        let _ = write!(
+                            xml,
+                            "\n{attribute_indent}android:rotation=\"{}\"",
+                            number(group.rotation)
+                        );
+                    }
+                    if group.scale_x != 1.0 {
+                        let _ = write!(
+                            xml,
+                            "\n{attribute_indent}android:scaleX=\"{}\"",
+                            number(group.scale_x)
+                        );
+                    }
+                    if group.scale_y != 1.0 {
+                        let _ = write!(
+                            xml,
+                            "\n{attribute_indent}android:scaleY=\"{}\"",
+                            number(group.scale_y)
+                        );
+                    }
+                    if group.translate_x != 0.0 {
+                        let _ = write!(
+                            xml,
+                            "\n{attribute_indent}android:translateX=\"{}\"",
+                            number(group.translate_x)
+                        );
+                    }
+                    if group.translate_y != 0.0 {
+                        let _ = write!(
+                            xml,
+                            "\n{attribute_indent}android:translateY=\"{}\"",
+                            number(group.translate_y)
+                        );
+                    }
+                    let _ = writeln!(xml, ">");
+                }
                 write_nodes(xml, &group.children, depth + 1, short_paths);
                 let _ = writeln!(xml, "{indent}</group>");
             }

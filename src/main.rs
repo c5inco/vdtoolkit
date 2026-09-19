@@ -50,6 +50,9 @@ struct ConvertArgs {
     /// Reject SVGs that require safe normalization.
     #[arg(long)]
     strict: bool,
+    /// Allow lossy lowering for constructs VectorDrawable cannot draw exactly.
+    #[arg(long)]
+    allow_approximate: bool,
     /// Keep readable indentation and line breaks instead of compact XML.
     #[arg(long)]
     pretty: bool,
@@ -74,6 +77,9 @@ struct NotificationArgs {
     /// Reject SVGs that require safe normalization.
     #[arg(long)]
     strict: bool,
+    /// Allow lossy lowering for constructs VectorDrawable cannot draw exactly.
+    #[arg(long)]
+    allow_approximate: bool,
     /// Keep readable indentation and line breaks instead of compact XML.
     #[arg(long)]
     pretty: bool,
@@ -153,6 +159,9 @@ struct AdaptiveArgs {
     /// Reject SVGs that require safe normalization.
     #[arg(long)]
     strict: bool,
+    /// Allow lossy lowering for constructs VectorDrawable cannot draw exactly.
+    #[arg(long)]
+    allow_approximate: bool,
     /// Keep readable indentation and line breaks instead of compact XML.
     #[arg(long)]
     pretty: bool,
@@ -182,6 +191,9 @@ struct ReportArgs {
     /// Treat safe normalization as incompatible.
     #[arg(long)]
     strict: bool,
+    /// Allow lossy lowering for constructs VectorDrawable cannot draw exactly.
+    #[arg(long)]
+    allow_approximate: bool,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -350,7 +362,7 @@ fn notification(args: NotificationArgs) -> Result<Outcome> {
 }
 
 fn notification_one(args: &NotificationArgs, input: &Path, output: Option<Output>) -> Result<()> {
-    let mut asset = vdtoolkit::convert_file(input)?;
+    let mut asset = vdtoolkit::convert_file_with_options(input, args.allow_approximate)?;
     if args.strict && asset.analysis.compatibility != Compatibility::Exact {
         return Err(Error::InvalidInput(
             "requires normalization and was rejected by --strict".to_owned(),
@@ -822,7 +834,7 @@ fn raster_layer(
 /// failure with its path and return `None`.
 fn adaptive_layer(args: &AdaptiveArgs, input: &Path, fit: Fit, kind: IconKind) -> Option<Asset> {
     let layer = || -> Result<Asset> {
-        let mut asset = vdtoolkit::convert_file(input)?;
+        let mut asset = vdtoolkit::convert_file_with_options(input, args.allow_approximate)?;
         if args.strict && asset.analysis.compatibility != Compatibility::Exact {
             return Err(Error::InvalidInput(
                 "requires normalization and was rejected by --strict".to_owned(),
@@ -1045,7 +1057,7 @@ fn convert_one(
     output: Option<Output>,
     optimize: bool,
 ) -> Result<()> {
-    let mut asset = vdtoolkit::convert_file(input)?;
+    let mut asset = vdtoolkit::convert_file_with_options(input, args.allow_approximate)?;
     if args.strict && asset.analysis.compatibility != Compatibility::Exact {
         return Err(Error::InvalidInput(
             "requires normalization and was rejected by --strict".to_owned(),
@@ -1154,15 +1166,20 @@ fn report(args: ReportArgs, inspect: bool) -> Result<Outcome> {
     let mut failed = 0;
     for input in &inputs {
         let result = match icon {
-            Some(icon) => vdtoolkit::analyze_file_as(input, icon.kind, icon.placement()),
-            None => vdtoolkit::analyze_file(input),
+            Some(icon) => vdtoolkit::analyze_file_as_with_options(
+                input,
+                icon.kind,
+                icon.placement(),
+                args.allow_approximate,
+            ),
+            None => vdtoolkit::analyze_file_with_options(input, args.allow_approximate),
         };
         match &result {
             Ok(analysis) => {
                 passed &= if args.strict {
                     analysis.compatibility == Compatibility::Exact
                 } else {
-                    analysis.compatibility.convertible()
+                    analysis.compatibility.is_convertible(args.allow_approximate)
                 };
             }
             Err(_) => failed += 1,

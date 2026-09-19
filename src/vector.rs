@@ -20,7 +20,59 @@ pub enum VectorNode {
 
 #[derive(Clone, Debug)]
 pub struct VectorGroup {
+    pub pivot_x: f32,
+    pub pivot_y: f32,
+    pub rotation: f32,
+    pub scale_x: f32,
+    pub scale_y: f32,
+    pub translate_x: f32,
+    pub translate_y: f32,
     pub children: Vec<VectorNode>,
+}
+
+impl VectorGroup {
+    pub fn new(children: Vec<VectorNode>) -> Self {
+        Self {
+            pivot_x: 0.0,
+            pivot_y: 0.0,
+            rotation: 0.0,
+            scale_x: 1.0,
+            scale_y: 1.0,
+            translate_x: 0.0,
+            translate_y: 0.0,
+            children,
+        }
+    }
+
+    pub fn is_identity(&self) -> bool {
+        self.pivot_x == 0.0
+            && self.pivot_y == 0.0
+            && self.rotation == 0.0
+            && self.scale_x == 1.0
+            && self.scale_y == 1.0
+            && self.translate_x == 0.0
+            && self.translate_y == 0.0
+    }
+
+    pub fn transform(&self) -> Transform {
+        if self.is_identity() {
+            return Transform::identity();
+        }
+        Transform::from_translate(self.translate_x + self.pivot_x, self.translate_y + self.pivot_y)
+            .pre_rotate(self.rotation)
+            .pre_scale(self.scale_x, self.scale_y)
+            .pre_translate(-self.pivot_x, -self.pivot_y)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct GroupTransform {
+    pub pivot_x: f32,
+    pub pivot_y: f32,
+    pub rotation: f32,
+    pub scale_x: f32,
+    pub scale_y: f32,
+    pub inv_transform: Transform,
 }
 
 #[derive(Clone, Debug)]
@@ -209,6 +261,7 @@ fn count_clip_paths(nodes: &[VectorNode]) -> usize {
 
 pub(crate) fn lower(
     tree: &usvg::Tree,
+    allow_approximate: bool,
     compatibility: &mut Compatibility,
     diagnostics: &mut Vec<Diagnostic>,
     metrics: &mut Metrics,
@@ -228,6 +281,7 @@ pub(crate) fn lower(
         tree.root(),
         &mut children,
         1.0,
+        allow_approximate,
         compatibility,
         diagnostics,
         metrics,
@@ -236,7 +290,7 @@ pub(crate) fn lower(
         .content_bounds
         .and_then(|bounds| clamp_bounds(bounds, size.width(), size.height()));
     diagnostics.extend(large_dimensions_warning(size.width(), size.height()));
-    if compatibility.convertible() {
+    if compatibility.is_convertible(allow_approximate) {
         Some(VectorDrawable {
             width_dp: size.width(),
             height_dp: size.height(),
@@ -264,6 +318,7 @@ fn visit_group(
     group: &usvg::Group,
     output: &mut Vec<VectorNode>,
     inherited_alpha: f32,
+    allow_approximate: bool,
     compatibility: &mut Compatibility,
     diagnostics: &mut Vec<Diagnostic>,
     metrics: &mut Metrics,
@@ -298,6 +353,7 @@ fn visit_group(
                 group,
                 &mut children,
                 inherited_alpha,
+                allow_approximate,
                 compatibility,
                 diagnostics,
                 metrics,
@@ -313,14 +369,16 @@ fn visit_group(
                     lower_paint(
                         fill.paint(),
                         path.abs_transform(),
+                        allow_approximate,
                         compatibility,
                         diagnostics,
                     )
-                    .map(|(paint, alpha)| {
+                    .map(|(paint, alpha, group_transform)| {
                         (
                             paint,
                             fill.opacity().get() * inherited_alpha * alpha,
                             map_fill_rule(fill.rule()),
+                            group_transform,
                         )
                     })
                 });
@@ -346,19 +404,30 @@ fn visit_group(
                     lower_paint(
                         stroke.paint(),
                         path.abs_transform(),
+                        allow_approximate,
                         compatibility,
                         diagnostics,
                     )
-                    .map(|(paint, alpha)| {
+                    .and_then(|(paint, alpha, group_transform)| {
+                        if group_transform.is_some() {
+                            unsupported(
+                                compatibility,
+                                diagnostics,
+                                DiagnosticCode::UnsupportedGradient,
+                                "elliptical radial gradients on strokes cannot be represented by VectorDrawable",
+                                "Make the stroke gradient circular, without skew or uneven scale.",
+                            );
+                            return None;
+                        }
                         let scale = stroke_scale(path.abs_transform(), compatibility, diagnostics);
-                        (
+                        Some((
                             paint,
                             stroke.opacity().get() * inherited_alpha * alpha,
                             stroke.width().get() * scale,
                             map_cap(stroke.linecap()),
                             map_join(stroke.linejoin()),
                             stroke.miterlimit().get(),
-                        )
+                        ))
                     })
                 });
                 if fill.is_some()
@@ -389,9 +458,9 @@ fn visit_group(
                 } else if fill_paints {
                     include_bounds(&mut metrics.content_bounds, path.abs_bounding_box());
                 }
-                let (fill, fill_alpha, fill_rule) = match fill {
-                    Some((paint, alpha, rule)) => (Some(paint), alpha, rule),
-                    None => (None, 1.0, FillRule::NonZero),
+                let (fill, fill_alpha, fill_rule, group_transform) = match fill {
+                    Some((paint, alpha, rule, gt)) => (Some(paint), alpha, rule, gt),
+                    None => (None, 1.0, FillRule::NonZero, None),
                 };
                 let (stroke, stroke_alpha, stroke_width, stroke_cap, stroke_join, stroke_miter) =
                     match stroke {
@@ -400,18 +469,63 @@ fn visit_group(
                         }
                         None => (None, 1.0, 0.0, LineCap::Butt, LineJoin::Miter, 4.0),
                     };
-                children.push(VectorNode::Path(VectorPath {
-                    path_data: data,
-                    fill,
-                    fill_alpha,
-                    fill_rule,
-                    stroke,
-                    stroke_alpha,
-                    stroke_width,
-                    stroke_cap,
-                    stroke_join,
-                    stroke_miter,
-                }));
+                if let Some(gt) = group_transform {
+                    let filled_path = VectorPath {
+                        path_data: transformed_path_with(
+                            path,
+                            gt.inv_transform.pre_concat(path.abs_transform()),
+                        ),
+                        fill,
+                        fill_alpha,
+                        fill_rule,
+                        stroke: None,
+                        stroke_alpha: 1.0,
+                        stroke_width: 0.0,
+                        stroke_cap: LineCap::Butt,
+                        stroke_join: LineJoin::Miter,
+                        stroke_miter: 4.0,
+                    };
+                    children.push(VectorNode::Group(VectorGroup {
+                        pivot_x: gt.pivot_x,
+                        pivot_y: gt.pivot_y,
+                        rotation: gt.rotation,
+                        scale_x: gt.scale_x,
+                        scale_y: gt.scale_y,
+                        translate_x: 0.0,
+                        translate_y: 0.0,
+                        children: vec![VectorNode::Path(filled_path)],
+                    }));
+                    metrics.groups += 1;
+                    if stroke.is_some() {
+                        metrics.paths += 1;
+                        metrics.path_commands += data.0.len();
+                        children.push(VectorNode::Path(VectorPath {
+                            path_data: data,
+                            fill: None,
+                            fill_alpha: 1.0,
+                            fill_rule: FillRule::NonZero,
+                            stroke,
+                            stroke_alpha,
+                            stroke_width,
+                            stroke_cap,
+                            stroke_join,
+                            stroke_miter,
+                        }));
+                    }
+                } else {
+                    children.push(VectorNode::Path(VectorPath {
+                        path_data: data,
+                        fill,
+                        fill_alpha,
+                        fill_rule,
+                        stroke,
+                        stroke_alpha,
+                        stroke_width,
+                        stroke_cap,
+                        stroke_join,
+                        stroke_miter,
+                    }));
+                }
             }
             usvg::Node::Image(_) | usvg::Node::Text(_) => {
                 unsupported(
@@ -466,7 +580,7 @@ fn visit_group(
             .map(VectorNode::ClipPath)
             .collect::<Vec<_>>();
         scoped.extend(children);
-        output.push(VectorNode::Group(VectorGroup { children: scoped }));
+        output.push(VectorNode::Group(VectorGroup::new(scoped)));
     }
 }
 
@@ -606,21 +720,28 @@ fn contains_fill_and_stroke(group: &usvg::Group) -> bool {
 
 /// Lower an SVG paint for a path whose geometry is mapped by `transform`.
 ///
-/// Returns the paint and an alpha multiplier the paint contributes to the path.
+/// Returns the paint, an alpha multiplier the paint contributes to the path,
+/// and an optional group transform required for elliptical radial gradients.
 fn lower_paint(
     paint: &usvg::Paint,
     transform: Transform,
+    allow_approximate: bool,
     compatibility: &mut Compatibility,
     diagnostics: &mut Vec<Diagnostic>,
-) -> Option<(Paint, f32)> {
+) -> Option<(Paint, f32, Option<GroupTransform>)> {
     match paint {
-        usvg::Paint::Color(color) => Some((Paint::Solid(rgb(*color)), 1.0)),
+        usvg::Paint::Color(color) => Some((Paint::Solid(rgb(*color)), 1.0, None)),
         usvg::Paint::LinearGradient(gradient) => {
             lower_linear_gradient(gradient, transform, compatibility, diagnostics)
+                .map(|(paint, alpha)| (paint, alpha, None))
         }
-        usvg::Paint::RadialGradient(gradient) => {
-            lower_radial_gradient(gradient, transform, compatibility, diagnostics)
-        }
+        usvg::Paint::RadialGradient(gradient) => lower_radial_gradient(
+            gradient,
+            transform,
+            allow_approximate,
+            compatibility,
+            diagnostics,
+        ),
         usvg::Paint::Pattern(_) => {
             unsupported(
                 compatibility,
@@ -728,57 +849,123 @@ fn serializes_nonzero(value: f32) -> bool {
 
 /// Re-express a radial gradient in viewport coordinates when Android can draw it.
 ///
-/// VectorDrawable radial gradients are circles with a center and radius only,
-/// so a focal point, a focal radius, or a transform that would turn the circle
-/// into an ellipse is rejected.
+/// Circular radial gradients are lowered directly. Elliptical radial gradients
+/// (from non-uniform scale or skew) are emitted as a circular gradient inside
+/// a group scaled by the radii ratio and rotated to match the ellipse, with
+/// the path geometry counter-scaled.
 fn lower_radial_gradient(
     gradient: &usvg::RadialGradient,
     transform: Transform,
+    allow_approximate: bool,
     compatibility: &mut Compatibility,
     diagnostics: &mut Vec<Diagnostic>,
-) -> Option<(Paint, f32)> {
+) -> Option<(Paint, f32, Option<GroupTransform>)> {
     let transform = transform.pre_concat(gradient.transform());
     let stops = gradient_stops(gradient.stops());
     if stops.len() < 2 {
-        return solid_from_last_stop(&stops);
+        return solid_from_last_stop(&stops).map(|(p, a)| (p, a, None));
     }
     let radius = gradient.r().get();
     let focal_offset = (gradient.fx() - gradient.cx()).hypot(gradient.fy() - gradient.cy());
-    if focal_offset > 1.0e-4 * radius || gradient.fr().get() > 0.0 {
-        unsupported(
-            compatibility,
-            diagnostics,
-            DiagnosticCode::UnsupportedGradient,
-            "radial gradients with a focal point cannot be represented by VectorDrawable",
-            "Remove the focal point and focal radius so the gradient is centered.",
-        );
-        return None;
+    let has_focal = focal_offset > 1.0e-4 * radius || gradient.fr().get() > 0.0;
+    if has_focal {
+        if allow_approximate {
+            compatibility.worsen(Compatibility::Approximate);
+            diagnostics.push(Diagnostic {
+                code: DiagnosticCode::UnsupportedGradient,
+                severity: Severity::Warning,
+                message: "radial gradient focal point or focal radius cannot be represented by VectorDrawable; centered at (cx, cy)".to_owned(),
+                location: None,
+                suggestion: Some("Keep the centered gradient or remove the focal point in the SVG.".to_owned()),
+            });
+        } else {
+            unsupported(
+                compatibility,
+                diagnostics,
+                DiagnosticCode::UnsupportedGradient,
+                "radial gradients with a focal point cannot be represented by VectorDrawable",
+                "Pass --allow-approximate to center the focal point, or remove the focal point and focal radius so the gradient is centered.",
+            );
+            return None;
+        }
     }
-    let Some(scale) = similarity_scale(transform) else {
-        unsupported(
-            compatibility,
-            diagnostics,
-            DiagnosticCode::UnsupportedGradient,
-            "elliptical or skewed radial gradients cannot be represented by VectorDrawable",
-            "Make the radial gradient circular, without skew or uneven scale.",
-        );
-        return None;
-    };
-    if !transform.is_identity() {
-        require_normalization(compatibility, diagnostics);
+    if let Some(scale) = similarity_scale(transform) {
+        if !transform.is_identity() {
+            require_normalization(compatibility, diagnostics);
+        }
+        let center = mapped(transform, Point::from_xy(gradient.cx(), gradient.cy()));
+        // Android requires a strictly positive radius; keep it representable.
+        let radius = (radius * scale).max(MINIMUM_EXTENT);
+        return Some((
+            Paint::Radial(RadialGradient {
+                center_x: center.x,
+                center_y: center.y,
+                radius,
+                stops,
+                tile_mode: tile_mode(gradient.spread_method()),
+            }),
+            1.0,
+            None,
+        ));
     }
+
+    // Elliptical radial gradient: decompose into group scale, rotation, and pivot.
+    require_normalization(compatibility, diagnostics);
+
     let center = mapped(transform, Point::from_xy(gradient.cx(), gradient.cy()));
-    // Android requires a strictly positive radius; keep it representable.
-    let radius = (radius * scale).max(MINIMUM_EXTENT);
+    let sx = transform.sx;
+    let ky = transform.ky;
+    let kx = transform.kx;
+    let sy = transform.sy;
+
+    let e = sx * sx + kx * kx;
+    let f = sx * ky + kx * sy;
+    let g = ky * ky + sy * sy;
+
+    let delta = ((e - g) * (e - g) + 4.0 * f * f).sqrt();
+    let lambda1 = 0.5 * (e + g + delta);
+    let lambda2 = (0.5 * (e + g - delta)).max(0.0);
+
+    let sigma1 = lambda1.sqrt();
+    let sigma2 = lambda2.sqrt();
+
+    let a = (radius * sigma1).max(MINIMUM_EXTENT);
+    let b = (radius * sigma2).max(MINIMUM_EXTENT);
+
+    if a <= MINIMUM_EXTENT || b <= MINIMUM_EXTENT {
+        return solid_from_last_stop(&stops).map(|(p, a)| (p, a, None));
+    }
+
+    let theta = 0.5 * (2.0 * f).atan2(e - g);
+    let rotation_deg = theta.to_degrees();
+    let scale_y = (b / a).clamp(MINIMUM_EXTENT, 1.0);
+
+    let group_transform = Transform::from_translate(center.x, center.y)
+        .pre_rotate(rotation_deg)
+        .pre_scale(1.0, scale_y)
+        .pre_translate(-center.x, -center.y);
+
+    let Some(inv_transform) = group_transform.invert() else {
+        return solid_from_last_stop(&stops).map(|(p, a)| (p, a, None));
+    };
+
     Some((
         Paint::Radial(RadialGradient {
             center_x: center.x,
             center_y: center.y,
-            radius,
+            radius: a,
             stops,
             tile_mode: tile_mode(gradient.spread_method()),
         }),
         1.0,
+        Some(GroupTransform {
+            pivot_x: center.x,
+            pivot_y: center.y,
+            rotation: rotation_deg,
+            scale_x: 1.0,
+            scale_y,
+            inv_transform,
+        }),
     ))
 }
 

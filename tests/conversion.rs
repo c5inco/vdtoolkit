@@ -757,18 +757,21 @@ fn lowers_circular_radial_gradients_and_gradient_strokes_under_uniform_scale() {
 
 #[test]
 fn rejects_radial_gradients_android_cannot_draw() {
-    for (name, source) in [
-        (
-            "ellipse from a non-square bounding box",
-            r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><defs><radialGradient id="r"><stop/><stop offset="1" stop-color="#fff"/></radialGradient></defs><rect width="20" height="10" fill="url(#r)"/></svg>"##,
-        ),
-        (
-            "non-uniform gradient transform",
-            r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><defs><radialGradient id="r" gradientUnits="userSpaceOnUse" cx="12" cy="12" r="6" gradientTransform="scale(2 1)"><stop/><stop offset="1" stop-color="#fff"/></radialGradient></defs><path d="M0 0H24V24H0Z" fill="url(#r)"/></svg>"##,
-        ),
+    for (name, source, code) in [
         (
             "focal radius",
             r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><defs><radialGradient id="r" gradientUnits="userSpaceOnUse" cx="12" cy="12" r="10" fr="2"><stop/><stop offset="1" stop-color="#fff"/></radialGradient></defs><path d="M0 0H24V24H0Z" fill="url(#r)"/></svg>"##,
+            DiagnosticCode::UnsupportedGradient,
+        ),
+        (
+            "focal offset without --allow-approximate",
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><defs><radialGradient id="r" gradientUnits="userSpaceOnUse" cx="12" cy="12" r="10" fx="8" fy="8"><stop/><stop offset="1" stop-color="#fff"/></radialGradient></defs><path d="M0 0H24V24H0Z" fill="url(#r)"/></svg>"##,
+            DiagnosticCode::UnsupportedGradient,
+        ),
+        (
+            "stroke using an elliptical radial gradient",
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><defs><radialGradient id="r" gradientUnits="userSpaceOnUse" cx="12" cy="12" r="6" gradientTransform="scale(2 1)"><stop/><stop offset="1" stop-color="#fff"/></radialGradient></defs><path d="M0 0H24V24H0Z" stroke="url(#r)" stroke-width="2"/></svg>"##,
+            DiagnosticCode::UnsupportedGradient,
         ),
     ] {
         let analysis = vdtoolkit::analyze(source.as_bytes()).unwrap();
@@ -777,10 +780,152 @@ fn rejects_radial_gradients_android_cannot_draw() {
             analysis
                 .diagnostics
                 .iter()
-                .any(|diagnostic| matches!(diagnostic.code, DiagnosticCode::UnsupportedGradient)),
+                .any(|diagnostic| diagnostic.code == code),
             "{name}"
         );
     }
+}
+
+#[test]
+fn lowers_elliptical_radial_gradients_via_group_transform() {
+    // 1. Non-square bounding box
+    let bbox_source = r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <defs><radialGradient id="r"><stop offset="0%" stop-color="#fff"/><stop offset="100%" stop-color="#000"/></radialGradient></defs>
+        <rect width="20" height="10" fill="url(#r)"/>
+    </svg>"##;
+    let asset = vdtoolkit::convert(bbox_source.as_bytes()).unwrap();
+    assert_eq!(asset.analysis.compatibility, Compatibility::ExactWithNormalization);
+    let xml = asset.to_xml();
+    assert!(xml.contains("<group"), "XML should contain group: {xml}");
+    assert!(xml.contains("android:scaleY="), "Group should scale Y: {xml}");
+    assert!(xml.contains("android:pivotX="), "Group should specify pivot: {xml}");
+    roxmltree::Document::parse(&xml).unwrap();
+
+    // 2. Non-uniform gradient transform
+    let xform_source = r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <defs><radialGradient id="r" gradientUnits="userSpaceOnUse" cx="12" cy="12" r="6" gradientTransform="scale(2 1)">
+            <stop offset="0%" stop-color="#fff"/><stop offset="100%" stop-color="#000"/>
+        </radialGradient></defs>
+        <path d="M0 0H24V24H0Z" fill="url(#r)"/>
+    </svg>"##;
+    let asset = vdtoolkit::convert(xform_source.as_bytes()).unwrap();
+    assert_eq!(asset.analysis.compatibility, Compatibility::ExactWithNormalization);
+    let xml = asset.to_xml();
+    assert!(xml.contains("<group"), "XML should contain group: {xml}");
+    assert!(xml.contains("android:scaleY="), "Group should scale Y: {xml}");
+    roxmltree::Document::parse(&xml).unwrap();
+
+    // 3. Rotated ellipse
+    let rot_source = r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <defs><radialGradient id="r" gradientUnits="userSpaceOnUse" cx="12" cy="12" r="6" gradientTransform="rotate(45 12 12) scale(2 1)">
+            <stop offset="0%" stop-color="#fff"/><stop offset="100%" stop-color="#000"/>
+        </radialGradient></defs>
+        <path d="M0 0H24V24H0Z" fill="url(#r)"/>
+    </svg>"##;
+    let asset = vdtoolkit::convert(rot_source.as_bytes()).unwrap();
+    assert_eq!(asset.analysis.compatibility, Compatibility::ExactWithNormalization);
+    let xml = asset.to_xml();
+    assert!(xml.contains("android:rotation="), "Group should specify rotation: {xml}");
+    roxmltree::Document::parse(&xml).unwrap();
+}
+
+#[test]
+fn radial_gradient_focal_offset_converts_with_allow_approximate() {
+    let source = r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <defs><radialGradient id="r" gradientUnits="userSpaceOnUse" cx="12" cy="12" r="10" fx="8" fy="8">
+            <stop offset="0%" stop-color="#fff"/><stop offset="100%" stop-color="#000"/>
+        </radialGradient></defs>
+        <path d="M0 0H24V24H0Z" fill="url(#r)"/>
+    </svg>"##;
+
+    // By default, rejected
+    let default_analysis = vdtoolkit::analyze(source.as_bytes()).unwrap();
+    assert_eq!(default_analysis.compatibility, Compatibility::Unsupported);
+    assert!(default_analysis.diagnostics.iter().any(|d| d.code == DiagnosticCode::UnsupportedGradient));
+    assert!(vdtoolkit::convert(source.as_bytes()).is_err());
+
+    // With allow_approximate, succeeds with warning and approximate compatibility
+    let approx_analysis = vdtoolkit::analyze_with_options(source.as_bytes(), true).unwrap();
+    assert_eq!(approx_analysis.compatibility, Compatibility::Approximate);
+    assert!(approx_analysis.diagnostics.iter().any(|d| d.code == DiagnosticCode::UnsupportedGradient && matches!(d.severity, Severity::Warning)));
+
+    let asset = vdtoolkit::convert_with_options(source.as_bytes(), true).unwrap();
+    assert_eq!(asset.analysis.compatibility, Compatibility::Approximate);
+    let xml = asset.to_xml();
+    roxmltree::Document::parse(&xml).unwrap();
+    assert!(xml.contains("android:gradientRadius="));
+}
+
+#[test]
+fn elliptical_radial_fill_with_stroke_splits_into_group_and_path() {
+    let source = r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <defs><radialGradient id="r" gradientUnits="userSpaceOnUse" cx="12" cy="12" r="6" gradientTransform="scale(2 1)">
+            <stop offset="0%" stop-color="#fff"/><stop offset="100%" stop-color="#000"/>
+        </radialGradient></defs>
+        <path d="M2 2H22V22H2Z" fill="url(#r)" stroke="#ff0000" stroke-width="2"/>
+    </svg>"##;
+
+    let asset = vdtoolkit::convert(source.as_bytes()).unwrap();
+    let xml = asset.to_xml();
+    roxmltree::Document::parse(&xml).unwrap();
+
+    // Group wraps fill path
+    assert!(xml.contains("<group"), "XML should contain group: {xml}");
+    assert!(xml.contains("android:scaleY="), "Group should scale Y: {xml}");
+    // Sibling path contains stroke
+    assert!(xml.contains("android:strokeColor=\"#FF0000\""), "Should have stroke path: {xml}");
+    assert!(xml.contains("android:strokeWidth=\"2\""), "Stroke width should be unscaled: {xml}");
+}
+
+#[test]
+fn cli_allow_approximate_converts_radial_gradient_focal_offset() {
+    let temp = tempfile::tempdir().unwrap();
+    let input = temp.path().join("focal.svg");
+    let output = temp.path().join("focal.xml");
+    fs::write(
+        &input,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+            <defs><radialGradient id="r" gradientUnits="userSpaceOnUse" cx="12" cy="12" r="10" fx="8" fy="8">
+                <stop offset="0%" stop-color="#fff"/><stop offset="100%" stop-color="#000"/>
+            </radialGradient></defs>
+            <path d="M0 0H24V24H0Z" fill="url(#r)"/>
+        </svg>"##,
+    )
+    .unwrap();
+
+    // Without --allow-approximate, check fails with code 2 and convert fails
+    let check = Command::new(env!("CARGO_BIN_EXE_vdt"))
+        .args(["check", input.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert_eq!(check.status.code(), Some(2));
+
+    let convert_fail = Command::new(env!("CARGO_BIN_EXE_vdt"))
+        .args([input.to_str().unwrap(), "-o", output.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(!convert_fail.status.success());
+
+    // With --allow-approximate, check succeeds (exit 0) and convert succeeds
+    let check_approx = Command::new(env!("CARGO_BIN_EXE_vdt"))
+        .args(["check", input.to_str().unwrap(), "--allow-approximate"])
+        .output()
+        .unwrap();
+    assert_eq!(check_approx.status.code(), Some(0));
+
+    let convert_ok = Command::new(env!("CARGO_BIN_EXE_vdt"))
+        .args([
+            input.to_str().unwrap(),
+            "--allow-approximate",
+            "-o",
+            output.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(convert_ok.status.success(), "{:?}", convert_ok.stderr);
+    let stderr = String::from_utf8(convert_ok.stderr).unwrap();
+    assert!(stderr.contains("SVGVD003"));
+    assert!(output.is_file());
 }
 
 #[test]

@@ -36,7 +36,10 @@ fn draw_nodes(
                 let mask = narrow(pixmap, clip, data, transform);
                 local = Some(mask);
             }
-            VectorNode::Group(group) => draw_nodes(pixmap, &group.children, transform, clip),
+            VectorNode::Group(group) => {
+                let group_transform = transform.pre_concat(group.transform());
+                draw_nodes(pixmap, &group.children, group_transform, clip);
+            }
             VectorNode::Path(path) => draw_path(pixmap, path, transform, clip),
         }
     }

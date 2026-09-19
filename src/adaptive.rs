@@ -229,7 +229,13 @@ pub(crate) fn fit_square(drawable: &mut VectorDrawable, canvas: f32, fit: Fit) {
 fn transform_nodes(nodes: &mut [VectorNode], scale: f32, dx: f32, dy: f32) {
     for node in nodes {
         match node {
-            VectorNode::Group(group) => transform_nodes(&mut group.children, scale, dx, dy),
+            VectorNode::Group(group) => {
+                group.pivot_x = group.pivot_x * scale + dx;
+                group.pivot_y = group.pivot_y * scale + dy;
+                group.translate_x *= scale;
+                group.translate_y *= scale;
+                transform_nodes(&mut group.children, scale, dx, dy);
+            }
             VectorNode::ClipPath(path_data) => transform_path_data(path_data, scale, dx, dy),
             VectorNode::Path(path) => {
                 transform_path_data(&mut path.path_data, scale, dx, dy);
@@ -368,7 +374,7 @@ pub(crate) fn legacy_icon(
         let mut nodes = layer.children.clone();
         transform_nodes(&mut nodes, scale, offset, offset);
         if contains_clip(&nodes) {
-            children.push(VectorNode::Group(VectorGroup { children: nodes }));
+            children.push(VectorNode::Group(VectorGroup::new(nodes)));
         } else {
             children.extend(nodes);
         }

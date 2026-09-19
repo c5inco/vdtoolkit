@@ -11,7 +11,11 @@ pub(crate) struct Processed {
     pub declared_size: bool,
 }
 
-pub(crate) fn process(source: &[u8], keep_drawable: bool) -> Result<Processed> {
+pub(crate) fn process(
+    source: &[u8],
+    keep_drawable: bool,
+    allow_approximate: bool,
+) -> Result<Processed> {
     let text = std::str::from_utf8(source)?;
     reject_unsafe_xml(text)?;
     let document = roxmltree::Document::parse(text)?;
@@ -48,11 +52,17 @@ pub(crate) fn process(source: &[u8], keep_drawable: bool) -> Result<Processed> {
         &options,
     )?;
     let mut metrics = Metrics::default();
-    let drawable = vector::lower(&tree, &mut compatibility, &mut diagnostics, &mut metrics);
+    let drawable = vector::lower(
+        &tree,
+        allow_approximate,
+        &mut compatibility,
+        &mut diagnostics,
+        &mut metrics,
+    );
     if let Some(ref drawable) = drawable {
         metrics.estimated_xml_bytes = crate::xml::write(drawable, false).len();
     }
-    let minimum_api = if compatibility.convertible() {
+    let minimum_api = if compatibility.is_convertible(allow_approximate) {
         diagnostics.extend(drawable.as_ref().and_then(vector::api_level_note));
         drawable.as_ref().map(VectorDrawable::minimum_api)
     } else {
@@ -464,7 +474,7 @@ mod tests {
 
     #[test]
     fn rejects_doctype_before_xml_parser() {
-        let error = process(b"<!DOCTYPE svg><svg/>", false).err().unwrap();
+        let error = process(b"<!DOCTYPE svg><svg/>", false, false).err().unwrap();
         assert!(matches!(error, Error::UnsafeXml(_)));
     }
 
@@ -474,7 +484,7 @@ mod tests {
             <filter id="blur"><feGaussianBlur stdDeviation="2"/></filter>
             <path d="M0 0h1v1z" filter="url(#blur)"/>
         </svg>"#;
-        let analysis = process(source, false).unwrap().analysis;
+        let analysis = process(source, false, false).unwrap().analysis;
         assert_eq!(analysis.compatibility, Compatibility::Unsupported);
         assert!(
             analysis
@@ -491,7 +501,7 @@ mod tests {
             r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M0 0L1 1" fill="url(https://example.com/colors.svg#red)"/></svg>"##,
         ] {
             assert_eq!(
-                process(source.as_bytes(), false)
+                process(source.as_bytes(), false, false)
                     .unwrap()
                     .analysis
                     .compatibility,

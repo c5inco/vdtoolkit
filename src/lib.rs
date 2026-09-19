@@ -528,6 +528,11 @@ pub fn convert_file(path: &Path) -> Result<Asset> {
 /// Convert SVG bytes exactly or with safe normalization.
 #[doc(hidden)]
 pub fn convert(source: &[u8]) -> Result<Asset> {
+    if bitmap::ImageFormat::sniff(source).is_some() {
+        return Err(Error::InvalidInput(
+            "this is a raster image, not an SVG".to_owned(),
+        ));
+    }
     let processed = svg::process(source, true)?;
     if !processed.analysis.compatibility.convertible() {
         return Err(Error::Incompatible(Box::new(processed.analysis)));

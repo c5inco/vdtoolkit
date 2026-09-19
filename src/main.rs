@@ -352,7 +352,7 @@ fn notification(args: NotificationArgs) -> Result<Outcome> {
 }
 
 fn notification_one(args: &NotificationArgs, input: &Path, output: Option<Output>) -> Result<()> {
-    let mut asset = vdtoolkit::convert_file(input)?;
+    let mut asset = vdtoolkit::convert_file(input).map_err(hint_raster_convert)?;
     if args.strict && asset.analysis.compatibility != Compatibility::Exact {
         return Err(Error::InvalidInput(
             "requires normalization and was rejected by --strict".to_owned(),
@@ -1047,7 +1047,7 @@ fn convert_one(
     output: Option<Output>,
     optimize: bool,
 ) -> Result<()> {
-    let mut asset = vdtoolkit::convert_file(input)?;
+    let mut asset = vdtoolkit::convert_file(input).map_err(hint_raster_convert)?;
     if args.strict && asset.analysis.compatibility != Compatibility::Exact {
         return Err(Error::InvalidInput(
             "requires normalization and was rejected by --strict".to_owned(),
@@ -1396,6 +1396,19 @@ fn hint_raster_inspect(error: Error) -> Error {
             Error::InvalidInput(format!(
                 "{message}; pass --as adaptive-foreground or --as adaptive-background to inspect \
                  it as an adaptive layer"
+            ))
+        }
+        error => error,
+    }
+}
+
+/// Point conversion commands at the adaptive image options and at inspect.
+fn hint_raster_convert(error: Error) -> Error {
+    match error {
+        Error::InvalidInput(message) if message == "this is a raster image, not an SVG" => {
+            Error::InvalidInput(format!(
+                "{message}; pass it to adaptive with --foreground-image or --background-image, \
+                 or use inspect --as adaptive-foreground or --as adaptive-background"
             ))
         }
         error => error,

@@ -7,8 +7,8 @@ use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 use unicode_normalization::UnicodeNormalization;
 use vdtoolkit::{
-    Analysis, Asset, Compatibility, Diagnostic, DiagnosticCode, Error, Fit, FitMode, IconKind,
-    Result, Severity,
+    Analysis, Asset, Bounds, Compatibility, Diagnostic, DiagnosticCode, Error, Fit, FitMode,
+    IconKind, ImageFormat, Metrics, Result, Severity,
 };
 use walkdir::WalkDir;
 
@@ -252,8 +252,59 @@ struct FileAnalysis<'a> {
     path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     icon: Option<IconTarget>,
-    #[serde(flatten)]
-    analysis: &'a Analysis,
+    compatibility: Compatibility,
+    minimum_api: Option<u32>,
+    diagnostics: &'a [Diagnostic],
+    metrics: ReportMetrics<'a>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    image: Option<ImageFormat>,
+}
+
+impl<'a> FileAnalysis<'a> {
+    fn new(path: String, icon: Option<IconTarget>, analysis: &'a Analysis) -> Self {
+        let raster = analysis.image.is_some();
+        Self {
+            path,
+            icon: icon.filter(|_| !raster),
+            compatibility: analysis.compatibility,
+            minimum_api: analysis.minimum_api,
+            diagnostics: &analysis.diagnostics,
+            metrics: if raster {
+                ReportMetrics::Raster(RasterMetrics::from(&analysis.metrics))
+            } else {
+                ReportMetrics::Vector(&analysis.metrics)
+            },
+            image: analysis.image,
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+enum ReportMetrics<'a> {
+    Vector(&'a Metrics),
+    Raster(RasterMetrics<'a>),
+}
+
+#[derive(Serialize)]
+struct RasterMetrics<'a> {
+    width: f32,
+    height: f32,
+    viewport_width: f32,
+    viewport_height: f32,
+    content_bounds: &'a Option<Bounds>,
+}
+
+impl<'a> From<&'a Metrics> for RasterMetrics<'a> {
+    fn from(metrics: &'a Metrics) -> Self {
+        Self {
+            width: metrics.width,
+            height: metrics.height,
+            viewport_width: metrics.viewport_width,
+            viewport_height: metrics.viewport_height,
+            content_bounds: &metrics.content_bounds,
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -1196,11 +1247,11 @@ fn report(args: ReportArgs, inspect: bool) -> Result<Outcome> {
             let values: Vec<_> = reports
                 .iter()
                 .map(|(path, result)| match result {
-                    Ok(analysis) => ReportEntry::Analysis(FileAnalysis {
-                        path: path.display().to_string(),
+                    Ok(analysis) => ReportEntry::Analysis(FileAnalysis::new(
+                        path.display().to_string(),
                         icon,
                         analysis,
-                    }),
+                    )),
                     Err(error) => ReportEntry::Failed(FileFailure {
                         path: path.display().to_string(),
                         error: error.to_string(),

@@ -3646,13 +3646,25 @@ fn cli_inspect_as_reports_raster_foreground_findings_without_writing() {
     assert_eq!(code, Some(0), "{stdout}");
     let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(report[0]["image"], "webp");
-    assert_eq!(
-        report[0]["icon"],
-        serde_json::json!({"kind": "adaptive-foreground", "fit": 66.0, "fit_mode": "contain"})
-    );
+    assert!(report[0].get("icon").is_none(), "{stdout}");
     assert!(json_codes(&stdout).is_empty(), "{stdout}");
     assert_eq!(report[0]["metrics"]["width"], 432.0);
+    assert_eq!(report[0]["metrics"]["height"], 432.0);
     assert_eq!(report[0]["metrics"]["viewport_width"], 108.0);
+    assert_eq!(report[0]["metrics"]["viewport_height"], 108.0);
+    for vector_metric in [
+        "paths",
+        "path_commands",
+        "groups",
+        "gradients",
+        "clip_paths",
+        "estimated_xml_bytes",
+    ] {
+        assert!(
+            report[0]["metrics"].get(vector_metric).is_none(),
+            "{vector_metric} in {stdout}"
+        );
+    }
     assert_eq!(report[0]["compatibility"], "not_applicable");
     assert!(report[0]["minimum_api"].is_null());
     let bounds = &report[0]["metrics"]["content_bounds"];

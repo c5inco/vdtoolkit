@@ -115,18 +115,20 @@ would, without writing anything. The kinds are `notification`,
 whole canvas, and `--background-fit` mirrors the generator's option for
 `--as adaptive-background`. A PNG, WebP, or JPEG is inspected as an adaptive
 layer image, the way `--foreground-image` and `--background-image` are, with
-`--fit` recorded but unused because a raster layer is placed, never resampled.
+`--fit` unused because a raster layer is placed, never resampled.
 A raster foreground can raise `SVGVD018`, `SVGVD019`, `SVGVD024`, `SVGVD025`,
 and `SVGVD026`; a raster background can raise `SVGVD020`, `SVGVD024`, and
 `SVGVD025`. The report's metrics describe the fitted vector or the image on
-the 108dp layer, and in JSON an `icon` object names the kind and fit. A raster
-entry also carries `image`: `png`, `webp`, or `jpg`. Then `metrics.width` and
-`metrics.height` are pixels, `content_bounds` and `viewport_*` are dp on the
-108dp layer, and `compatibility` is `not_applicable` because a raster layer is
-not a VectorDrawable. A raster *file* without `--as`, or with
-`--as notification`, is refused; a directory with `--as notification` still
-keeps only SVGs, and a directory with `--as adaptive-foreground` skips JPEGs
-the same way. These findings are warnings and notes.
+the 108dp layer. In JSON, a vector entry has an `icon` object naming its kind
+and fit. A raster entry omits that unused object and carries `image`: `png`,
+`webp`, or `jpg`. Its metrics contain pixel `width` and `height`, plus
+`content_bounds` and `viewport_*` in dp on the 108dp layer; vector-only counts
+and estimated XML size are omitted. Its `compatibility` is `not_applicable`
+because a raster layer is not a VectorDrawable. A raster *file* without
+`--as`, or with `--as notification`, is refused; a directory with
+`--as notification` still keeps only SVGs, and a directory with
+`--as adaptive-foreground` skips JPEGs the same way. These findings are
+warnings and notes.
 
 ```sh
 vdt inspect icons/ --as notification --format json

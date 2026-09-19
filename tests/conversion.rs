@@ -89,11 +89,52 @@ fn cli_conversion_commands_refuse_rasters_with_cli_only_guidance() {
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(
-        String::from_utf8(output.stderr)
-            .unwrap()
-            .contains("this is a raster image, not an SVG")
+        stderr.contains("this is a raster image, not an SVG")
+            && stderr.contains("--foreground-image")
+            && stderr.contains("inspect --as adaptive-foreground"),
+        "{stderr}"
     );
+}
+
+#[test]
+fn cli_adaptive_redirects_rasters_from_vector_to_image_flags() {
+    let temp = tempfile::tempdir().unwrap();
+    let raster = temp.path().join("logo.png");
+    fs::write(&raster, b"\x89PNG\r\n\x1a\n").unwrap();
+    let vector = temp.path().join("logo.svg");
+    fs::write(
+        &vector,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M2 2H22V22H2Z"/></svg>"##,
+    )
+    .unwrap();
+
+    for (flag, image_flag, extra) in [
+        ("--foreground", "--foreground-image", None),
+        ("--background", "--background-image", Some("--foreground")),
+        ("--monochrome", "--monochrome-image", Some("--foreground")),
+    ] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_vdt"));
+        command.arg("adaptive").arg(flag).arg(&raster);
+        if let Some(extra) = extra {
+            command.arg(extra).arg(&vector);
+        }
+        if flag == "--background" {
+            command.arg("-o").arg(temp.path().join("background-res"));
+        } else {
+            command
+                .args(["--background-color", "#FFFFFF", "-o"])
+                .arg(temp.path().join(format!("{}-res", &flag[2..])));
+        }
+        let output = command.output().unwrap();
+        assert_eq!(output.status.code(), Some(1), "{flag}: {output:?}");
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(
+            stderr.contains("this is a raster image, not an SVG") && stderr.contains(image_flag),
+            "{flag}: {stderr}"
+        );
+    }
 }
 
 #[test]

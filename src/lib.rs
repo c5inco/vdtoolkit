@@ -440,9 +440,7 @@ pub fn analyze_file(path: &Path) -> Result<Analysis> {
 pub fn analyze(source: &[u8]) -> Result<Analysis> {
     if bitmap::ImageFormat::sniff(source).is_some() {
         return Err(Error::InvalidInput(
-            "this is a raster image, not an SVG; pass --as adaptive-foreground or \
-             --as adaptive-background to inspect it as an adaptive layer"
-                .to_owned(),
+            "this is a raster image, not an SVG".to_owned(),
         ));
     }
     Ok(svg::process(source, false)?.analysis)
@@ -513,7 +511,7 @@ fn analyze_layer_as(source: &[u8], kind: IconKind) -> Result<Analysis> {
             content_bounds: image.content,
             ..Metrics::default()
         },
-        image: Some(image.format.extension().to_owned()),
+        image: Some(image.format),
     })
 }
 

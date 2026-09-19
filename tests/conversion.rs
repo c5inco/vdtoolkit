@@ -3706,7 +3706,12 @@ fn cli_inspect_as_reports_raster_foreground_findings_without_writing() {
         "jpg"
     );
 
-    // Without --as, a raster file is not an SVG.
+    // Without --as, a raster file is not an SVG. The --as hint is CLI-only:
+    // analyze() itself does not name flags the WASM binding cannot pass.
+    assert!(matches!(
+        vdtoolkit::analyze(&fs::read(&inside).unwrap()),
+        Err(Error::InvalidInput(message)) if message == "this is a raster image, not an SVG"
+    ));
     let (code, stdout, stderr) = inspect(&["inspect", "--format", "json"], &inside);
     assert_eq!(code, Some(1), "{stdout}\n{stderr}");
     assert!(
@@ -3755,6 +3760,28 @@ fn cli_inspect_as_reports_raster_foreground_findings_without_writing() {
             .unwrap()
             .iter()
             .any(|diagnostic| diagnostic["code"] == "SVGVD019")
+    );
+
+    // --as notification on a directory still keeps only SVGs; the WebP is not
+    // refused, it is skipped.
+    let (code, stdout, _) = inspect(
+        &["inspect", "--as", "notification", "--format", "json"],
+        &mixed,
+    );
+    assert_eq!(code, Some(0), "{stdout}");
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let entries = report.as_array().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert!(entries[0]["path"].as_str().unwrap().ends_with("logo.svg"));
+
+    // An empty tree with --as adaptive-foreground names layer images, not SVGs.
+    let empty_dir = temp.path().join("empty");
+    fs::create_dir(&empty_dir).unwrap();
+    let (code, _, stderr) = inspect(&["inspect", "--as", "adaptive-foreground"], &empty_dir);
+    assert_eq!(code, Some(1), "{stderr}");
+    assert!(
+        stderr.contains("no SVG or layer image files found"),
+        "{stderr}"
     );
 }
 

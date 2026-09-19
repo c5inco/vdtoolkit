@@ -1,5 +1,7 @@
 use serde::Serialize;
 
+use crate::bitmap::ImageFormat;
+
 /// How faithfully an SVG can be represented as a VectorDrawable.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -34,17 +36,20 @@ pub struct Analysis {
     pub metrics: Metrics,
     /// Raster format when this analysis is of a layer image rather than an SVG.
     ///
-    /// `"png"`, `"webp"`, or `"jpg"`. Omitted from JSON for SVG input.
+    /// `"png"`, `"webp"`, or `"jpg"`. Omitted from JSON for SVG input. When
+    /// present, [`Metrics::width`] and [`Metrics::height`] are pixels.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub image: Option<String>,
+    pub image: Option<ImageFormat>,
 }
 
 /// Measurements collected while analyzing an SVG.
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct Metrics {
-    /// Normalized drawable width.
+    /// Normalized drawable width in dp, or pixel width when [`Analysis::image`]
+    /// is set.
     pub width: f32,
-    /// Normalized drawable height.
+    /// Normalized drawable height in dp, or pixel height when
+    /// [`Analysis::image`] is set.
     pub height: f32,
     /// VectorDrawable viewport width.
     pub viewport_width: f32,

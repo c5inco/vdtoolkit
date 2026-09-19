@@ -1132,9 +1132,15 @@ fn report(args: ReportArgs, inspect: bool) -> Result<Outcome> {
         args.as_kind,
         Some(IconKindArg::AdaptiveForeground | IconKindArg::AdaptiveBackground)
     );
-    let inputs = collect_inputs(&args.input, |path| {
-        is_svg(path) || (adaptive_layer && is_layer_image(path))
-    })?;
+    let inputs = collect_inputs(
+        &args.input,
+        |path| is_svg(path) || (adaptive_layer && is_layer_image(path)),
+        if adaptive_layer {
+            "SVG or layer image files"
+        } else {
+            "SVG files"
+        },
+    )?;
     if args.background_fit.is_some()
         && !matches!(args.as_kind, Some(IconKindArg::AdaptiveBackground))
     {
@@ -1163,7 +1169,7 @@ fn report(args: ReportArgs, inspect: bool) -> Result<Outcome> {
     for input in &inputs {
         let result = match icon {
             Some(icon) => vdtoolkit::analyze_file_as(input, icon.kind, icon.placement()),
-            None => vdtoolkit::analyze_file(input),
+            None => vdtoolkit::analyze_file(input).map_err(hint_raster_inspect),
         };
         match &result {
             Ok(analysis) => {
@@ -1292,8 +1298,8 @@ fn print_human(analysis: &Analysis, inspect: bool) {
         }
     }
     if raster {
-        if let Some(format) = &analysis.image {
-            println!("Format: {format}");
+        if let Some(format) = analysis.image {
+            println!("Format: {}", format.extension());
         }
     } else {
         println!("Compatibility: {:?}", analysis.compatibility);
@@ -1330,10 +1336,10 @@ fn print_summary(reports: &[(&PathBuf, Result<Analysis>)]) {
 }
 
 fn inputs(path: &Path) -> Result<Vec<PathBuf>> {
-    collect_inputs(path, is_svg)
+    collect_inputs(path, is_svg, "SVG files")
 }
 
-fn collect_inputs(path: &Path, keep: impl Fn(&Path) -> bool) -> Result<Vec<PathBuf>> {
+fn collect_inputs(path: &Path, keep: impl Fn(&Path) -> bool, what: &str) -> Result<Vec<PathBuf>> {
     if path.is_file() {
         return Ok(vec![path.to_owned()]);
     }
@@ -1353,11 +1359,24 @@ fn collect_inputs(path: &Path, keep: impl Fn(&Path) -> bool) -> Result<Vec<PathB
     files.sort();
     if files.is_empty() {
         return Err(Error::InvalidInput(format!(
-            "no SVG files found in {}",
+            "no {what} found in {}",
             path.display()
         )));
     }
     Ok(files)
+}
+
+/// Point inspect/check at `--as` when a raster file is given without a kind.
+fn hint_raster_inspect(error: Error) -> Error {
+    match error {
+        Error::InvalidInput(message) if message == "this is a raster image, not an SVG" => {
+            Error::InvalidInput(format!(
+                "{message}; pass --as adaptive-foreground or --as adaptive-background to inspect \
+                 it as an adaptive layer"
+            ))
+        }
+        error => error,
+    }
 }
 
 fn is_svg(path: &Path) -> bool {

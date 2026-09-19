@@ -47,7 +47,8 @@ pub enum ImageFormat {
     /// WebP, which Android draws from API 14 and the build tools prefer.
     Webp,
     /// JPEG, which has no alpha channel, so it can only ever be an opaque
-    /// background.
+    /// background. Serialized as `"jpg"`, the extension Android writes.
+    #[serde(rename = "jpg")]
     Jpeg,
 }
 

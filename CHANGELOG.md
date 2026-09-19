@@ -14,10 +14,11 @@ follow [Semantic Versioning](https://semver.org/).
   `--background-image` would, without writing anything. A directory mixes
   SVGs and layer images. `--fit` is recorded on the JSON `icon` object but
   does not place a raster layer, which is copied, never resampled. A JPEG
-  foreground is still rejected (no alpha). Without `--as`, or with
-  `--as notification`, a raster file is refused rather than parsed as SVG.
-  The JSON report gains an `image` field (`png`, `webp`, or `jpg`) on those
-  entries.
+  foreground is still rejected (no alpha). A raster file argument without
+  `--as`, or with `--as notification`, is refused rather than parsed as SVG;
+  a directory with `--as notification` still keeps only SVGs. The JSON
+  report gains an `image` field (`png`, `webp`, or `jpg`) on those entries,
+  and `metrics.width` / `height` are then pixels of the image, not dp.
 
 ## [0.4.0] - 2026-09-18
 

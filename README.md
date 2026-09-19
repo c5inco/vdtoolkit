@@ -114,13 +114,17 @@ would, without writing anything. The kinds are `notification`,
 `adaptive-background`; `--fit <dp>` is the generator's fit and defaults to the
 whole canvas, and `--background-fit` mirrors the generator's option for
 `--as adaptive-background`. A PNG, WebP, or JPEG is inspected as an adaptive
-layer image, the way `--foreground-image` and `--background-image` are: the
-same `SVGVD018`–`SVGVD026` findings, with `--fit` recorded but unused because
-a raster layer is placed, never resampled. The report's metrics describe the
-fitted vector or the image on the 108dp layer, and in JSON an `icon` object
-names the kind and fit. A raster entry also carries `image`: `png`, `webp`,
-or `jpg`. Compatibility and the exit code are unchanged: these findings are
-warnings and notes.
+layer image, the way `--foreground-image` and `--background-image` are, with
+`--fit` recorded but unused because a raster layer is placed, never resampled.
+A raster foreground can raise `SVGVD018`, `SVGVD019`, `SVGVD024`, `SVGVD025`,
+and `SVGVD026`; a raster background can raise `SVGVD020`, `SVGVD024`, and
+`SVGVD025`. The report's metrics describe the fitted vector or the image on
+the 108dp layer, and in JSON an `icon` object names the kind and fit. A raster
+entry also carries `image`: `png`, `webp`, or `jpg`, and then `metrics.width`
+and `metrics.height` are pixels. A raster *file* without `--as`, or with
+`--as notification`, is refused; a directory with `--as notification` still
+keeps only SVGs. Compatibility and the exit code are unchanged: these findings
+are warnings and notes.
 
 ```sh
 vdt inspect icons/ --as notification --format json

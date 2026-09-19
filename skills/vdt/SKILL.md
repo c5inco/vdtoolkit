@@ -13,8 +13,10 @@ exactly is rejected with a diagnostic code instead of being approximated.
 Prefer it over writing `<vector>` XML by hand: hand-written conversions of real
 artwork are usually wrong in ways that only show on a device.
 
-It only reads SVG. It does not take PNG, WebP, or JPEG, read existing
-VectorDrawable XML, or make iOS or web assets.
+Convert, optimize, notification, and inspect without `--as` only read SVG.
+`adaptive` and `inspect`/`check --as adaptive-foreground` or
+`--as adaptive-background` also take PNG, WebP, or JPEG as layer images.
+It does not read existing VectorDrawable XML, or make iOS or web assets.
 
 ## Before you start
 

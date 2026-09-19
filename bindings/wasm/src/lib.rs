@@ -71,6 +71,7 @@ export interface Analysis {
   minimum_api: number | null;
   diagnostics: Diagnostic[];
   metrics: Metrics;
+  image?: "png" | "webp" | "jpg";
 }
 
 export interface VdtoolkitError {

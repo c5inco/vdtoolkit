@@ -1179,7 +1179,9 @@ fn report(args: ReportArgs, inspect: bool) -> Result<Outcome> {
                 passed &= if args.strict {
                     analysis.compatibility == Compatibility::Exact
                 } else {
-                    analysis.compatibility.is_convertible(args.allow_approximate)
+                    analysis
+                        .compatibility
+                        .is_convertible(args.allow_approximate)
                 };
             }
             Err(_) => failed += 1,
@@ -1218,7 +1220,7 @@ fn report(args: ReportArgs, inspect: bool) -> Result<Outcome> {
                     println!("{}", path.display());
                 }
                 match result {
-                    Ok(analysis) => print_human(analysis, inspect),
+                    Ok(analysis) => print_human(analysis, inspect, args.allow_approximate),
                     Err(error) => println!("✗ Could not analyze: {error}"),
                 }
             }
@@ -1236,17 +1238,16 @@ fn report(args: ReportArgs, inspect: bool) -> Result<Outcome> {
     })
 }
 
-fn print_human(analysis: &Analysis, inspect: bool) {
-    let compatible = analysis.compatibility.convertible();
-    println!(
-        "{} {}",
-        if compatible { "✓" } else { "✗" },
-        if compatible {
-            "VectorDrawable compatible"
-        } else {
-            "Not exactly representable as VectorDrawable"
-        }
-    );
+fn print_human(analysis: &Analysis, inspect: bool, allow_approximate: bool) {
+    let compatible = analysis.compatibility.is_convertible(allow_approximate);
+    let verdict = if !compatible {
+        "Not exactly representable as VectorDrawable"
+    } else if analysis.compatibility == Compatibility::Approximate {
+        "VectorDrawable compatible with --allow-approximate"
+    } else {
+        "VectorDrawable compatible"
+    };
+    println!("{} {}", if compatible { "✓" } else { "✗" }, verdict);
     for diagnostic in &analysis.diagnostics {
         let location = diagnostic
             .location

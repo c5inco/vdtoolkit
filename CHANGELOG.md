@@ -23,6 +23,17 @@ follow [Semantic Versioning](https://semver.org/).
   with off-center focal points (`fx != cx` or `fy != cy`) are centered with
   warning `SVGVD003` and reported as `approximate` compatibility, rather than
   blocking conversion.
+
+### Fixed
+
+- A strongly elliptical radial gradient no longer disappears after `optimize`.
+  Group attributes are rounded to three decimals, so a gradient near 2500:1
+  produced `android:scaleY="0"`, which collapses the group and erases the
+  drawable. The group scale is now clamped to the smallest value that spelling
+  can express, and the gradient radius is derived from the clamped scale so the
+  ellipse's short axis stays exact rather than being stretched to match.
+  Verified on Android across API 21 to 36.
+
 ## [0.4.0] - 2026-09-18
 
 ### Added

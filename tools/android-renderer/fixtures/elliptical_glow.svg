@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+  <!--
+    The kind of elliptical radial gradient a designer actually draws: a soft
+    2:1 glow behind an icon, rotated slightly, on a rounded background. This
+    is the realistic case for elliptical gradient support. It exercises the
+    group lowering (scaleY, rotation, pivot) at an ordinary eccentricity.
+  -->
+  <defs>
+    <radialGradient id="glow" gradientUnits="userSpaceOnUse" cx="12" cy="12" r="11"
+      gradientTransform="rotate(-20 12 12) scale(1 0.5) translate(0 12)">
+      <stop offset="0" stop-color="#FFD54F"/>
+      <stop offset=".55" stop-color="#F4511E"/>
+      <stop offset="1" stop-color="#4A148C"/>
+    </radialGradient>
+  </defs>
+  <rect width="24" height="24" rx="6" fill="url(#glow)"/>
+</svg>

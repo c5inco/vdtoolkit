@@ -530,7 +530,11 @@ pub fn convert(source: &[u8]) -> Result<Asset> {
 #[doc(hidden)]
 pub fn convert_with_options(source: &[u8], allow_approximate: bool) -> Result<Asset> {
     let processed = svg::process(source, true, allow_approximate)?;
-    if !processed.analysis.compatibility.is_convertible(allow_approximate) {
+    if !processed
+        .analysis
+        .compatibility
+        .is_convertible(allow_approximate)
+    {
         return Err(Error::Incompatible(Box::new(processed.analysis)));
     }
     Ok(Asset {

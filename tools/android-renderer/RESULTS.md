@@ -41,6 +41,77 @@ them, and the assertions are placed where a naive endpoint mapping of the
 gradient would paint the wrong color: two samples on the skewed linear fixture
 and the off-center samples on the scaled radial fixture.
 
+## Elliptical radial gradients
+
+Added 2026-09-19. `elliptical_glow.svg` is the realistic case the elliptical
+lowering exists for: a soft 2:1 radial glow, rotated 20 degrees, with a smooth
+three-stop ramp, behind a rounded icon background. It lowers to a `<group>`
+with `scaleY="0.5"`, `rotation="-20"` and a centred pivot. `EllipticalGlowTest`
+renders it through the platform loader, checks that the rounded corners clip,
+that the centre is the warm inner stop, and that the falloff is faster on the
+short axis than the long one, which is what makes it an ellipse rather than a
+circle. `docs/images/elliptical-glow.png` is the device render.
+
+It also compares the `convert` and `optimize` spellings, sampling only fully
+opaque pixels. `optimize` rounds path coordinates to three decimals, which can
+move an antialiased pixel on the corner arc by one coverage step; those are
+exactly the partially transparent pixels, so excluding them compares the
+interior, where a wrong gradient would show, and nothing else.
+
+| Device | API | Result |
+| --- | ---: | --- |
+| Pixel 7 | 21 | passed (verifies the v24 resource is not selectable) |
+| Pixel 7 | 24 | passed |
+| Pixel 7 | 26 | passed |
+| Pixel 7 | 33 | passed |
+| Pixel 7 | 36 | passed |
+
+## Elliptical gradient collapse under `optimize`
+
+Added 2026-09-19 while reviewing elliptical radial gradient support.
+`elliptical_collapse.svg` is a 2500:1 ellipse, converted twice: as `convert`
+emits it, and as `optimize` respells it. `EllipticalCollapseTest` renders both
+through the platform loader and requires identical pixels.
+
+The fixture pre-divides `cx` by the transform's scale so the ellipse lands on
+the canvas rather than far off to the right, and uses two hard stops so the
+banding is assertable. Without that compensation the transform also multiplies
+`cx`, putting the gradient centre at x=30000: every visible pixel then sits
+beyond the radius and clamps to one flat colour, which still reproduces the
+collapse but shows nothing.
+
+The first run reproduced the defect on Pixel 7 / API 33: the plain conversion
+painted all 57600 pixels, the optimized spelling painted 0. `optimize` rounds
+group attributes to three decimals, and this ellipse's `scaleY` of 0.0004
+rounded to `0`, which collapses the group and erases the drawable. The failure
+window is bounded: below roughly 2010:1 the value survives rounding, and above
+roughly 4090:1 the existing `MINIMUM_EXTENT` guard falls back to a solid color.
+
+Clamping `scale_y` alone is not sufficient, and is itself a defect: it stretches
+the ellipse's short axis by the same factor, which is the axis all visible
+banding runs along. The drawable then fills every pixel with the inner band, so
+a painted-pixel assertion still passes while the geometry is wrong. The radius
+is therefore derived from the clamped scale (`b / MINIMUM_GROUP_SCALE`), which
+holds the short axis at exactly `b` and instead shortens the long axis, which
+at these eccentricities already extends far beyond the viewport. The test pins
+the banding down the centre line so that error cannot pass again.
+
+Re-verified with emulator.wtf:
+
+| Device | API | Result |
+| --- | ---: | --- |
+| Pixel 7 | 21 | 16/16 tests passed |
+| Pixel 7 | 24 | 16/16 tests passed |
+| Pixel 7 | 26 | 16/16 tests passed |
+| Pixel 7 | 33 | 16/16 tests passed |
+| Pixel 7 | 36 | 16/16 tests passed |
+
+The test writes a side-by-side PNG to the screenshots directory, so the two
+spellings can be compared directly rather than by reading `scaleY` out of XML.
+Both states are kept in `docs/images/`: `elliptical-collapse-before.png` shows
+the optimized panel empty, and `elliptical-collapse-fixed.png` shows the two
+panels banding identically.
+
 ## Compose renderer
 
 The `compose/` module renders the same generated drawables through Jetpack

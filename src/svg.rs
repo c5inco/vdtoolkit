@@ -474,7 +474,9 @@ mod tests {
 
     #[test]
     fn rejects_doctype_before_xml_parser() {
-        let error = process(b"<!DOCTYPE svg><svg/>", false, false).err().unwrap();
+        let error = process(b"<!DOCTYPE svg><svg/>", false, false)
+            .err()
+            .unwrap();
         assert!(matches!(error, Error::UnsafeXml(_)));
     }
 

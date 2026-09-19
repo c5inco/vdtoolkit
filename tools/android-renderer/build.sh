@@ -44,7 +44,7 @@ done
 rm -rf "$BUILD"
 mkdir -p "$BUILD/generated/res/drawable" "$BUILD/generated/res/drawable-v24" \
   "$BUILD/compiled" "$BUILD/app-classes" "$BUILD/app-dex" \
-  "$BUILD/test-classes" "$BUILD/test-dex"
+  "$BUILD/test-classes" "$BUILD/test-dex" "$BUILD/assets"
 
 cargo build --locked --manifest-path "$ROOT/Cargo.toml"
 for fixture in "$HARNESS"/fixtures/*.svg; do
@@ -58,6 +58,10 @@ for fixture in "$HARNESS"/fixtures/*.svg; do
   esac
   "$ROOT/target/debug/vdt" convert "$fixture" \
     --output "$BUILD/generated/res/$qualifier/$name.xml"
+  # The optimized spelling is what ships. Emitting it alongside the plain
+  # conversion lets a test compare the two on the device itself.
+  "$ROOT/target/debug/vdt" optimize "$fixture" \
+    --output "$BUILD/generated/res/$qualifier/${name}_optimized.xml"
 done
 
 # One pinned Material symbol is rendered side-by-side with its source SVG in a

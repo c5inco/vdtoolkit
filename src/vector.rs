@@ -58,10 +58,13 @@ impl VectorGroup {
         if self.is_identity() {
             return Transform::identity();
         }
-        Transform::from_translate(self.translate_x + self.pivot_x, self.translate_y + self.pivot_y)
-            .pre_rotate(self.rotation)
-            .pre_scale(self.scale_x, self.scale_y)
-            .pre_translate(-self.pivot_x, -self.pivot_y)
+        Transform::from_translate(
+            self.translate_x + self.pivot_x,
+            self.translate_y + self.pivot_y,
+        )
+        .pre_rotate(self.rotation)
+        .pre_scale(self.scale_x, self.scale_y)
+        .pre_translate(-self.pivot_x, -self.pivot_y)
     }
 }
 
@@ -840,6 +843,10 @@ pub const MINIMUM_EXTENT: f32 = 0.000_001;
 /// writer unit even on a diagonal.
 const MINIMUM_AXIS: f32 = 2.0 * MINIMUM_EXTENT;
 
+/// Smallest group scale that survives `optimize`'s three-decimal rounding as
+/// nonzero. A group scaled to zero draws nothing at all.
+const MINIMUM_GROUP_SCALE: f32 = 0.001;
+
 /// Whether a path-level number survives XML serialization as nonzero. Path
 /// alphas and stroke widths are floats in Android, so the writer's own
 /// formatting is the only quantization that applies.
@@ -938,7 +945,21 @@ fn lower_radial_gradient(
 
     let theta = 0.5 * (2.0 * f).atan2(e - g);
     let rotation_deg = theta.to_degrees();
-    let scale_y = (b / a).clamp(MINIMUM_EXTENT, 1.0);
+
+    // `optimize` rounds group attributes to three decimals, so a ratio below
+    // MINIMUM_GROUP_SCALE would round to zero, collapsing the group and
+    // erasing the drawable.
+    //
+    // Clamping the scale alone would stretch the ellipse's short axis, which
+    // is the axis all visible banding runs along. Deriving the radius from the
+    // clamped scale keeps that short axis exactly `b` and instead shortens the
+    // long axis, which at these eccentricities already extends far beyond the
+    // viewport.
+    let (scale_y, radius) = if b / a < MINIMUM_GROUP_SCALE {
+        (MINIMUM_GROUP_SCALE, b / MINIMUM_GROUP_SCALE)
+    } else {
+        ((b / a).min(1.0), a)
+    };
 
     let group_transform = Transform::from_translate(center.x, center.y)
         .pre_rotate(rotation_deg)
@@ -953,7 +974,7 @@ fn lower_radial_gradient(
         Paint::Radial(RadialGradient {
             center_x: center.x,
             center_y: center.y,
-            radius: a,
+            radius,
             stops,
             tile_mode: tile_mode(gradient.spread_method()),
         }),

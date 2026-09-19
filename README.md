@@ -65,7 +65,9 @@ Every command except `adaptive` accepts a file or a directory. In a directory, a
 is named on stderr and the remaining files are still processed. `--format json`
 produces a stable report with diagnostic codes for use in CI, and lists a
 `path` and `error` for any file that could not be read or parsed. `--strict`
-accepts only input that needs no normalization at all.
+accepts only input that needs no normalization at all; `--allow-approximate`
+also accepts constructs VectorDrawable cannot draw exactly, such as a radial
+gradient's focal point, and lowers them with a warning.
 
 Written XML is compact by default to reduce resource size without changing
 geometry or precision. Pass `--pretty` to `convert`, `optimize`, `notification`,
@@ -255,13 +257,15 @@ becomes, with `--pretty` (by default the same XML is written on one line)
 | Nested affine transforms (flattened into geometry) | Strokes under non-uniform scale or skew |
 | Solid fills, fill opacity, fill rules | Alpha or grayscale masks, even-odd or multi-path clips |
 | Wide-gamut `color()` values, resolved to the sRGB they render as | Color spaces that are not Display P3, sRGB, or linear sRGB |
-| Linear gradients and circular radial gradients, including stop opacity and spread methods | Radial gradients with a focal point, a focal radius, or an elliptical shape |
+| Linear gradients and circular, elliptical, and rotated radial gradients, including stop opacity and spread methods | Radial gradients with a focal radius; strokes painted with an elliptical gradient |
+| Radial gradients with an off-center focal point, centered under `--allow-approximate` | |
 | Solid strokes: opacity, width, caps, joins | Nested effects or paint effects inside `<clipPath>`/`<mask>` |
 | Single-path clips and hard white single-shape masks (lowered to clips) | |
 
 `inspect` reports one of four compatibility states: `exact`,
 `exact_with_normalization`, `approximate`, or `unsupported`. Conversion accepts
-the first two, and `--strict` accepts only `exact`.
+the first two, `--allow-approximate` also accepts `approximate`, and `--strict`
+accepts only `exact`.
 
 The reported minimum API comes from the emitted drawable, not a fixed constant.
 Plain paths and a single clip target API 21. Drawables that need multiple clips,

@@ -787,6 +787,65 @@ fn rejects_radial_gradients_android_cannot_draw() {
 }
 
 #[test]
+fn extreme_ellipses_survive_optimize_instead_of_collapsing_the_group() {
+    // `optimize` rounds group attributes to three decimals. A ratio near
+    // 2500:1 puts scaleY at about 0.0004, which rounds to zero and collapses
+    // the group, erasing the drawable. Verified on Android: before the clamp
+    // the optimized drawable painted 0 of 57600 pixels.
+    //
+    // `cx` is pre-divided by the transform's scale so the ellipse lands on the
+    // canvas, and the two hard stops make the banding assertable. The inner
+    // band covers the middle of the canvas and the outer band the top and
+    // bottom edges.
+    let source = r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <defs><radialGradient id="r" gradientUnits="userSpaceOnUse" cx="0.0048" cy="12" r="12"
+            gradientTransform="scale(2500 1)">
+            <stop offset="0" stop-color="#159A55"/><stop offset=".5" stop-color="#159A55"/>
+            <stop offset=".5" stop-color="#C52A54"/><stop offset="1" stop-color="#C52A54"/>
+        </radialGradient></defs>
+        <path d="M0 0H24V24H0Z" fill="url(#r)"/>
+    </svg>"##;
+
+    let mut asset = vdtoolkit::convert(source.as_bytes()).unwrap();
+    asset.optimize();
+    let xml = asset.to_xml();
+
+    assert!(
+        !xml.contains(r#"android:scaleY="0""#),
+        "optimize collapsed the group to a zero scale: {xml}"
+    );
+
+    let size = 48;
+    let rgba = asset.render_rgba(size, size).unwrap();
+    let painted = rgba.chunks_exact(4).filter(|pixel| pixel[3] > 0).count();
+    assert_eq!(
+        painted,
+        (size * size) as usize,
+        "optimized drawable must still paint"
+    );
+
+    // Painting is not enough: clamping the scale without shrinking the radius
+    // stretches the inner band over the whole canvas, which still fills every
+    // pixel. Pin the banding so that geometry error cannot pass.
+    let pixel = |x: u32, y: u32| {
+        let i = ((y * size + x) * 4) as usize;
+        (rgba[i], rgba[i + 1], rgba[i + 2])
+    };
+    let centre = size / 2;
+    assert_eq!(pixel(centre, 2), (0xC5, 0x2A, 0x54), "top edge outer band");
+    assert_eq!(
+        pixel(centre, centre),
+        (0x15, 0x9A, 0x55),
+        "centre inner band"
+    );
+    assert_eq!(
+        pixel(centre, size - 3),
+        (0xC5, 0x2A, 0x54),
+        "bottom edge outer band"
+    );
+}
+
+#[test]
 fn lowers_elliptical_radial_gradients_via_group_transform() {
     // 1. Non-square bounding box
     let bbox_source = r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
@@ -794,11 +853,20 @@ fn lowers_elliptical_radial_gradients_via_group_transform() {
         <rect width="20" height="10" fill="url(#r)"/>
     </svg>"##;
     let asset = vdtoolkit::convert(bbox_source.as_bytes()).unwrap();
-    assert_eq!(asset.analysis.compatibility, Compatibility::ExactWithNormalization);
+    assert_eq!(
+        asset.analysis.compatibility,
+        Compatibility::ExactWithNormalization
+    );
     let xml = asset.to_xml();
     assert!(xml.contains("<group"), "XML should contain group: {xml}");
-    assert!(xml.contains("android:scaleY="), "Group should scale Y: {xml}");
-    assert!(xml.contains("android:pivotX="), "Group should specify pivot: {xml}");
+    assert!(
+        xml.contains("android:scaleY="),
+        "Group should scale Y: {xml}"
+    );
+    assert!(
+        xml.contains("android:pivotX="),
+        "Group should specify pivot: {xml}"
+    );
     roxmltree::Document::parse(&xml).unwrap();
 
     // 2. Non-uniform gradient transform
@@ -809,10 +877,16 @@ fn lowers_elliptical_radial_gradients_via_group_transform() {
         <path d="M0 0H24V24H0Z" fill="url(#r)"/>
     </svg>"##;
     let asset = vdtoolkit::convert(xform_source.as_bytes()).unwrap();
-    assert_eq!(asset.analysis.compatibility, Compatibility::ExactWithNormalization);
+    assert_eq!(
+        asset.analysis.compatibility,
+        Compatibility::ExactWithNormalization
+    );
     let xml = asset.to_xml();
     assert!(xml.contains("<group"), "XML should contain group: {xml}");
-    assert!(xml.contains("android:scaleY="), "Group should scale Y: {xml}");
+    assert!(
+        xml.contains("android:scaleY="),
+        "Group should scale Y: {xml}"
+    );
     roxmltree::Document::parse(&xml).unwrap();
 
     // 3. Rotated ellipse
@@ -823,9 +897,15 @@ fn lowers_elliptical_radial_gradients_via_group_transform() {
         <path d="M0 0H24V24H0Z" fill="url(#r)"/>
     </svg>"##;
     let asset = vdtoolkit::convert(rot_source.as_bytes()).unwrap();
-    assert_eq!(asset.analysis.compatibility, Compatibility::ExactWithNormalization);
+    assert_eq!(
+        asset.analysis.compatibility,
+        Compatibility::ExactWithNormalization
+    );
     let xml = asset.to_xml();
-    assert!(xml.contains("android:rotation="), "Group should specify rotation: {xml}");
+    assert!(
+        xml.contains("android:rotation="),
+        "Group should specify rotation: {xml}"
+    );
     roxmltree::Document::parse(&xml).unwrap();
 }
 
@@ -841,13 +921,24 @@ fn radial_gradient_focal_offset_converts_with_allow_approximate() {
     // By default, rejected
     let default_analysis = vdtoolkit::analyze(source.as_bytes()).unwrap();
     assert_eq!(default_analysis.compatibility, Compatibility::Unsupported);
-    assert!(default_analysis.diagnostics.iter().any(|d| d.code == DiagnosticCode::UnsupportedGradient));
+    assert!(
+        default_analysis
+            .diagnostics
+            .iter()
+            .any(|d| d.code == DiagnosticCode::UnsupportedGradient)
+    );
     assert!(vdtoolkit::convert(source.as_bytes()).is_err());
 
     // With allow_approximate, succeeds with warning and approximate compatibility
     let approx_analysis = vdtoolkit::analyze_with_options(source.as_bytes(), true).unwrap();
     assert_eq!(approx_analysis.compatibility, Compatibility::Approximate);
-    assert!(approx_analysis.diagnostics.iter().any(|d| d.code == DiagnosticCode::UnsupportedGradient && matches!(d.severity, Severity::Warning)));
+    assert!(
+        approx_analysis
+            .diagnostics
+            .iter()
+            .any(|d| d.code == DiagnosticCode::UnsupportedGradient
+                && matches!(d.severity, Severity::Warning))
+    );
 
     let asset = vdtoolkit::convert_with_options(source.as_bytes(), true).unwrap();
     assert_eq!(asset.analysis.compatibility, Compatibility::Approximate);
@@ -871,10 +962,19 @@ fn elliptical_radial_fill_with_stroke_splits_into_group_and_path() {
 
     // Group wraps fill path
     assert!(xml.contains("<group"), "XML should contain group: {xml}");
-    assert!(xml.contains("android:scaleY="), "Group should scale Y: {xml}");
+    assert!(
+        xml.contains("android:scaleY="),
+        "Group should scale Y: {xml}"
+    );
     // Sibling path contains stroke
-    assert!(xml.contains("android:strokeColor=\"#FF0000\""), "Should have stroke path: {xml}");
-    assert!(xml.contains("android:strokeWidth=\"2\""), "Stroke width should be unscaled: {xml}");
+    assert!(
+        xml.contains("android:strokeColor=\"#FF0000\""),
+        "Should have stroke path: {xml}"
+    );
+    assert!(
+        xml.contains("android:strokeWidth=\"2\""),
+        "Stroke width should be unscaled: {xml}"
+    );
 }
 
 #[test]
@@ -912,6 +1012,13 @@ fn cli_allow_approximate_converts_radial_gradient_focal_offset() {
         .output()
         .unwrap();
     assert_eq!(check_approx.status.code(), Some(0));
+    // The verdict line must agree with the exit code: a passing check must not
+    // print the failure symbol.
+    let stdout = String::from_utf8(check_approx.stdout).unwrap();
+    assert!(
+        stdout.starts_with("✓ VectorDrawable compatible with --allow-approximate"),
+        "{stdout}"
+    );
 
     let convert_ok = Command::new(env!("CARGO_BIN_EXE_vdt"))
         .args([

@@ -120,11 +120,13 @@ A raster foreground can raise `SVGVD018`, `SVGVD019`, `SVGVD024`, `SVGVD025`,
 and `SVGVD026`; a raster background can raise `SVGVD020`, `SVGVD024`, and
 `SVGVD025`. The report's metrics describe the fitted vector or the image on
 the 108dp layer, and in JSON an `icon` object names the kind and fit. A raster
-entry also carries `image`: `png`, `webp`, or `jpg`, and then `metrics.width`
-and `metrics.height` are pixels. A raster *file* without `--as`, or with
+entry also carries `image`: `png`, `webp`, or `jpg`. Then `metrics.width` and
+`metrics.height` are pixels, `content_bounds` and `viewport_*` are dp on the
+108dp layer, and `compatibility` is `not_applicable` because a raster layer is
+not a VectorDrawable. A raster *file* without `--as`, or with
 `--as notification`, is refused; a directory with `--as notification` still
-keeps only SVGs. Compatibility and the exit code are unchanged: these findings
-are warnings and notes.
+keeps only SVGs, and a directory with `--as adaptive-foreground` skips JPEGs
+the same way. These findings are warnings and notes.
 
 ```sh
 vdt inspect icons/ --as notification --format json

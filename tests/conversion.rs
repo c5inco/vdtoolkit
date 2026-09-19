@@ -3653,9 +3653,39 @@ fn cli_inspect_as_reports_raster_foreground_findings_without_writing() {
     assert!(json_codes(&stdout).is_empty(), "{stdout}");
     assert_eq!(report[0]["metrics"]["width"], 432.0);
     assert_eq!(report[0]["metrics"]["viewport_width"], 108.0);
-    assert_eq!(report[0]["compatibility"], "exact");
+    assert_eq!(report[0]["compatibility"], "not_applicable");
     assert!(report[0]["minimum_api"].is_null());
+    let bounds = &report[0]["metrics"]["content_bounds"];
+    // r=120px on a 432px layer is 30dp, so the disc sits at 24..84 dp.
+    assert!(
+        (bounds["left"].as_f64().unwrap() - 24.0).abs() < 0.5,
+        "{bounds}"
+    );
+    assert!(
+        (bounds["right"].as_f64().unwrap() - 84.0).abs() < 0.5,
+        "{bounds}"
+    );
     assert!(!inside.with_extension("xml").exists());
+
+    // PNG is the same findings path, with image: png.
+    let png = write(
+        "inside.png",
+        &vdtoolkit::convert(
+            br##"<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108"><circle cx="54" cy="54" r="30" fill="#fff"/></svg>"##,
+        )
+        .unwrap()
+        .to_png(432, 432)
+        .unwrap(),
+    );
+    let (code, stdout, _) = inspect(
+        &["inspect", "--as", "adaptive-foreground", "--format", "json"],
+        &png,
+    );
+    assert_eq!(code, Some(0), "{stdout}");
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(report[0]["image"], "png");
+    assert_eq!(report[0]["compatibility"], "not_applicable");
+    assert!(json_codes(&stdout).is_empty(), "{stdout}");
 
     let (code, stdout, _) = inspect(&["inspect", "--as", "adaptive-foreground"], &outside);
     assert_eq!(code, Some(0), "{stdout}");
@@ -3664,6 +3694,10 @@ fn cli_inspect_as_reports_raster_foreground_findings_without_writing() {
     assert!(stdout.contains("Format: webp"), "{stdout}");
     assert!(stdout.contains("Dimensions: 432 × 432 px"), "{stdout}");
     assert!(stdout.contains("Layer: 108 × 108 dp"), "{stdout}");
+    assert!(
+        stdout.contains("Content bounds:") && stdout.contains(" dp"),
+        "{stdout}"
+    );
     assert!(!stdout.contains("VectorDrawable compatible"), "{stdout}");
     assert!(!stdout.contains("Estimated XML size"), "{stdout}");
 
@@ -3743,6 +3777,7 @@ fn cli_inspect_as_reports_raster_foreground_findings_without_writing() {
     )
     .unwrap();
     fs::copy(&outside, mixed.join("outside.webp")).unwrap();
+    fs::copy(&jpeg, mixed.join("photo.jpg")).unwrap();
     let (code, stdout, _) = inspect(
         &["inspect", "--as", "adaptive-foreground", "--format", "json"],
         &mixed,
@@ -3750,10 +3785,16 @@ fn cli_inspect_as_reports_raster_foreground_findings_without_writing() {
     assert_eq!(code, Some(0), "{stdout}");
     let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     let entries = report.as_array().unwrap();
-    assert_eq!(entries.len(), 2);
+    assert_eq!(entries.len(), 2, "{stdout}");
     assert!(entries[0]["path"].as_str().unwrap().ends_with("logo.svg"));
     assert!(entries[0].get("image").is_none());
     assert_eq!(entries[1]["image"], "webp");
+    assert!(
+        !entries
+            .iter()
+            .any(|entry| entry["path"].as_str().unwrap().ends_with("photo.jpg")),
+        "{stdout}"
+    );
     assert!(
         entries[1]["diagnostics"]
             .as_array()

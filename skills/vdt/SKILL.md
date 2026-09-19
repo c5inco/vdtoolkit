@@ -83,10 +83,14 @@ VectorDrawableCompat must load them below API 21, where `anydpi` is unavailable.
 
    `compatibility` is `exact`, `exact_with_normalization`, `approximate`, or
    `unsupported`. The first two convert; `--strict` accepts only `exact`, so
-   do not pass it unless the user asks. A diagnostic with severity `error`
-   blocks conversion; `warning` and `info` do not, but warnings about icons
-   mean the result will look wrong on a device. A file that could not be read
-   or parsed appears as `{ "path", "error" }` instead.
+   do not pass it unless the user asks. A raster layer image instead has
+   `"image": "png"` / `"webp"` / `"jpg"` and `"compatibility": "not_applicable"`:
+   it is not a VectorDrawable. Then `metrics.width` and `metrics.height` are
+   pixels of the file; `viewport_*` and `content_bounds` are dp on the 108dp
+   layer. A diagnostic with severity `error` blocks conversion; `warning` and
+   `info` do not, but warnings about icons mean the result will look wrong on
+   a device. A file that could not be read or parsed appears as
+   `{ "path", "error" }` instead.
 
    Exit codes: `0` everything converted or is convertible, `1` a file was
    malformed, unreadable, or failed, `2` (`check` and `inspect` only) an input

@@ -1134,7 +1134,13 @@ fn report(args: ReportArgs, inspect: bool) -> Result<Outcome> {
     );
     let inputs = collect_inputs(
         &args.input,
-        |path| is_svg(path) || (adaptive_layer && is_layer_image(path)),
+        |path| {
+            is_svg(path)
+                || (adaptive_layer
+                    && is_layer_image(path)
+                    && !(matches!(args.as_kind, Some(IconKindArg::AdaptiveForeground))
+                        && is_jpeg(path)))
+        },
         if adaptive_layer {
             "SVG or layer image files"
         } else {
@@ -1173,11 +1179,13 @@ fn report(args: ReportArgs, inspect: bool) -> Result<Outcome> {
         };
         match &result {
             Ok(analysis) => {
-                passed &= if args.strict {
-                    analysis.compatibility == Compatibility::Exact
-                } else {
-                    analysis.compatibility.convertible()
-                };
+                if analysis.image.is_none() {
+                    passed &= if args.strict {
+                        analysis.compatibility == Compatibility::Exact
+                    } else {
+                        analysis.compatibility.convertible()
+                    };
+                }
             }
             Err(_) => failed += 1,
         }
@@ -1238,7 +1246,7 @@ fn print_human(analysis: &Analysis, inspect: bool) {
     let compatible = analysis.compatibility.convertible();
     println!(
         "{} {}",
-        if compatible { "✓" } else { "✗" },
+        if raster || compatible { "✓" } else { "✗" },
         if raster {
             "Adaptive layer image"
         } else if compatible {
@@ -1288,8 +1296,12 @@ fn print_human(analysis: &Analysis, inspect: bool) {
         }
         match metrics.content_bounds {
             Some(bounds) => println!(
-                "Content bounds: left {}, top {}, right {}, bottom {}",
-                bounds.left, bounds.top, bounds.right, bounds.bottom
+                "Content bounds: left {}, top {}, right {}, bottom {}{}",
+                bounds.left,
+                bounds.top,
+                bounds.right,
+                bounds.bottom,
+                if raster { " dp" } else { "" }
             ),
             None => println!("Content bounds: none"),
         }
@@ -1311,13 +1323,21 @@ fn print_human(analysis: &Analysis, inspect: bool) {
 }
 
 fn print_summary(reports: &[(&PathBuf, Result<Analysis>)]) {
+    let rasters = reports
+        .iter()
+        .filter(|(_, result)| {
+            result
+                .as_ref()
+                .is_ok_and(|analysis| analysis.image.is_some())
+        })
+        .count();
     let count = |compatibility: Compatibility| {
         reports
             .iter()
             .filter(|(_, result)| {
-                result
-                    .as_ref()
-                    .is_ok_and(|analysis| analysis.compatibility == compatibility)
+                result.as_ref().is_ok_and(|analysis| {
+                    analysis.image.is_none() && analysis.compatibility == compatibility
+                })
             })
             .count()
     };
@@ -1330,6 +1350,9 @@ fn print_summary(reports: &[(&PathBuf, Result<Analysis>)]) {
     );
     println!("{} approximate", count(Compatibility::Approximate));
     println!("{} unsupported", count(Compatibility::Unsupported));
+    if rasters > 0 {
+        println!("{rasters} adaptive layer images");
+    }
     if failed > 0 {
         println!("{failed} could not be analyzed");
     }
@@ -1389,6 +1412,12 @@ fn is_layer_image(path: &Path) -> bool {
         ["png", "webp", "jpg", "jpeg"]
             .iter()
             .any(|name| extension.eq_ignore_ascii_case(name))
+    })
+}
+
+fn is_jpeg(path: &Path) -> bool {
+    path.extension().is_some_and(|extension| {
+        extension.eq_ignore_ascii_case("jpg") || extension.eq_ignore_ascii_case("jpeg")
     })
 }
 

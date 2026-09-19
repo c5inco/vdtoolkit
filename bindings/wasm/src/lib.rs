@@ -28,7 +28,7 @@ struct AdapterError {
 
 #[wasm_bindgen(typescript_custom_section)]
 const TYPESCRIPT_TYPES: &'static str = r#"
-export type Compatibility = "exact" | "exact_with_normalization" | "approximate" | "unsupported";
+export type Compatibility = "not_applicable" | "exact" | "exact_with_normalization" | "approximate" | "unsupported";
 export type Severity = "error" | "warning" | "info";
 
 export interface ElementLocation {

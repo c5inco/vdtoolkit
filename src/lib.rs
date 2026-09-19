@@ -500,7 +500,7 @@ fn analyze_layer_as(source: &[u8], kind: IconKind) -> Result<Analysis> {
     };
     let (image, diagnostics) = bitmap::analyze_layer_image(source, layer)?;
     Ok(Analysis {
-        compatibility: Compatibility::Exact,
+        compatibility: Compatibility::NotApplicable,
         minimum_api: None,
         diagnostics,
         metrics: Metrics {

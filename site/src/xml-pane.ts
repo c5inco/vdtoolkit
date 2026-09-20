@@ -24,6 +24,7 @@ export interface XmlPaneContent {
 }
 
 const COMPATIBILITY: Record<Analysis["compatibility"], string> = {
+  not_applicable: "n/a",
   exact: "exact",
   exact_with_normalization: "exact after normalizing",
   approximate: "approximate",

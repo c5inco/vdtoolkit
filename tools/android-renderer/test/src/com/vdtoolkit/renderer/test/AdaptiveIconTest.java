@@ -131,10 +131,10 @@ public final class AdaptiveIconTest extends InstrumentationTestCase {
     /**
      * A mirrored gradient background needs API 24: API 26+ uses the adaptive
      * icon, API 24 and 25 the anydpi-v24 legacy vector, and API 21 to 23 the
-     * PNG rendered from it. Every path must show the same gradient.
+     * lossless WebP rendered from it. Every path must show the same gradient.
      */
     @SuppressWarnings("deprecation")
-    public void testGradientIconMatchesAcrossVectorAndPng() {
+    public void testGradientIconMatchesAcrossVectorAndWebp() {
         Drawable icon = drawable(mipmap("ic_launcher_gradient"));
         Bitmap bitmap;
         boolean adaptive = Build.VERSION.SDK_INT >= 26;
@@ -147,11 +147,11 @@ public final class AdaptiveIconTest extends InstrumentationTestCase {
                     icon instanceof VectorDrawable);
             bitmap = render(icon);
         } else {
-            assertTrue("API <24 must select the density PNG, got " + icon,
+            assertTrue("API <24 must select the density WebP, got " + icon,
                     icon instanceof BitmapDrawable);
             bitmap = render(icon);
         }
-        // Rendered PNGs are scaled by density, so allow more than the vector.
+        // Rendered WebPs are scaled by density, so allow more than the vector.
         int tolerance = icon instanceof BitmapDrawable ? 10 : 4;
         // Outside the star ring and inside the mask: both sides of the mirror
         // axis at x 54, and the axis itself.

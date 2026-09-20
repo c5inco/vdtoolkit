@@ -155,13 +155,14 @@ be an explicit option rather than a silent change.
 `vdt adaptive --legacy` maps the 72dp visible circle of an adaptive icon onto
 the 44dp circle keyline of a 48dp legacy icon. A composite that needs API 24,
 because a layer uses gradients, even-odd fills, or its own clip, is written as
-a vector in `mipmap-anydpi-v24` plus PNGs in the five density folders. The
+a vector in `mipmap-anydpi-v24` plus lossless WebPs in the five density folders. The
 `anydpi` qualifier outranks density qualifiers, so API 24 and 25 select the
-vector while API 21 to 23, which have no `-v24` match, fall back to the PNGs; a
-plain `mipmap-v24` folder would lose to the density folders. The PNGs are
+vector while API 21 to 23, which have no `-v24` match, fall back to the WebPs; a
+plain `mipmap-v24` folder would lose to the density folders. The WebPs are
 rendered from the emitted vector, not the source SVG, so both share geometry,
-mask, and gradients. The renderer harness verified the selection and the
-gradient colors on emulator.wtf Pixel 7 at API 21, 23, 24, 25, 26, and 36.
+mask, and gradients. The renderer harness checks resource selection and the
+gradient colors across the API 21–23 WebP, API 24–25 vector, and API 26+
+adaptive paths.
 
 ## Adaptive icon safe zone
 

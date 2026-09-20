@@ -1,4 +1,4 @@
-//! Rasterize a VectorDrawable the way Android draws it, for legacy PNG icons.
+//! Rasterize a VectorDrawable the way Android draws it, including legacy icons.
 
 use tiny_skia as sk;
 

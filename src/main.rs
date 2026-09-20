@@ -144,8 +144,8 @@ struct AdaptiveArgs {
     fit: Option<f32>,
     /// Also write a legacy icon for devices below API 26: the background and
     /// foreground under a circular mask. It is a vector in `mipmap/`, or, when
-    /// the art needs API 24, a vector in `mipmap-anydpi-v24/` plus PNGs in
-    /// `mipmap-mdpi/` through `mipmap-xxxhdpi/`.
+    /// the art needs API 24, a vector in `mipmap-anydpi-v24/` plus lossless
+    /// WebPs in `mipmap-mdpi/` through `mipmap-xxxhdpi/`.
     #[arg(long)]
     legacy: bool,
     /// Shorten numbers in every layer drawable and the legacy vector where it
@@ -757,7 +757,7 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
                     args.output
                         .join(format!("mipmap-{density}"))
                         .join(name)
-                        .with_extension("png"),
+                        .with_extension("webp"),
                 );
             }
         }
@@ -768,7 +768,8 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
         } else {
             // Gradients, even-odd fills, or a second clip need API 24. The exact
             // vector serves API 24 and 25 from an anydpi folder, which outranks
-            // density folders, and PNGs rendered from it serve API 21 to 23.
+            // density folders, and lossless WebPs rendered from it serve API
+            // 21 to 23.
             for path in &split[..2] {
                 files.push((path.clone(), xml.clone()));
             }
@@ -777,9 +778,9 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
                 .zip(split[2..].chunks(2))
             {
                 debug_assert!(pair[0].to_string_lossy().contains(density));
-                let png = legacy.to_png(*pixels, *pixels)?;
-                images.push((pair[0].clone(), png.clone()));
-                images.push((pair[1].clone(), png));
+                let webp = legacy.to_webp(*pixels, *pixels)?;
+                images.push((pair[0].clone(), webp.clone()));
+                images.push((pair[1].clone(), webp));
             }
         }
         // Every other file named for the legacy icon in any mipmap folder is a
@@ -833,7 +834,7 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
 /// Serialize a drawable, shortening its numbers first when asked.
 ///
 /// The asset itself stays exact: the legacy icon is composed from the fitted
-/// layers and would otherwise be rounded twice, and the PNGs are rendered
+/// layers and would otherwise be rounded twice, and the WebPs are rendered
 /// from whichever vector is written.
 fn drawable_xml(asset: &Asset, optimize: bool, pretty: bool) -> String {
     if optimize {

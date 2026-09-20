@@ -3,6 +3,15 @@ use std::process::Command;
 
 use vdtoolkit::{Compatibility, DiagnosticCode, Error, Severity};
 
+fn decode_webp(data: &[u8]) -> (u32, u32, Vec<u8>) {
+    let mut decoder = image_webp::WebPDecoder::new(std::io::Cursor::new(data)).unwrap();
+    let dimensions = decoder.dimensions();
+    assert!(decoder.has_alpha());
+    let mut pixels = vec![0; decoder.output_buffer_size().unwrap()];
+    decoder.read_image(&mut pixels).unwrap();
+    (dimensions.0, dimensions.1, pixels)
+}
+
 #[test]
 fn converts_viewbox_geometry_colors_and_fill_rule() {
     let source =
@@ -2306,7 +2315,7 @@ fn cli_adaptive_notes_qualified_drawable_layer_leftovers() {
 fn cli_legacy_replaces_the_icon_android_studio_left_behind() {
     let temp = tempfile::tempdir().unwrap();
     // Flat art needs API 21 and gets a vector in mipmap/; a gradient needs
-    // API 24 and gets PNGs in every density folder.
+    // API 24 and gets lossless WebPs in every density folder.
     let flat = temp.path().join("flat.svg");
     let gradient = temp.path().join("gradient.svg");
     fs::write(
@@ -2321,14 +2330,17 @@ fn cli_legacy_replaces_the_icon_android_studio_left_behind() {
     .unwrap();
     let densities = ["mdpi", "hdpi", "xhdpi", "xxhdpi", "xxxhdpi"];
     // What Android Studio writes for a new project: the legacy icon as WebP in
-    // every density folder, and, with minSdk 26 or higher, the adaptive icon
-    // in an unversioned anydpi folder. Plus a file that is not the icon.
+    // every density folder. Old vdt versions wrote PNGs beside them. With
+    // minSdk 26 or higher, Studio also puts the adaptive icon in an unversioned
+    // anydpi folder. Include a file that is not the icon too.
     let studio = |res: &std::path::Path| {
         for density in densities {
             let dir = res.join(format!("mipmap-{density}"));
             fs::create_dir_all(&dir).unwrap();
             fs::write(dir.join("ic_launcher.webp"), b"studio").unwrap();
             fs::write(dir.join("ic_launcher_round.webp"), b"studio").unwrap();
+            fs::write(dir.join("ic_launcher.png"), b"old vdt").unwrap();
+            fs::write(dir.join("ic_launcher_round.png"), b"old vdt").unwrap();
             fs::write(dir.join("ic_launcher_old.webp"), b"keep").unwrap();
         }
         fs::create_dir_all(res.join("mipmap-anydpi")).unwrap();
@@ -2364,36 +2376,47 @@ fn cli_legacy_replaces_the_icon_android_studio_left_behind() {
         left
     };
 
-    for (art, writes) in [
+    for (art, writes, expected_webps) in [
         (
             &flat,
             vec!["mipmap/ic_launcher.xml", "mipmap/ic_launcher_round.xml"],
+            0,
         ),
         (
             &gradient,
             vec![
                 "mipmap-anydpi-v24/ic_launcher.xml",
-                "mipmap-mdpi/ic_launcher.png",
-                "mipmap-xxxhdpi/ic_launcher_round.png",
+                "mipmap-mdpi/ic_launcher.webp",
+                "mipmap-xxxhdpi/ic_launcher_round.webp",
             ],
+            10,
         ),
     ] {
         let res = temp.path().join(art.file_stem().unwrap());
         studio(&res);
         let stderr = run(art, &res, true);
-        // Left in place, Studio's copies are the same resource as vdt's:
-        // beside the gradient's PNGs they fail the build, and beside the flat
-        // art's vector they are chosen over it on older devices.
-        assert!(
-            studio_left(&res).is_empty(),
-            "{:?}\n{stderr}",
-            studio_left(&res)
-        );
+        // Left in place, Studio's copies and the old PNGs are the same resource
+        // as vdt's: beside the gradient's WebPs they fail the build, and beside
+        // the flat art's vector they are chosen over it on older devices.
+        let webps = studio_left(&res);
+        assert_eq!(webps.len(), expected_webps, "{webps:?}\n{stderr}");
+        for relative in webps {
+            assert_ne!(
+                fs::read(res.join(&relative)).unwrap(),
+                b"studio",
+                "{relative}"
+            );
+        }
         for relative in writes {
             assert!(res.join(relative).is_file(), "{relative}");
         }
         assert!(res.join("mipmap-anydpi-v26/ic_launcher.xml").is_file());
         for density in densities {
+            for name in ["ic_launcher.png", "ic_launcher_round.png"] {
+                let old = format!("mipmap-{density}/{name}");
+                assert!(!res.join(&old).exists(), "{old} survived\n{stderr}");
+                assert!(stderr.contains(&old), "{old}\n{stderr}");
+            }
             let other = format!("mipmap-{density}/ic_launcher_old.webp");
             assert!(res.join(&other).is_file(), "{other} was removed");
         }
@@ -2966,11 +2989,14 @@ fn renders_legacy_gradients_like_the_vector() {
         "{left:?} {right:?}"
     );
 
-    let png = legacy.to_png(size, size).unwrap();
-    assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
-    assert_eq!(&png[16..24], &[0, 0, 0, 192, 0, 0, 0, 192]);
-    assert_eq!(png, legacy.to_png(size, size).unwrap());
-    assert!(matches!(legacy.to_png(0, 48), Err(Error::InvalidInput(_))));
+    let webp = legacy.to_webp(size, size).unwrap();
+    assert!(webp.starts_with(b"RIFF"));
+    assert_eq!(&webp[8..16], b"WEBPVP8L");
+    assert_eq!(webp, legacy.to_webp(size, size).unwrap());
+    let (width, height, decoded) = decode_webp(&webp);
+    assert_eq!((width, height), (size, size));
+    assert_eq!(decoded, rgba);
+    assert!(matches!(legacy.to_webp(0, 48), Err(Error::InvalidInput(_))));
 }
 
 #[test]
@@ -3000,8 +3026,8 @@ fn cli_legacy_removes_the_other_layout_when_art_changes() {
     let split = [
         "mipmap-anydpi-v24/ic_launcher.xml",
         "mipmap-anydpi-v24/ic_launcher_round.xml",
-        "mipmap-mdpi/ic_launcher.png",
-        "mipmap-xxxhdpi/ic_launcher_round.png",
+        "mipmap-mdpi/ic_launcher.webp",
+        "mipmap-xxxhdpi/ic_launcher_round.webp",
     ];
     let plain = ["mipmap/ic_launcher.xml", "mipmap/ic_launcher_round.xml"];
 
@@ -3055,7 +3081,7 @@ fn cli_legacy_removes_the_other_layout_when_art_changes() {
 }
 
 #[test]
-fn cli_legacy_splits_vector_and_pngs_when_art_needs_api_24() {
+fn cli_legacy_splits_vector_and_webps_when_art_needs_api_24() {
     let temp = tempfile::tempdir().unwrap();
     let foreground = temp.path().join("fg.svg");
     let background = temp.path().join("gradient.svg");
@@ -3083,6 +3109,16 @@ fn cli_legacy_splits_vector_and_pngs_when_art_needs_api_24() {
     let listed = run(&first);
     run(&second);
 
+    let mut foreground_asset = vdtoolkit::convert(&fs::read(&foreground).unwrap()).unwrap();
+    foreground_asset
+        .fit_adaptive_layer(vdtoolkit::Fit::contain(56.0))
+        .unwrap();
+    let mut background_asset = vdtoolkit::convert(&fs::read(&background).unwrap()).unwrap();
+    background_asset
+        .fit_adaptive_layer(vdtoolkit::Fit::cover(vdtoolkit::ADAPTIVE_ICON_SIZE))
+        .unwrap();
+    let legacy = vdtoolkit::Asset::legacy_launcher_icon(&background_asset, &foreground_asset);
+
     assert!(!first.join("mipmap").exists());
     let vector = fs::read_to_string(first.join("mipmap-anydpi-v24/ic_launcher.xml")).unwrap();
     assert!(vector.contains("<gradient"));
@@ -3092,13 +3128,23 @@ fn cli_legacy_splits_vector_and_pngs_when_art_needs_api_24() {
     );
     for (density, pixels) in vdtoolkit::LEGACY_ICON_DENSITIES {
         for name in ["ic_launcher", "ic_launcher_round"] {
-            let relative = format!("mipmap-{density}/{name}.png");
+            let relative = format!("mipmap-{density}/{name}.webp");
             assert!(listed.contains(&relative), "{listed}");
-            let png = fs::read(first.join(&relative)).unwrap();
-            let size = pixels.to_be_bytes();
-            assert_eq!(&png[16..20], &size, "{relative}");
-            assert_eq!(&png[20..24], &size, "{relative}");
-            assert_eq!(png, fs::read(second.join(&relative)).unwrap(), "{relative}");
+            let webp = fs::read(first.join(&relative)).unwrap();
+            assert!(webp.starts_with(b"RIFF"), "{relative}");
+            assert_eq!(&webp[8..16], b"WEBPVP8L", "{relative}");
+            let (width, height, decoded) = decode_webp(&webp);
+            assert_eq!((width, height), (pixels, pixels), "{relative}");
+            assert_eq!(
+                decoded,
+                legacy.render_rgba(pixels, pixels).unwrap(),
+                "{relative}"
+            );
+            assert_eq!(
+                webp,
+                fs::read(second.join(&relative)).unwrap(),
+                "{relative}"
+            );
         }
     }
 }
@@ -3632,7 +3678,7 @@ fn cli_notification_optimize_shortens_numbers_without_moving_the_artwork() {
 }
 
 #[test]
-fn cli_adaptive_optimize_shortens_every_drawable_and_keeps_pngs_identical() {
+fn cli_adaptive_optimize_shortens_every_drawable_and_keeps_webps_identical() {
     let temp = tempfile::tempdir().unwrap();
     let foreground = temp.path().join("fg.svg");
     let background = temp.path().join("bg.svg");
@@ -3643,7 +3689,8 @@ fn cli_adaptive_optimize_shortens_every_drawable_and_keeps_pngs_identical() {
         r##"<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48"><path d="M24.00001 4.333333L4.6666 43.99999h38.66666z" fill="#3DDC84"/></svg>"##,
     )
     .unwrap();
-    // A gradient needs API 24, so --legacy renders PNGs from the vector.
+    // A gradient needs API 24, so --legacy renders lossless WebPs from the
+    // vector.
     fs::write(
         &background,
         r##"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100">
@@ -3723,11 +3770,11 @@ fn cli_adaptive_optimize_shortens_every_drawable_and_keeps_pngs_identical() {
     );
     assert!(legacy.len() < plain_legacy.len());
 
-    // The PNGs are rendered from the exact legacy vector, so they come out
+    // The WebPs are rendered from the exact legacy vector, so they come out
     // byte-identical with and without --optimize, and the whole run is
     // deterministic.
     for (density, _) in vdtoolkit::LEGACY_ICON_DENSITIES {
-        for name in ["ic_launcher.png", "ic_launcher_round.png"] {
+        for name in ["ic_launcher.webp", "ic_launcher_round.webp"] {
             let relative = format!("mipmap-{density}/{name}");
             let bytes = fs::read(optimized.join(&relative)).unwrap();
             assert_eq!(
@@ -3790,7 +3837,7 @@ fn optimizing_a_legacy_icon_only_moves_edge_pixels_by_one_coverage_step() {
     // Rounding to a thousandth of a dp is invisible, but it is not nothing at
     // the raster level: from 96px up, an edge that lands within a rounding
     // step of a supersample boundary can move by one coverage step. This is
-    // why `adaptive --optimize` renders its PNGs from the exact vector and
+    // why `adaptive --optimize` renders its WebPs from the exact vector and
     // optimizes only the XML it writes.
     for (_, pixels) in vdtoolkit::LEGACY_ICON_DENSITIES {
         let exact_pixels = exact.render_rgba(pixels, pixels).unwrap();

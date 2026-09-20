@@ -156,7 +156,7 @@ vdt adaptive --foreground logo.svg --background-color '#3DDC84' \
   silhouette; recommend it, since without it themed launchers show the icon
   untinted.
 - `--legacy` is needed when `minSdk` is below 26; it writes an icon for older
-  devices, including PNGs when the art needs API 24.
+  devices, including lossless WebPs when the art needs API 24.
 - `--name` defaults to `ic_launcher`. Before generating, list
   `res/mipmap-*/<name>.*`. A new project template leaves bitmaps such as
   `mipmap-hdpi/ic_launcher.webp`; on devices below API 26 they can take

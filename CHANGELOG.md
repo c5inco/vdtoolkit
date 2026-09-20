@@ -8,6 +8,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `adaptive --legacy` writes its API 21–23 density fallbacks as lossless WebP
+  instead of PNG when the composed icon needs API 24. The files decode to the
+  renderer's exact RGBA pixels, are deterministic, and replace generated PNGs
+  from earlier vdt versions. The Rust API gains `Asset::to_webp`.
 - Elliptical and rotated radial gradients (arising from non-square bounding
   boxes or non-uniform `gradientTransform` scales and rotations) are supported
   by lowering into circular VectorDrawable radial gradients wrapped in a

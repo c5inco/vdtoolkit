@@ -301,7 +301,8 @@ impl Asset {
     /// first.
     ///
     /// The result needs API 24 when a layer uses gradients, even-odd fills, or
-    /// clip paths of its own. [`Asset::to_png`] renders it for earlier devices.
+    /// clip paths of its own. [`Asset::to_webp`] renders a lossless fallback
+    /// for earlier devices.
     pub fn legacy_launcher_icon(background: &Asset, foreground: &Asset) -> Asset {
         let (scale, offset) = adaptive::legacy_mapping();
         let mut asset = Self::synthesized(
@@ -343,6 +344,17 @@ impl Asset {
         self.render(width, height)?
             .encode_png()
             .map_err(|error| Error::InvalidInput(format!("cannot encode PNG: {error}")))
+    }
+
+    /// Render the drawable at `width` × `height` pixels as a lossless WebP,
+    /// as [`Asset::render_rgba`] does.
+    pub fn to_webp(&self, width: u32, height: u32) -> Result<Vec<u8>> {
+        let rgba = self.render_rgba(width, height)?;
+        let mut webp = Vec::new();
+        image_webp::WebPEncoder::new(&mut webp)
+            .encode(&rgba, width, height, image_webp::ColorType::Rgba8)
+            .map_err(|error| Error::InvalidInput(format!("cannot encode WebP: {error}")))?;
+        Ok(webp)
     }
 
     fn render(&self, width: u32, height: u32) -> Result<tiny_skia::Pixmap> {

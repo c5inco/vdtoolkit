@@ -103,7 +103,7 @@ pub const LEGACY_ICON_SIZE: f32 = 48.0;
 /// in [`LEGACY_ICON_SIZE`].
 pub const LEGACY_ICON_KEYLINE: f32 = 44.0;
 
-/// Density buckets and pixel sizes for legacy launcher icon PNGs.
+/// Density buckets and pixel sizes for raster legacy launcher icons.
 pub const LEGACY_ICON_DENSITIES: [(&str, u32); 5] = [
     ("mdpi", 48),
     ("hdpi", 72),

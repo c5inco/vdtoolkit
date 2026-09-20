@@ -58,6 +58,29 @@ move an antialiased pixel on the corner arc by one coverage step; those are
 exactly the partially transparent pixels, so excluding them compares the
 interior, where a wrong gradient would show, and nothing else.
 
+Issue [#25](https://github.com/c5inco/vdtoolkit/issues/25) separates this
+rounding from short-path serialization. The fixture's suspicious relative
+control `-1.133001` is exact: adding it to `21.224` in `f32` gives `20.091`.
+Using `-1.133` instead misses that absolute control by one float step. The
+raw-delta fallback therefore preserves precision rather than discarding it.
+The `short_path` fixture regression checks every decoded control and endpoint
+against the rounded absolute spelling, then renders both decoded paths at
+240 × 240: their host-rendered pixels are identical. Replacing only the
+original path geometry with rounded geometry, retaining the original group
+and gradient attributes, changes edge alpha even with absolute spelling.
+The writer's exactness contract applies **after** optimization's intentional
+rounding; it does not promise pixel identity between `convert` and `optimize`.
+
+This isolation was verified on the host on 2026-09-20, and the Android harness
+APKs built successfully. No Android device was connected for a new platform
+run. The table below records the earlier device runs, not this investigation.
+The opaque-interior assertion remains unchanged: the reported platform edge
+samples do not establish a maximum over all edge pixels. Before adding a
+platform edge bound, measure all pixels separately from the interior, including
+transparent-to-painted transitions, and compare alpha and premultiplied color
+(straight RGB is unstable near zero alpha). A host-renderer tolerance is not
+evidence for an Android-wide bound.
+
 | Device | API | Result |
 | --- | ---: | --- |
 | Pixel 7 | 21 | passed (verifies the v24 resource is not selectable) |

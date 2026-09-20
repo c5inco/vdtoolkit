@@ -19,6 +19,10 @@
 //! its edges, so exact numbers keep a drawable rendering identically. The
 //! command after a close is always absolute, because Android 5.0 does not
 //! return the current point to the subpath's start.
+//!
+//! This preserves the points supplied to the writer, not the original SVG:
+//! `optimize` rounds geometry to three decimals before calling this module.
+//! That rounding can change antialiased edge coverage even with absolute paths.
 
 use crate::vector::PathCommand;
 use crate::xml::number;
@@ -442,6 +446,81 @@ mod tests {
         // 17.5 - 17.2 is 0.29999924 in f32, which six decimals spell 0.299999.
         let commands = [Move(10.0, 17.2), Line(10.0, 17.5)];
         assert_eq!(assert_reads_back(&commands), "M10 17.2v.3");
+    }
+
+    #[test]
+    fn elliptical_glow_relative_control_needs_more_than_three_decimals() {
+        // Issue #25: the raw-delta fallback is necessary, not inexact. The
+        // tempting three-decimal delta misses the rounded absolute control.
+        assert_ne!(21.224f32 - 1.133, 20.091f32);
+        assert_eq!(
+            relative_text(21.224, "20.091").as_deref(),
+            Some("-1.133001")
+        );
+        assert_eq!(21.224f32 + read("-1.133001"), 20.091f32);
+    }
+
+    #[test]
+    fn elliptical_glow_edges_change_from_rounding_not_relative_spelling() {
+        use crate::vector::{PathData, VectorNode};
+
+        fn map_paths(nodes: &mut [VectorNode], visit: &mut impl FnMut(&mut PathData)) {
+            for node in nodes {
+                match node {
+                    VectorNode::Group(group) => map_paths(&mut group.children, visit),
+                    VectorNode::ClipPath(data) => visit(data),
+                    VectorNode::Path(path) => visit(&mut path.path_data),
+                }
+            }
+        }
+
+        let source = std::fs::read(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tools/android-renderer/fixtures/elliptical_glow.svg"),
+        )
+        .unwrap();
+        let original = crate::convert(&source).unwrap();
+        let mut optimized = original.clone();
+        optimized.optimize();
+        let mut rounded_paths = Vec::new();
+        for_each_path(&optimized.drawable.children, &mut |commands| {
+            let short = assert_reads_back(commands);
+            assert!(short.contains("c-1.133001"), "{short}");
+            rounded_paths.push(commands.to_vec());
+        });
+        assert_eq!(rounded_paths.len(), 1);
+
+        // Isolate path rounding: retain the original group and gradient
+        // attributes, which optimize also rounds, and replace only geometry.
+        let mut rounded_only = original.clone();
+        let mut paths = rounded_paths.into_iter();
+        map_paths(&mut rounded_only.drawable.children, &mut |data| {
+            data.0 = paths.next().unwrap();
+        });
+        assert!(paths.next().is_none());
+
+        // Actually parse both spellings before rendering: render_rgba alone
+        // consumes geometry, not XML, so toggling short_paths proves nothing.
+        let mut absolute = rounded_only.clone();
+        map_paths(&mut absolute.drawable.children, &mut |data| {
+            data.0 = parse(&crate::xml::path_data(&data.0));
+        });
+        let mut relative = rounded_only.clone();
+        map_paths(&mut relative.drawable.children, &mut |data| {
+            data.0 = parse(&write(&data.0));
+        });
+        let absolute_pixels = absolute.render_rgba(240, 240).unwrap();
+        assert_eq!(absolute_pixels, relative.render_rgba(240, 240).unwrap());
+        let original_pixels = original.render_rgba(240, 240).unwrap();
+        let changed_alpha = original_pixels
+            .chunks_exact(4)
+            .zip(absolute_pixels.chunks_exact(4))
+            .filter(|(a, b)| a[3] != b[3])
+            .count();
+        assert!(
+            changed_alpha > 0,
+            "path rounding must exercise edge coverage"
+        );
     }
 
     #[test]

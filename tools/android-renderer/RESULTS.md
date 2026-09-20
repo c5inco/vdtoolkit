@@ -72,8 +72,11 @@ The writer's exactness contract applies **after** optimization's intentional
 rounding; it does not promise pixel identity between `convert` and `optimize`.
 
 This isolation was verified on the host on 2026-09-20, and the Android harness
-APKs built successfully. No Android device was connected for a new platform
-run. The table below records the earlier device runs, not this investigation.
+APKs built successfully. A fresh emulator.wtf run on Pixel 7 / API 33 passed
+`EllipticalGlowTest.testRealisticGlowRendersAsAnEllipse`: 1 test, 0 failures,
+0 errors, 0 skipped. This verifies the existing shape, gradient, and opaque
+interior checks; the absolute-versus-relative isolation above remains a host
+test. The table below records the earlier multi-API device runs.
 The opaque-interior assertion remains unchanged: the reported platform edge
 samples do not establish a maximum over all edge pixels. Before adding a
 platform edge bound, measure all pixels separately from the interior, including

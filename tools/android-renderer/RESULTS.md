@@ -54,9 +54,10 @@ circle. `docs/images/elliptical-glow.png` is the device render.
 
 It also compares the `convert` and `optimize` spellings, sampling only fully
 opaque pixels. `optimize` rounds path coordinates to three decimals, which can
-move an antialiased pixel on the corner arc by one coverage step; those are
-exactly the partially transparent pixels, so excluding them compares the
-interior, where a wrong gradient would show, and nothing else.
+change antialiased coverage on the corner arc. Requiring both pixels to be
+opaque compares the interior, where a wrong gradient would show, and nothing
+else. The full edge scan below supersedes the initial description of these
+differences as just one coverage step.
 
 Issue [#25](https://github.com/c5inco/vdtoolkit/issues/25) separates this
 rounding from short-path serialization. The fixture's suspicious relative
@@ -71,18 +72,31 @@ and gradient attributes, changes edge alpha even with absolute spelling.
 The writer's exactness contract applies **after** optimization's intentional
 rounding; it does not promise pixel identity between `convert` and `optimize`.
 
-This isolation was verified on the host on 2026-09-20, and the Android harness
-APKs built successfully. A fresh emulator.wtf run on Pixel 7 / API 33 passed
-`EllipticalGlowTest.testRealisticGlowRendersAsAnEllipse`: 1 test, 0 failures,
-0 errors, 0 skipped. This verifies the existing shape, gradient, and opaque
-interior checks; the absolute-versus-relative isolation above remains a host
-test. The table below records the earlier multi-API device runs.
-The opaque-interior assertion remains unchanged: the reported platform edge
-samples do not establish a maximum over all edge pixels. Before adding a
-platform edge bound, measure all pixels separately from the interior, including
-transparent-to-painted transitions, and compare alpha and premultiplied color
-(straight RGB is unstable near zero alpha). A host-renderer tolerance is not
-evidence for an Android-wide bound.
+On 2026-09-20, emulator.wtf verified the isolation on Pixel 7 / API 24, 26,
+and 33. `build.sh` independently rounds the converted absolute path to three
+decimals and substitutes it into the optimized XML, retaining all optimized
+group and paint attributes. This control does not decode the short path, which
+could copy a relative-spelling error into both sides of the comparison.
+`testRoundedAbsoluteAndShortPathsMatchEveryPixel` compares all 57,600 pixels
+exactly, including transparent and antialiased pixels. It also checks that
+the absolute control still differs in alpha from `convert`.
+
+| API | Glow tests | Absolute vs short differing pixels | Convert vs rounded differing alpha pixels | Maximum alpha difference |
+| ---: | --- | ---: | ---: | ---: |
+| 24 | 2 passed | 0 | 20 | 16 |
+| 26 | 2 passed | 0 | 428 | 38 |
+| 33 | 2 passed | 0 | 427 | 38 |
+
+All runs had zero failures, errors, and skips. Thus disabling relative spelling
+does not remove the edge changes on these APIs. The maximum of 38 on API 26
+and 33 shows why the original sampled edge pixels did not establish a bound.
+These measurements apply to this fixture at 240 × 240, not every drawable or
+Android version. The spelling comparison has zero tolerance; the existing
+convert-versus-optimize opaque-interior tolerance remains unchanged. No general
+edge tolerance is introduced. Any future color comparison at edges should use
+premultiplied color, since straight RGB is unstable near zero alpha.
+
+The earlier multi-API shape and interior checks were:
 
 | Device | API | Result |
 | --- | ---: | --- |

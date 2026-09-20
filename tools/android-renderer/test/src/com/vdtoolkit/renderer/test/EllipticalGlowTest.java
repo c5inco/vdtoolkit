@@ -50,11 +50,10 @@ public final class EllipticalGlowTest extends InstrumentationTestCase {
         }
 
         // Both spellings must agree in the interior. `optimize` rounds path
-        // coordinates to three decimals, which can shift an antialiased pixel
-        // on the rounded corner's arc by one coverage step. Those pixels are
-        // exactly the partially transparent ones, so only fully opaque pixels
-        // are compared: that is the interior by definition, and it is where a
-        // wrong gradient would show.
+        // coordinates to three decimals, which can change antialiased coverage
+        // on the rounded corner's arc. Compare only pixels opaque in both
+        // renders here, where a wrong gradient would show. The separate
+        // absolute-versus-short test checks every edge pixel without tolerance.
         int compared = 0;
         for (int y = 0; y < SIZE; y += 5) {
             for (int x = 0; x < SIZE; x += 5) {
@@ -69,6 +68,33 @@ public final class EllipticalGlowTest extends InstrumentationTestCase {
             }
         }
         assertTrue("too few opaque pixels compared: " + compared, compared > 1500);
+    }
+
+    public void testRoundedAbsoluteAndShortPathsMatchEveryPixel() {
+        if (Build.VERSION.SDK_INT < 24) return;
+
+        Bitmap converted = render("elliptical_glow");
+        Bitmap absolute = render("elliptical_glow_rounded_absolute");
+        Bitmap optimized = render("elliptical_glow_optimized");
+        int changedAlpha = 0;
+        int maxAlphaDifference = 0;
+        for (int y = 0; y < SIZE; y++) {
+            for (int x = 0; x < SIZE; x++) {
+                int a = absolute.getPixel(x, y);
+                int b = optimized.getPixel(x, y);
+                // No tolerance or opaque filter: spelling must preserve even
+                // antialiased and transparent-to-painted edge pixels exactly.
+                assertEquals("rounded absolute vs short at " + x + "," + y, a, b);
+                int difference = Math.abs(Color.alpha(converted.getPixel(x, y)) - Color.alpha(a));
+                if (difference != 0) changedAlpha++;
+                maxAlphaDifference = Math.max(maxAlphaDifference, difference);
+            }
+        }
+        // The control must still reproduce the rounding-related edge change.
+        assertTrue("expected rounding to change edge alpha", changedAlpha > 0);
+        android.util.Log.i("EllipticalGlowTest", "API " + Build.VERSION.SDK_INT
+                + ": all " + SIZE * SIZE + " absolute/short pixels identical; rounding changed "
+                + changedAlpha + " alpha pixels, maximum difference " + maxAlphaDifference);
     }
 
     private void assertNear(String message, int actual, int expected) {

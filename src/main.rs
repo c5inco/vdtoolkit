@@ -680,17 +680,11 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
     let mut stale: Vec<PathBuf> = Vec::new();
     let mut unused: Vec<PathBuf> = Vec::new();
     let mipmap_dirs = mipmap_dirs(&args.output);
+    let drawable_dirs = resource_dirs(&args.output, "drawable");
     for name in [&foreground_name, &background_name, &monochrome_name] {
         // Every file named for the layer in any mipmap folder is a version of
         // the one @mipmap resource a raster layer is written as.
-        let alternatives: Vec<PathBuf> = mipmap_dirs
-            .iter()
-            .flat_map(|dir| {
-                MIPMAP_EXTENSIONS
-                    .iter()
-                    .map(move |extension| dir.join(name).with_extension(extension))
-            })
-            .collect();
+        let alternatives = resource_files(&mipmap_dirs, name);
         // When this run writes that resource into mipmap-nodpi, every other
         // version breaks the icon: one in the same folder is the same resource
         // twice, which aapt2 refuses to build, and one in a density folder,
@@ -698,7 +692,9 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
         // mipmap-nodpi on a device of that density, so the old layer keeps
         // showing. They are versions of the resource vdt writes, so nothing
         // else can be using them.
-        let wrote_raster = alternatives.iter().any(|path| written.contains(&path));
+        let wrote_raster = images
+            .iter()
+            .any(|(path, _)| android_resource_name(path) == Some(name));
         for path in alternatives
             .into_iter()
             .filter(|path| !written.contains(&path))
@@ -711,9 +707,11 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
         }
         // A vector layer is a @drawable and a raster one a @mipmap, so one left
         // behind by the other form never collides with it.
-        let vector = drawable_dir.join(name).with_extension("xml");
-        if !written.contains(&&vector) {
-            unused.push(vector);
+        for path in resource_files(&drawable_dirs, name)
+            .into_iter()
+            .filter(|path| !written.contains(&path))
+        {
+            unused.push(path);
         }
     }
     // A color background is a @color, which nothing else vdt writes collides
@@ -725,6 +723,16 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
         .with_extension("xml");
     if !written.contains(&&background_values) {
         unused.push(background_values);
+    }
+    // These adaptive XML resources are always written. Another file with the
+    // same resource name beside either one makes aapt2 reject the project,
+    // whether or not this run also writes a legacy icon.
+    for name in [&args.name, &round_name] {
+        stale.extend(
+            resource_files(std::slice::from_ref(&mipmap_dir), name)
+                .into_iter()
+                .filter(|path| !written.contains(&path)),
+        );
     }
     if let (true, Some(background), Some(foreground)) = (args.legacy, &background, &foreground) {
         let legacy = vdtoolkit::Asset::legacy_launcher_icon(background, foreground);
@@ -780,7 +788,7 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
         // refuses to build, and anywhere else it is chosen over vdt's version on
         // some device. Android Studio writes the legacy icon as .webp into every
         // density folder, so a Studio project hits both cases. The adaptive
-        // icon in mipmap-anydpi-v26 is written this run, so it stays.
+        // icon directory is owned by the adaptive resources handled above.
         let written: Vec<&PathBuf> = files
             .iter()
             .map(|(path, _)| path)
@@ -790,11 +798,8 @@ fn adaptive(args: AdaptiveArgs) -> Result<Outcome> {
             stale.extend(
                 mipmap_dirs
                     .iter()
-                    .flat_map(|dir| {
-                        MIPMAP_EXTENSIONS
-                            .iter()
-                            .map(move |extension| dir.join(name).with_extension(extension))
-                    })
+                    .filter(|dir| *dir != &mipmap_dir)
+                    .flat_map(|dir| resource_files(std::slice::from_ref(dir), name))
                     .filter(|path| !written.contains(&path)),
             );
         }
@@ -856,12 +861,22 @@ fn format_xml(xml: String, pretty: bool) -> String {
     }
 }
 
-/// File extensions a mipmap resource can carry.
-const MIPMAP_EXTENSIONS: [&str; 5] = ["png", "webp", "jpg", "jpeg", "xml"];
-
 /// Every mipmap folder in a resource directory, qualified or not, in a stable
 /// order.
 fn mipmap_dirs(res: &Path) -> Vec<PathBuf> {
+    let mut dirs = resource_dirs(res, "mipmap");
+    // mipmap-nodpi is where this run writes, and may not exist yet.
+    let nodpi = res.join("mipmap-nodpi");
+    if !dirs.contains(&nodpi) {
+        dirs.push(nodpi);
+    }
+    dirs.sort();
+    dirs
+}
+
+/// Every folder for one Android resource type, qualified or not, in a stable
+/// order.
+fn resource_dirs(res: &Path, resource_type: &str) -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = std::fs::read_dir(res)
         .into_iter()
         .flatten()
@@ -870,17 +885,35 @@ fn mipmap_dirs(res: &Path) -> Vec<PathBuf> {
         .filter(|entry| {
             let name = entry.file_name();
             let name = name.to_string_lossy();
-            name == "mipmap" || name.starts_with("mipmap-")
+            name == resource_type
+                || name
+                    .strip_prefix(resource_type)
+                    .is_some_and(|qualifiers| qualifiers.starts_with('-'))
         })
         .map(|entry| entry.path())
         .collect();
-    // mipmap-nodpi is where this run writes, and may not exist yet.
-    let nodpi = res.join("mipmap-nodpi");
-    if !dirs.contains(&nodpi) {
-        dirs.push(nodpi);
-    }
     dirs.sort();
     dirs
+}
+
+/// Existing files in `dirs` whose Android resource name exactly matches
+/// `name`. Android derives a file resource's name from everything before its
+/// first dot, so this includes compound extensions such as `.9.png` without
+/// treating similarly prefixed resources as alternatives.
+fn resource_files(dirs: &[PathBuf], name: &str) -> Vec<PathBuf> {
+    let mut files: Vec<PathBuf> = dirs
+        .iter()
+        .flat_map(|dir| std::fs::read_dir(dir).into_iter().flatten().flatten())
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+        .map(|entry| entry.path())
+        .filter(|path| android_resource_name(path) == Some(name))
+        .collect();
+    files.sort();
+    files
+}
+
+fn android_resource_name(path: &Path) -> Option<&str> {
+    path.file_name()?.to_str()?.split('.').next()
 }
 
 /// Read a raster layer, report what it will look like, and return the file to

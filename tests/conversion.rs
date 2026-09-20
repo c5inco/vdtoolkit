@@ -2115,6 +2115,194 @@ fn cli_adaptive_clears_mipmap_versions_that_would_shadow_a_raster_layer() {
 }
 
 #[test]
+fn cli_adaptive_removes_nine_patch_resource_collisions() {
+    let temp = tempfile::tempdir().unwrap();
+    let foreground = temp.path().join("foreground.svg");
+    let background = temp.path().join("background.svg");
+    fs::write(
+        &foreground,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M8 8H16V16H8Z"/></svg>"##,
+    )
+    .unwrap();
+    fs::write(
+        &background,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108"><rect width="108" height="108" fill="#3DDC84"/></svg>"##,
+    )
+    .unwrap();
+    let plant = |res: &std::path::Path, relative: &str| {
+        let path = res.join(relative);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, b"stale").unwrap();
+    };
+
+    // A nine-patch has a compound extension but the same Android resource
+    // name as the raster layer vdt writes.
+    let raster_res = temp.path().join("raster-res");
+    for relative in [
+        "mipmap-nodpi/ic_launcher_background.9.png",
+        "mipmap-nodpi/ic_launcher_background_old.9.png",
+    ] {
+        plant(&raster_res, relative);
+    }
+    let output = Command::new(env!("CARGO_BIN_EXE_vdt"))
+        .args(["adaptive", "--foreground"])
+        .arg(&foreground)
+        .args([
+            "--background-image",
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/background_square.jpg"
+            ),
+            "-o",
+        ])
+        .arg(&raster_res)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        !raster_res
+            .join("mipmap-nodpi/ic_launcher_background.9.png")
+            .exists(),
+        "{stderr}"
+    );
+    assert!(
+        raster_res
+            .join("mipmap-nodpi/ic_launcher_background_old.9.png")
+            .is_file()
+    );
+
+    // The same resource-name rule applies to legacy launcher icons in every
+    // mipmap directory and does not catch similarly prefixed resources.
+    let legacy_res = temp.path().join("legacy-res");
+    for relative in [
+        "mipmap-hdpi/ic_launcher.9.png",
+        "mipmap-hdpi/ic_launcher_round.9.png",
+        "mipmap-hdpi/ic_launcher_old.9.png",
+    ] {
+        plant(&legacy_res, relative);
+    }
+    let output = Command::new(env!("CARGO_BIN_EXE_vdt"))
+        .args(["adaptive", "--foreground"])
+        .arg(&foreground)
+        .args(["--background"])
+        .arg(&background)
+        .args(["--legacy", "-o"])
+        .arg(&legacy_res)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    for relative in [
+        "mipmap-hdpi/ic_launcher.9.png",
+        "mipmap-hdpi/ic_launcher_round.9.png",
+    ] {
+        assert!(!legacy_res.join(relative).exists(), "{relative}\n{stderr}");
+    }
+    assert!(
+        legacy_res
+            .join("mipmap-hdpi/ic_launcher_old.9.png")
+            .is_file()
+    );
+}
+
+#[test]
+fn cli_adaptive_without_legacy_removes_only_same_folder_icon_collisions() {
+    let temp = tempfile::tempdir().unwrap();
+    let foreground = temp.path().join("foreground.svg");
+    fs::write(
+        &foreground,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M8 8H16V16H8Z"/></svg>"##,
+    )
+    .unwrap();
+    let res = temp.path().join("res");
+    for relative in [
+        "mipmap-anydpi-v26/ic_launcher.png",
+        "mipmap-anydpi-v26/ic_launcher_round.webp",
+        "mipmap-anydpi-v26/ic_launcher_old.png",
+        "mipmap-hdpi/ic_launcher.9.png",
+    ] {
+        let path = res.join(relative);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, b"stale").unwrap();
+    }
+
+    let output = Command::new(env!("CARGO_BIN_EXE_vdt"))
+        .args(["adaptive", "--foreground"])
+        .arg(&foreground)
+        .args(["--background-color", "#3DDC84", "-o"])
+        .arg(&res)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    for relative in [
+        "mipmap-anydpi-v26/ic_launcher.png",
+        "mipmap-anydpi-v26/ic_launcher_round.webp",
+    ] {
+        assert!(!res.join(relative).exists(), "{relative}\n{stderr}");
+    }
+    for relative in [
+        "mipmap-anydpi-v26/ic_launcher_old.png",
+        "mipmap-hdpi/ic_launcher.9.png",
+    ] {
+        assert!(res.join(relative).is_file(), "{relative} was removed");
+    }
+}
+
+#[test]
+fn cli_adaptive_notes_qualified_drawable_layer_leftovers() {
+    let temp = tempfile::tempdir().unwrap();
+    let foreground = temp.path().join("foreground.svg");
+    let background = temp.path().join("background.svg");
+    fs::write(
+        &foreground,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M8 8H16V16H8Z"/></svg>"##,
+    )
+    .unwrap();
+    fs::write(
+        &background,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108"><rect width="108" height="108" fill="#3DDC84"/></svg>"##,
+    )
+    .unwrap();
+    let res = temp.path().join("res");
+    for relative in [
+        "drawable/ic_launcher_background.xml",
+        "drawable-v24/ic_launcher_foreground.xml",
+        "drawable-v24/ic_launcher_foreground_old.xml",
+    ] {
+        let path = res.join(relative);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, b"project resource").unwrap();
+    }
+
+    let output = Command::new(env!("CARGO_BIN_EXE_vdt"))
+        .args(["adaptive", "--foreground"])
+        .arg(&foreground)
+        .args(["--background"])
+        .arg(&background)
+        .args(["-o"])
+        .arg(&res)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    for relative in [
+        "drawable/ic_launcher_background.xml",
+        "drawable-v24/ic_launcher_foreground.xml",
+    ] {
+        assert!(res.join(relative).is_file(), "{relative} was removed");
+        assert!(
+            stderr.contains(&format!("{relative}; remove it")),
+            "{relative}\n{stderr}"
+        );
+    }
+    let bystander = "drawable-v24/ic_launcher_foreground_old.xml";
+    assert!(res.join(bystander).is_file());
+    assert!(!stderr.contains(bystander), "{stderr}");
+}
+
+#[test]
 fn cli_legacy_replaces_the_icon_android_studio_left_behind() {
     let temp = tempfile::tempdir().unwrap();
     // Flat art needs API 21 and gets a vector in mipmap/; a gradient needs

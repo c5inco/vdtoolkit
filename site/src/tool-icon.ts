@@ -59,6 +59,7 @@ export class IconTool {
     monochrome: { name: "launcher-monochrome.svg", text: monochromeSample },
   };
   private result: AdaptiveIconResult | null = null;
+  private monoWarning: string | null = null;
   private selectedFile: string | null = null;
   private readonly encoder = new TextEncoder();
   private readonly ck: CanvasKit;
@@ -172,12 +173,15 @@ export class IconTool {
     }
 
     const { layers } = this.result;
+    this.monoWarning = null;
     for (const [layer, analysis] of Object.entries(layers) as [LayerId | "legacy", Analysis][]) {
       if (layer === "legacy") continue;
       const warnings = analysis.diagnostics.filter((d) => d.severity !== "info");
-      if (warnings.length) {
-        this.el.notes[layer].append(note("differs", warnings.map((d) => d.message).join(". ") + "."));
-      }
+      if (!warnings.length) continue;
+      const text = warnings.map((d) => d.message).join(". ") + ".";
+      // Monochrome feedback sits on the themed preview itself, not in the form.
+      if (layer === "monochrome") this.monoWarning = text;
+      else this.el.notes[layer].append(note("differs", text));
     }
 
     this.el.zip.disabled = false;
@@ -326,7 +330,8 @@ export class IconTool {
       );
       canvas.setAttribute("role", "img");
       canvas.setAttribute("aria-label", "Themed icon from the monochrome layer");
-      tiles.push(tile("Themed", "Android 13+, colors stand in for the wallpaper's", canvas));
+      const themed = tile("Themed", "Android 13+, colors stand in for the wallpaper's", canvas, this.monoWarning ? warnBadge(this.monoWarning) : undefined);
+      tiles.push(themed);
     }
     this.el.previews.replaceChildren(...tiles);
   }
@@ -373,14 +378,36 @@ export class IconTool {
   }
 }
 
-function tile(label: string, source: string, canvas: HTMLCanvasElement): HTMLElement {
+function tile(label: string, source: string, canvas: HTMLCanvasElement, badge?: HTMLElement): HTMLElement {
   const figure = document.createElement("figure");
   figure.className = "tile";
+  // The stage shrink-wraps the canvas so the badge anchors to the render,
+  // not to the figure, which a long caption can widen.
+  const stage = document.createElement("div");
+  stage.className = "tile-stage";
+  stage.append(canvas);
+  if (badge) stage.append(badge);
   const caption = document.createElement("figcaption");
   caption.append(
     Object.assign(document.createElement("span"), { className: "tile-label", textContent: label }),
     Object.assign(document.createElement("span"), { className: "tile-source", textContent: source }),
   );
-  figure.append(canvas, caption);
+  figure.append(stage, caption);
   return figure;
+}
+
+function warnBadge(message: string): HTMLElement {
+  const badge = document.createElement("span");
+  badge.className = "tile-warn";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "tile-warn-btn";
+  button.setAttribute("aria-label", `Warning: ${message}`);
+  button.innerHTML = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.75 14.75 13.25H1.25Z"/><path d="M8 6.5v2.75"/><path d="M8 11.25v.01"/></svg>`;
+  const tip = document.createElement("span");
+  tip.className = "tile-warn-tip";
+  tip.setAttribute("role", "tooltip");
+  tip.textContent = message;
+  badge.append(button, tip);
+  return badge;
 }

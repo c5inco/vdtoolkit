@@ -99,28 +99,62 @@ a { color: inherit; }
 .samples button[aria-pressed="true"] { color: var(--ink); background: var(--frame); font-weight: 600; }
 
 .repo {
-  margin-left: auto;
   display: inline-flex;
   align-items: center;
   gap: 0.45rem;
+  margin-left: auto;
   color: var(--ink-2);
   text-decoration: none;
 }
 .repo:hover { color: var(--ink); }
 .repo svg { display: block; }
 
-/* The specimen sheet: ruled strips, then a heavy rule over the grid. */
+/* The method note lives behind a link next to each section head: a tooltip on
+   hover/focus. The auto margin keeps the link tucked against the head's label
+   while the controls stay flush right. */
+.how { position: relative; }
+.details-tag .how, .block-head .how { margin-right: auto; }
+.how-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink-2);
+  font-size: var(--s-1);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+  cursor: pointer;
+}
+.how-link:hover { color: var(--ink); }
+.how-tip {
+  position: absolute;
+  top: calc(100% + 0.6rem);
+  left: 0;
+  z-index: 40;
+  width: 30rem;
+  max-width: calc(100vw - 4rem);
+  padding: 0.85rem 1rem;
+  border-radius: 6px;
+  background: var(--ink);
+  color: var(--paper);
+  font-size: var(--s-1);
+  line-height: 1.55;
+  visibility: hidden;
+  opacity: 0;
+}
+.how:hover .how-tip, .how:focus-within .how-tip { visibility: visible; opacity: 1; }
+.how-tip code { font-variation-settings: var(--mono); font-size: 0.88em; }
+
+/* The specimen sheet: a strip of apparatus, then a heavy rule over the grid. */
 
 .table { padding: 1rem clamp(1rem, 3vw, 2rem) 1.5rem; }
 
-/* A ruled strip is one row of the sheet's apparatus. */
+/* A strip is one row of the sheet's apparatus. */
 .strip {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 0.5rem 1.25rem;
   padding: 0.7rem 0;
-  border-bottom: 1px solid var(--rule);
 }
 
 .strip-tag, .details-label {
@@ -139,7 +173,7 @@ a { color: inherit; }
   align-items: baseline;
   justify-content: space-between;
   gap: 0.5rem 2rem;
-  padding-bottom: 1rem;
+  padding-bottom: 0.75rem;
 }
 
 .source-or { color: var(--ink-3); font-size: var(--s-1); }
@@ -168,20 +202,32 @@ a { color: inherit; }
   .details-tag { grid-column: 1 / -1; }
   .details .column { padding-right: 1.25rem; }
   .details .column + .column { border-left: 1px solid var(--rule); padding-left: 1.25rem; }
-  /* Head is always two rows — version, then verdict — so the rule under it
-     sits at the same height in every column, wrapped chip or not. */
+  /* Head is always two rows — version and source share the first when they
+     fit, the verdict takes the second — so the rule under it sits at the same
+     height in every column, wrapped chip or not. */
   .details .column-head { flex-direction: column; align-items: flex-start; row-gap: 0.3rem; }
   .details .status { margin-left: 0; padding-block: 0.18rem; }
   .details .column:first-child .column-head { margin-right: -1.25rem; padding-right: 1.25rem; }
   .details .column + .column .column-head { margin-left: -1.25rem; padding-left: 1.25rem; }
+  .details .column:first-child .meta { margin-right: -1.25rem; padding-right: 1.25rem; }
+  .details .column + .column .meta { margin-left: -1.25rem; padding-left: 1.25rem; }
   .details .xml-slot { grid-column: 1 / -1; padding-top: 1.5rem; border-top: 1px solid var(--rule); }
 }
 
 @media (min-width: 84rem) {
   .details { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 2fr); }
+  /* The tag row spans only the render columns, so the density and zoom
+     controls sit with the comparison, not above the XML pane. Everything is
+     placed explicitly so no auto-placed column slips into the free cell
+     beside the tag row. */
+  .details-tag { grid-column: 1 / 3; }
+  .details .column:first-child { grid-column: 1; grid-row: 2; }
+  .details .column + .column { grid-column: 2; grid-row: 2; }
   .details .column + .column .column-head { margin-right: -1.25rem; padding-right: 1.25rem; }
+  .details .column + .column .meta { margin-right: -1.25rem; padding-right: 1.25rem; }
   .details .xml-slot {
-    grid-column: auto;
+    grid-column: 3;
+    grid-row: 2;
     padding-top: 0;
     padding-left: 1.25rem;
     border-top: 0;
@@ -229,6 +275,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--ink); }
   border-bottom: 1px solid var(--rule);
 }
 .title { font-size: var(--s1); font-weight: 700; }
+.head-names { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 0.5rem; min-width: 0; }
 .source { color: var(--ink-3); font-size: var(--s-1); font-variation-settings: var(--mono); min-width: 0; }
 
 /* Verdict chips: a tinted lozenge is scannable from across the room; the
@@ -237,26 +284,15 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--ink); }
   margin-left: auto;
   display: inline-flex;
   align-items: center;
-  gap: 0.45em;
   padding: 0.18rem 0.65rem;
   border-radius: 999px;
   font-size: var(--s-1);
   font-weight: 600;
   white-space: nowrap;
 }
-.status::before {
-  content: "";
-  width: 0.5em;
-  height: 0.5em;
-  border-radius: 50%;
-  background: currentColor;
-}
 .column[data-state="reference"] .status { color: var(--ink-3); font-weight: 400; padding-inline: 0; }
-.column[data-state="reference"] .status::before { display: none; }
 .column[data-state="same"] .status { color: var(--same-ink); background: color-mix(in srgb, var(--same) 13%, transparent); }
-.column[data-state="same"] .status::before { background: var(--same); }
 .column[data-state="differs"] .status { color: var(--differs-ink); background: color-mix(in srgb, var(--differs) 15%, transparent); }
-.column[data-state="differs"] .status::before { background: var(--differs); }
 .column[data-state="error"] .status { color: var(--fails); background: color-mix(in srgb, var(--fails) 11%, transparent); }
 
 /* The render sits on its own viewport-unit grid; the drawable's edge is the only box. */
@@ -292,11 +328,15 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--ink); }
 
 .meta { display: flex; gap: 1rem; font-size: var(--s-1); color: var(--ink-3); font-variation-settings: var(--mono); }
 
+/* The meta line is a ruled row of the sheet; where columns sit side by side
+   the rule reaches into the gutters, so the lines join like the head rules. */
+.details .meta { padding-top: 0.55rem; border-top: 1px solid var(--rule); }
+
 .note { font-size: var(--s-1); line-height: 1.45; max-width: 40ch; }
 .note.differs { color: var(--differs-ink); }
 .note.error { color: var(--fails); }
 
-.method { max-width: 66ch; margin-top: 1.5rem; padding-top: 0.75rem; border-top: 1px solid var(--rule); color: var(--ink-3); font-size: var(--s-1); }
+.method { max-width: 66ch; margin: 1.5rem -1.25rem 0; padding: 0.75rem 1.25rem 0; border-top: 1px solid var(--rule); color: var(--ink-3); font-size: var(--s-1); }
 
 /* XML: one pane, two costumes — a column of the details grid for the
    drawable tool, a wide side-by-side card for the icon tool. */
@@ -309,32 +349,51 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--ink); }
 }
 main > .xml-section { padding: 1.5rem clamp(1rem, 3vw, 2rem) 3rem; border-top: 1px solid var(--rule); }
 
-#icon-xml-slot { margin-top: 2.5rem; padding-top: 1.5rem; border-top: 2px solid var(--ink); }
+/* The XML pane joins the files block: another ruled row of the output column,
+   stacking in the narrow measure. */
+#icon-xml-slot { margin: 1.5rem 0 0 -1.25rem; padding: 1rem 0 0 1.25rem; border-top: 1px solid var(--rule); }
+#icon-xml-slot .xml-section { grid-template-columns: minmax(0, 1fr); gap: 1rem; }
+#icon-xml-slot .xml-side h2 { overflow-wrap: anywhere; }
 
-/* In the details grid the pane stacks: head, card, then ruled facts. */
+/* In the details grid the pane stacks: a header cell whose subtitle row is
+   the facts, then the code bleeding to the column's edges, then diagnostics. */
 @media (min-width: 84rem) {
   #drawable-xml-slot .xml-section { display: flex; flex-direction: column; gap: 1rem; }
   #drawable-xml-slot .xml-side { display: contents; }
   #drawable-xml-slot .xml-side h2 {
     order: 0;
-    /* Matches the two-row render heads: 1.5·s1 + 0.3 gap + 1.5·s-1 + 2·0.18 + 0.5 pad. */
-    min-height: 4.07rem;
     margin-left: -1.25rem;
     padding-left: 1.25rem;
-    padding-bottom: 0.5rem;
+    /* The facts sit right below as the cell's second row: keep the 0.3rem row
+       gap the render heads use. */
+    margin-bottom: calc(0.3rem - 1rem);
+  }
+  /* The facts flow on one line as the header cell's subtitle. The cell's
+     rule hangs off this row — reaching into the gutter like the other heads —
+     so it closes at the same height as the render heads: 1.5·s1 + 0.3 gap +
+     1.5·s-1 + 0.18 + 0.68 pads + the 1px border. */
+  #drawable-xml-slot .facts {
+    order: 1;
+    display: flex;
+    flex-wrap: wrap;
+    column-gap: 0.25rem;
+    margin-left: -1.25rem;
+    padding-left: 1.25rem;
+    padding-top: 0.18rem;
+    padding-bottom: 0.68rem;
     border-bottom: 1px solid var(--rule);
   }
-  #drawable-xml-slot .xml-card { order: 1; align-self: stretch; }
-  #drawable-xml-slot .facts { order: 2; }
-  #drawable-xml-slot .diagnostics { order: 3; }
-  /* A plain ruled table: no column gap, so every line spans the whole width. */
-  #drawable-xml-slot .facts {
-    grid-template-columns: minmax(0, 1fr) max-content;
-    gap: 0;
-    border-top: 1px solid var(--rule);
+  #drawable-xml-slot .facts dd { margin-right: 0.65rem; }
+  /* No card frame: the pane meets the gutter divider and the column's far
+     edge, so it reads as part of the sheet. */
+  #drawable-xml-slot .xml-card {
+    order: 2;
+    align-self: stretch;
+    margin-left: -1.25rem;
+    border: 0;
+    border-radius: 0;
   }
-  #drawable-xml-slot .facts dt, #drawable-xml-slot .facts dd { padding: 0.3rem 0; border-bottom: 1px solid var(--rule); }
-  #drawable-xml-slot .facts dd { padding-left: 1rem; text-align: right; }
+  #drawable-xml-slot .diagnostics { order: 3; }
   #drawable-xml-slot .xml { max-height: 24rem; }
 }
 
@@ -437,15 +496,6 @@ main > .xml-section { padding: 1.5rem clamp(1rem, 3vw, 2rem) 3rem; border-top: 1
 }
 body.dragging .drop-veil { display: grid; }
 
-/* Colophon: the method note, said once, big enough to read. */
-
-.colophon {
-  padding: 2rem clamp(1rem, 3vw, 2rem) 3rem;
-  border-top: 2px solid var(--ink);
-}
-.colophon-lede { max-width: 76ch; font-size: var(--s1); line-height: 1.55; color: var(--ink-2); }
-.colophon code { font-variation-settings: var(--mono); font-size: 0.88em; color: var(--ink); }
-
 @media (max-width: 64rem) {
   .columns { grid-template-columns: 1fr; gap: 2.5rem; }
   .xml-section { grid-template-columns: 1fr; }
@@ -465,6 +515,7 @@ body.dragging .drop-veil { display: grid; }
 
 @media (prefers-reduced-motion: no-preference) {
   .open, .samples button, .actions button { transition: background-color 120ms, color 120ms; }
+  .how-tip, .tile-warn-tip { transition: opacity 120ms, visibility 120ms; }
 }
 
 /* Tool switch */
@@ -482,16 +533,19 @@ body.dragging .drop-veil { display: grid; }
 .tools button:hover { color: var(--ink); background: var(--frame); }
 .tools button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
 
-/* Launcher icon tool */
+/* Launcher icon tool: the same specimen sheet as the drawable grid. Hairline
+   dividers separate the columns instead of a gap, and head rules reach into
+   the gutters with negative margins, so every line connects. */
 
 .icon-grid {
   display: grid;
   grid-template-columns: minmax(16rem, 20rem) minmax(0, 1fr) minmax(14rem, 17rem);
-  gap: 2.5rem;
+  row-gap: 2.5rem;
   align-items: start;
-  padding-top: 0.75rem;
-  border-top: 2px solid var(--ink);
 }
+.icon-grid > * { min-width: 0; }
+.icon-grid > *:not(:last-child) { padding-right: 1.25rem; }
+.icon-grid > * + * { border-left: 1px solid var(--rule); padding-left: 1.25rem; }
 
 .icon-grid h2 { font-size: var(--s1); font-weight: 700; margin-bottom: 0.75rem; }
 
@@ -501,9 +555,26 @@ body.dragging .drop-veil { display: grid; }
   align-items: baseline;
   justify-content: space-between;
   gap: 0.5rem 2rem;
-  margin-bottom: 0.75rem;
+  margin: 0 -1.25rem 0.75rem;
+  padding: 0 1.25rem 0.5rem;
+  border-bottom: 1px solid var(--rule);
 }
 .block-head h2 { margin-bottom: 0; }
+
+/* The files column's head rule closes at the same height as the previews'. */
+.files-block h2 {
+  margin: 0 0 0.75rem -1.25rem;
+  padding: 0 0 0.5rem 1.25rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+/* Fieldsets are rows of the sheet: a hairline above each, reaching the gutter divider. */
+.inputs fieldset + fieldset {
+  margin-right: -1.25rem;
+  padding-top: 1rem;
+  padding-right: 1.25rem;
+  border-top: 1px solid var(--rule);
+}
 
 .inputs { display: grid; gap: 1.25rem; }
 .inputs fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
@@ -513,19 +584,31 @@ body.dragging .drop-veil { display: grid; }
 .layer-file { font-variation-settings: var(--mono); color: var(--ink-2); overflow-wrap: anywhere; }
 .radio { display: inline-flex; align-items: center; gap: 0.35rem; }
 
-.pick, .use-sample {
+/* "Custom" is a file picker, dressed like one; the samples are content, so
+   they read as plain text buttons, like the drawable tool's sample row. */
+.pick {
   position: relative;
   padding: 0.15rem 0.6rem;
   border: 1px solid var(--rule);
   border-radius: 999px;
   background: var(--paper);
-  color: var(--ink);
   font: inherit;
   cursor: pointer;
 }
-.pick:hover, .use-sample:hover { border-color: var(--ink); }
+.pick:hover { border-color: var(--ink); }
 .pick:focus-within { outline: 2px solid var(--ink); outline-offset: 3px; }
 .pick input { position: absolute; inset: 0; opacity: 0; width: 100%; cursor: pointer; }
+
+.use-sample {
+  padding: 0.15rem 0.6rem;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--ink-2);
+  font: inherit;
+  cursor: pointer;
+}
+.use-sample:hover { color: var(--ink); background: var(--frame); }
 
 input[type="color"] { width: 2rem; height: 1.6rem; padding: 0; border: 1px solid var(--rule); border-radius: 4px; background: none; }
 #bg-hex, #icon-name { padding: 0.15rem 0.4rem; border: 1px solid var(--rule); border-radius: 4px; background: var(--paper); font-variation-settings: var(--mono); font-size: var(--s-1); }
@@ -555,7 +638,41 @@ input[type="color"] { width: 2rem; height: 1.6rem; padding: 0; border: 1px solid
 .command::before { content: "$ "; color: var(--ink-3); }
 
 .previews { display: flex; flex-wrap: wrap; gap: 1.5rem 2rem; }
-.tile { margin: 0; display: grid; gap: 0.4rem; max-width: 100%; }
+.tile { position: relative; margin: 0; display: grid; gap: 0.4rem; max-width: 100%; }
+
+/* A layer warning belongs to the render, not the form: an amber marker on the
+   tile's canvas, the message in a tooltip behind it. */
+.tile-stage { position: relative; justify-self: start; }
+.tile-warn { position: absolute; top: 0.45rem; right: 0.45rem; }
+.tile-warn-btn {
+  display: grid;
+  place-items: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--differs) 45%, transparent);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--differs-ink);
+  cursor: pointer;
+}
+.tile-warn-btn svg { display: block; width: 0.95rem; height: 0.95rem; }
+.tile-warn-tip {
+  position: absolute;
+  top: calc(100% + 0.4rem);
+  right: 0;
+  z-index: 40;
+  width: 16rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: 6px;
+  background: var(--ink);
+  color: var(--paper);
+  font-size: var(--s-1);
+  line-height: 1.45;
+  visibility: hidden;
+  opacity: 0;
+}
+.tile-warn:hover .tile-warn-tip, .tile-warn:focus-within .tile-warn-tip { visibility: visible; opacity: 1; }
 .tile canvas {
   display: block;
   max-width: 100%;
@@ -607,9 +724,16 @@ input[type="color"] { width: 2rem; height: 1.6rem; padding: 0; border: 1px solid
 
 @media (max-width: 72rem) {
   .icon-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-  .files-block { grid-column: 1 / -1; }
+  .files-block { grid-column: 1 / -1; border-left: 0; padding-left: 0; }
+  .files-block h2 { margin-left: 0; padding-left: 0; }
+  #icon-xml-slot { margin-left: 0; padding-left: 0; }
 }
 
 @media (max-width: 48rem) {
   .icon-grid { grid-template-columns: 1fr; }
+  .icon-grid > *:not(:last-child) { padding-right: 0; }
+  .icon-grid > * + * { border-left: 0; padding-left: 0; }
+  .block-head { margin-inline: 0; padding-inline: 0; }
+  .inputs fieldset + fieldset { margin-right: 0; padding-right: 0; }
+  .method { margin-inline: 0; padding-inline: 0; }
 }

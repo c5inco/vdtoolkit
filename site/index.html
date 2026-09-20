@@ -12,7 +12,7 @@
 </head>
 <body data-tool="drawable">
   <header class="bar">
-    <a class="mark" href="./">vdt</a>
+    <a class="mark" href="./">vdtoolkit</a>
     <span class="claim">SVG to VectorDrawable</span>
     <nav class="tools" aria-label="Tools">
       <button type="button" data-tool="drawable">Drawable</button>
@@ -37,7 +37,11 @@
       </div>
       <div class="details">
         <div class="details-tag">
-          <span class="details-label">Compare — Android 7 vs latest</span>
+          <span class="details-label">Comparison</span>
+          <span class="how">
+            <button type="button" class="how-link">How are these drawn?</button>
+            <span class="how-tip" role="tooltip">Each view runs a line-by-line port of that Android version's own drawing code — AOSP <code>VectorDrawable</code> at <code>android-7.0.0_r1</code> and main — on Skia via CanvasKit, right here in your browser. Shapes, clips and gradients match the devices we test on. Icon geometry follows <code>AdaptiveIconDrawable</code> and <code>config_icon_mask</code>.</span>
+          </span>
           <div class="controls">
             <label>Density
               <select id="density">
@@ -66,7 +70,8 @@
             <legend>Foreground</legend>
             <div class="layer-row">
               <span class="layer-file" id="fg-name"></span>
-              <label class="pick">Choose<input type="file" id="fg-file" accept=".svg,image/svg+xml"></label>
+              <label class="pick">Custom<input type="file" id="fg-file" accept=".svg,image/svg+xml"></label>
+              <span class="source-or">or a sample</span>
               <button type="button" class="use-sample" data-sample="foreground:foreground">Sample</button>
             </div>
             <div class="layer-note" id="fg-note"></div>
@@ -82,7 +87,8 @@
             <div class="layer-row">
               <label class="radio"><input type="radio" name="bg-kind" value="svg"> SVG</label>
               <span class="layer-file" id="bg-name"></span>
-              <label class="pick">Choose<input type="file" id="bg-file" accept=".svg,image/svg+xml"></label>
+              <label class="pick">Custom<input type="file" id="bg-file" accept=".svg,image/svg+xml"></label>
+              <span class="source-or">or samples</span>
               <button type="button" class="use-sample" data-sample="background:flat">Flat</button>
               <button type="button" class="use-sample" data-sample="background:gradient">Gradient</button>
             </div>
@@ -94,7 +100,8 @@
             <div class="layer-row">
               <label class="radio"><input type="checkbox" id="mono-on"> Include</label>
               <span class="layer-file" id="mono-name"></span>
-              <label class="pick">Choose<input type="file" id="mono-file" accept=".svg,image/svg+xml"></label>
+              <label class="pick">Custom<input type="file" id="mono-file" accept=".svg,image/svg+xml"></label>
+              <span class="source-or">or a sample</span>
               <button type="button" class="use-sample" data-sample="monochrome:monochrome">Sample</button>
             </div>
             <div class="layer-note" id="mono-note"></div>
@@ -119,6 +126,10 @@
         <div class="previews-block">
           <div class="block-head">
             <h2>Under launcher masks</h2>
+            <span class="how">
+              <button type="button" class="how-link">How are these drawn?</button>
+              <span class="how-tip" role="tooltip">Each view runs a line-by-line port of that Android version's own drawing code — AOSP <code>VectorDrawable</code> at <code>android-7.0.0_r1</code> and main — on Skia via CanvasKit, right here in your browser. Shapes, clips and gradients match the devices we test on. Icon geometry follows <code>AdaptiveIconDrawable</code> and <code>config_icon_mask</code>.</span>
+            </span>
             <div class="controls">
               <label>Density
                 <select id="icon-density">
@@ -148,6 +159,7 @@
           <h2>Files written to res/</h2>
           <ul class="files" id="files"></ul>
           <button type="button" id="zip" class="zip">Download res.zip</button>
+          <div id="icon-xml-slot"></div>
         </div>
       </div>
 
@@ -155,8 +167,6 @@
         <h2>The legacy icon: Android 7 vs latest</h2>
         <div class="columns" id="icon-columns"></div>
       </div>
-
-      <div id="icon-xml-slot"></div>
     </section>
 
     <section class="xml-section" id="xml-section" aria-labelledby="xml-heading">
@@ -181,15 +191,6 @@
       </div>
     </section>
   </main>
-
-  <footer class="colophon">
-    <p class="colophon-lede">Each view runs a line-by-line port of that Android version's own
-      drawing code — AOSP <code>VectorDrawable</code> at <code>android-7.0.0_r1</code> and main —
-      on Skia via CanvasKit, right here in your browser. Shapes, clips and gradients match the
-      devices we test on; edge smoothing comes from today's Skia, so an edge can differ by a
-      pixel. Icon geometry follows <code>AdaptiveIconDrawable</code> and
-      <code>config_icon_mask</code>. Your files never leave the page.</p>
-  </footer>
 
   <div class="drop-veil" id="drop-veil" aria-hidden="true">Drop to open</div>
   <script type="module" src="main.js"></script>

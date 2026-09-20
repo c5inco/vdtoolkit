@@ -77,11 +77,13 @@ export function renderColumns(container: HTMLElement, ck: CanvasKit, input: Colu
 
     const head = document.createElement("div");
     head.className = "column-head";
-    head.append(
+    const names = document.createElement("div");
+    names.className = "head-names";
+    names.append(
       Object.assign(document.createElement("span"), { className: "title", textContent: version.label }),
       Object.assign(document.createElement("span"), { className: "source", textContent: version.source }),
-      status,
     );
+    head.append(names, status);
 
     const stage = document.createElement("div");
     stage.className = "stage";

@@ -9,12 +9,22 @@ pub(crate) struct Processed {
     pub drawable: Option<VectorDrawable>,
     /// Whether the root declares a size rather than borrowing its viewBox.
     pub declared_size: bool,
+    pub whitening: crate::notification::Whitening,
 }
 
 pub(crate) fn process(
     source: &[u8],
     keep_drawable: bool,
     allow_approximate: bool,
+) -> Result<Processed> {
+    process_as(source, keep_drawable, allow_approximate, None)
+}
+
+pub(crate) fn process_as(
+    source: &[u8],
+    keep_drawable: bool,
+    allow_approximate: bool,
+    kind: Option<crate::IconKind>,
 ) -> Result<Processed> {
     let text = std::str::from_utf8(source)?;
     reject_unsafe_xml(text)?;
@@ -52,9 +62,13 @@ pub(crate) fn process(
         &options,
     )?;
     let mut metrics = Metrics::default();
+    let mut options = vector::LowerOptions {
+        allow_approximate,
+        notification: (kind == Some(crate::IconKind::Notification)).then(Default::default),
+    };
     let drawable = vector::lower(
         &tree,
-        allow_approximate,
+        &mut options,
         &mut compatibility,
         &mut diagnostics,
         &mut metrics,
@@ -80,6 +94,7 @@ pub(crate) fn process(
         declared_size: ["width", "height"]
             .into_iter()
             .any(|attribute| document.root_element().has_attribute(attribute)),
+        whitening: options.notification.unwrap_or_default(),
     })
 }
 

@@ -4,7 +4,7 @@
 //! alone and tints it with the system color, so every paint is flattened to
 //! opaque white and only opacity is kept.
 
-use crate::vector::{Color, Paint, VectorDrawable, VectorNode};
+use crate::vector::{Color, GradientStop, Paint, VectorDrawable, VectorNode};
 
 /// Edge length in dp of a notification icon.
 pub const NOTIFICATION_ICON_SIZE: f32 = 24.0;
@@ -38,12 +38,39 @@ impl Flattening {
 /// A gradient whose stops all share one opacity becomes solid white with that
 /// opacity folded into the path's alpha, so an icon that only used gradients
 /// for color no longer needs API 24.
-pub(crate) fn whiten(drawable: &mut VectorDrawable) -> Flattening {
-    let mut seen: Vec<Color> = Vec::new();
-    let mut flattening = Flattening::default();
+pub(crate) fn whiten(drawable: &mut VectorDrawable, early: Whitening) -> Flattening {
+    let Whitening {
+        mut seen,
+        mut flattening,
+    } = early;
     whiten_nodes(&mut drawable.children, &mut seen, &mut flattening);
     flattening.colors = seen.len();
     flattening
+}
+
+/// Paints collapsed before gradient geometry lowering, retained for the final report.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Whitening {
+    seen: Vec<Color>,
+    flattening: Flattening,
+}
+
+impl Whitening {
+    pub(crate) fn collapse(&mut self, stops: &[GradientStop]) -> Option<(Paint, f32)> {
+        let opacity = uniform_opacity(stops)?;
+        self.flattening.gradients += 1;
+        for stop in stops {
+            record(stop.color, &mut self.seen);
+        }
+        Some((Paint::Solid(WHITE), opacity))
+    }
+}
+
+fn uniform_opacity(stops: &[GradientStop]) -> Option<f32> {
+    stops.first().map(|first| first.alpha).filter(|_| {
+        let byte = stops[0].alpha_byte();
+        stops.iter().all(|stop| stop.alpha_byte() == byte)
+    })
 }
 
 fn whiten_nodes(nodes: &mut [VectorNode], seen: &mut Vec<Color>, flattening: &mut Flattening) {
@@ -86,10 +113,7 @@ fn whiten_paint(
     }
     // Stops are serialized with an 8-bit alpha, so comparing the bytes is
     // exactly the test for a gradient that renders as one flat opacity.
-    let uniform = stops.first().map(|first| first.alpha).filter(|_| {
-        let byte = stops[0].alpha_byte();
-        stops.iter().all(|stop| stop.alpha_byte() == byte)
-    });
+    let uniform = uniform_opacity(stops);
     match uniform {
         Some(opacity) => {
             *alpha = (*alpha * opacity).clamp(0.0, 1.0);

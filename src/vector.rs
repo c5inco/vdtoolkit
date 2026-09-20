@@ -262,9 +262,14 @@ fn count_clip_paths(nodes: &[VectorNode]) -> usize {
         .sum()
 }
 
+pub(crate) struct LowerOptions {
+    pub allow_approximate: bool,
+    pub notification: Option<crate::notification::Whitening>,
+}
+
 pub(crate) fn lower(
     tree: &usvg::Tree,
-    allow_approximate: bool,
+    options: &mut LowerOptions,
     compatibility: &mut Compatibility,
     diagnostics: &mut Vec<Diagnostic>,
     metrics: &mut Metrics,
@@ -284,7 +289,7 @@ pub(crate) fn lower(
         tree.root(),
         &mut children,
         1.0,
-        allow_approximate,
+        options,
         compatibility,
         diagnostics,
         metrics,
@@ -293,7 +298,7 @@ pub(crate) fn lower(
         .content_bounds
         .and_then(|bounds| clamp_bounds(bounds, size.width(), size.height()));
     diagnostics.extend(large_dimensions_warning(size.width(), size.height()));
-    if compatibility.is_convertible(allow_approximate) {
+    if compatibility.is_convertible(options.allow_approximate) {
         Some(VectorDrawable {
             width_dp: size.width(),
             height_dp: size.height(),
@@ -321,7 +326,7 @@ fn visit_group(
     group: &usvg::Group,
     output: &mut Vec<VectorNode>,
     inherited_alpha: f32,
-    allow_approximate: bool,
+    options: &mut LowerOptions,
     compatibility: &mut Compatibility,
     diagnostics: &mut Vec<Diagnostic>,
     metrics: &mut Metrics,
@@ -356,7 +361,7 @@ fn visit_group(
                 group,
                 &mut children,
                 inherited_alpha,
-                allow_approximate,
+                options,
                 compatibility,
                 diagnostics,
                 metrics,
@@ -372,7 +377,7 @@ fn visit_group(
                     lower_paint(
                         fill.paint(),
                         path.abs_transform(),
-                        allow_approximate,
+                        options,
                         compatibility,
                         diagnostics,
                     )
@@ -407,7 +412,7 @@ fn visit_group(
                     lower_paint(
                         stroke.paint(),
                         path.abs_transform(),
-                        allow_approximate,
+                        options,
                         compatibility,
                         diagnostics,
                     )
@@ -728,10 +733,36 @@ fn contains_fill_and_stroke(group: &usvg::Group) -> bool {
 fn lower_paint(
     paint: &usvg::Paint,
     transform: Transform,
-    allow_approximate: bool,
+    options: &mut LowerOptions,
     compatibility: &mut Compatibility,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Option<(Paint, f32, Option<GroupTransform>)> {
+    // Uniform alpha carries no gradient geometry in a notification silhouette.
+    // Collapse before focal/transform checks, sharing the final whitening report.
+    if let Some(whitening) = &mut options.notification {
+        let gradient = match paint {
+            usvg::Paint::LinearGradient(gradient) => Some((gradient.stops(), gradient.transform())),
+            usvg::Paint::RadialGradient(gradient) => Some((gradient.stops(), gradient.transform())),
+            _ => None,
+        };
+        if let Some((stops, gradient_transform)) = gradient {
+            if let Some((paint, alpha)) = whitening.collapse(&gradient_stops(stops)) {
+                return Some((paint, alpha, None));
+            }
+            // Ordinary radial lowering can fall back to its last stop for a
+            // singular transform. That would erase a notification's alpha shape.
+            if transform.pre_concat(gradient_transform).invert().is_none() {
+                unsupported(
+                    compatibility,
+                    diagnostics,
+                    DiagnosticCode::UnsupportedGradient,
+                    "gradient transform is not invertible",
+                    "Fix the gradient transform; a zero scale collapses the gradient.",
+                );
+                return None;
+            }
+        }
+    }
     match paint {
         usvg::Paint::Color(color) => Some((Paint::Solid(rgb(*color)), 1.0, None)),
         usvg::Paint::LinearGradient(gradient) => {
@@ -741,7 +772,7 @@ fn lower_paint(
         usvg::Paint::RadialGradient(gradient) => lower_radial_gradient(
             gradient,
             transform,
-            allow_approximate,
+            options.allow_approximate,
             compatibility,
             diagnostics,
         ),

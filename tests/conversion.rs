@@ -3528,6 +3528,207 @@ fn notification_icons_flatten_gradients_and_keep_varying_opacity() {
 }
 
 #[test]
+fn notification_lowering_ignores_only_uniform_alpha_gradient_geometry() {
+    use vdtoolkit::{Fit, IconKind};
+    let temp = tempfile::tempdir().unwrap();
+    for (name, tag, geometry, ordinary_supported) in [
+        (
+            "focal",
+            "radialGradient",
+            r#"cx="12" cy="12" r="8" fx="8""#,
+            false,
+        ),
+        (
+            "focal-radius",
+            "radialGradient",
+            r#"cx="12" cy="12" r="8" fr="2""#,
+            false,
+        ),
+        (
+            "ellipse",
+            "radialGradient",
+            r#"cx="6" cy="12" r="8" gradientTransform="scale(2 1)""#,
+            false,
+        ),
+        (
+            "skew",
+            "radialGradient",
+            r#"cx="6" cy="12" r="8" gradientTransform="skewX(30)""#,
+            false,
+        ),
+        (
+            "singular-linear",
+            "linearGradient",
+            r#"x2="24" gradientTransform="matrix(1 1 1 1 0 0)""#,
+            false,
+        ),
+        (
+            "singular-radial",
+            "radialGradient",
+            r#"cx="12" cy="12" r="8" gradientTransform="matrix(1 1 1 1 0 0)""#,
+            true,
+        ),
+    ] {
+        // Different floats on the same side of the alpha-byte boundary must
+        // collapse; crossing it must retain the gradient's geometry checks.
+        for (end_opacity, uniform) in [("0.5001", true), ("0.4999", false)] {
+            let source = format!(
+                r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+                <defs><{tag} id="g" gradientUnits="userSpaceOnUse" {geometry}>
+                    <stop stop-color="#123456" stop-opacity="0.5"/>
+                    <stop offset="1" stop-color="#ABCDEF" stop-opacity="{end_opacity}"/>
+                </{tag}></defs>
+                <path d="M4 4H20V20H4Z" fill="url(#g)" fill-opacity="0.6"
+                    stroke="url(#g)" stroke-opacity="0.3" stroke-width="2"/>
+                <path d="M9 9H11V11H9Z" fill="#123456"/>
+            </svg>"##
+            );
+            let bytes = source.as_bytes();
+            assert_eq!(
+                vdtoolkit::convert(bytes).is_ok(),
+                ordinary_supported,
+                "{name}"
+            );
+            for kind in [IconKind::AdaptiveForeground, IconKind::AdaptiveBackground] {
+                assert_eq!(
+                    vdtoolkit::analyze_as(bytes, kind, kind.default_fit())
+                        .unwrap()
+                        .compatibility
+                        .is_convertible(false),
+                    ordinary_supported,
+                    "{name}"
+                );
+            }
+            let analysis =
+                vdtoolkit::analyze_as(bytes, IconKind::Notification, Fit::contain(24.0)).unwrap();
+            let converted = vdtoolkit::convert_as_with_options(
+                bytes,
+                IconKind::Notification,
+                Fit::contain(24.0),
+                false,
+            );
+            assert_eq!(converted.is_ok(), uniform, "{name}: {analysis:?}");
+            assert_eq!(
+                analysis.compatibility.is_convertible(false),
+                uniform,
+                "{name}"
+            );
+            let approximate = vdtoolkit::analyze_as_with_options(
+                bytes,
+                IconKind::Notification,
+                Fit::contain(24.0),
+                true,
+            )
+            .unwrap();
+            let focal = name.starts_with("focal");
+            assert_eq!(
+                approximate.compatibility.is_convertible(true),
+                uniform || focal,
+                "{name}"
+            );
+            if !uniform && focal {
+                assert_eq!(approximate.compatibility, Compatibility::Approximate);
+                assert_eq!(approximate.minimum_api, Some(24));
+            }
+            if let Ok(asset) = converted {
+                assert_eq!(
+                    serde_json::to_value(&asset.analysis).unwrap(),
+                    serde_json::to_value(&analysis).unwrap()
+                );
+                let xml = asset.to_xml();
+                assert!(!xml.contains("<gradient"), "{name}: {xml}");
+                assert!(xml.contains(r#"android:fillAlpha="0.3""#), "{xml}");
+                assert!(xml.contains(r#"android:strokeAlpha="0.15""#), "{xml}");
+                assert_eq!(analysis.minimum_api, Some(21));
+                assert!(analysis.diagnostics.iter().any(|d| d.code == DiagnosticCode::PaintFlattened
+                    && d.message == "flattened 2 colors and 2 gradients to white; Android tints the alpha channel only"), "{analysis:?}");
+                let rgba = asset.render_rgba(24, 24).unwrap();
+                assert_eq!(
+                    &rgba[(7 * 24 + 7) * 4..(7 * 24 + 7) * 4 + 4],
+                    &[255, 255, 255, 77]
+                );
+            } else {
+                assert_eq!(analysis.minimum_api, None);
+                assert!(
+                    analysis
+                        .diagnostics
+                        .iter()
+                        .any(|d| d.code == DiagnosticCode::UnsupportedGradient)
+                );
+            }
+            let input = temp.path().join(format!("{name}-{uniform}.svg"));
+            fs::write(&input, bytes).unwrap();
+            for args in [
+                vec!["notification"],
+                vec!["check", "--as", "notification"],
+                vec!["inspect", "--as", "notification", "--format", "json"],
+            ] {
+                let result = Command::new(env!("CARGO_BIN_EXE_vdt"))
+                    .args(&args)
+                    .arg(&input)
+                    .output()
+                    .unwrap();
+                assert_eq!(
+                    result.status.success(),
+                    uniform,
+                    "{name} {args:?}: {}",
+                    String::from_utf8_lossy(&result.stderr)
+                );
+                if args[0] == "inspect" {
+                    let report: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+                    assert_eq!(
+                        report[0]["minimum_api"],
+                        if uniform {
+                            serde_json::json!(21)
+                        } else {
+                            serde_json::Value::Null
+                        }
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn notification_lowering_keeps_group_alpha_and_remaining_api_requirements() {
+    let source = r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <defs><radialGradient id="g" fx="0.2" gradientTransform="skewX(30)">
+            <stop stop-color="#123456" stop-opacity="0.4"/>
+            <stop offset="1" stop-color="#ABCDEF" stop-opacity="0.4"/>
+        </radialGradient></defs>
+        <g opacity="0.5"><path d="M4 4H20V20H4Z" fill="url(#g)" fill-opacity="0.6"/></g>
+    </svg>"##;
+    for (rule, api) in [("nonzero", 21), ("evenodd", 24)] {
+        let source = source.replace("<path ", &format!(r#"<path fill-rule="{rule}" "#));
+        let asset = vdtoolkit::convert_as_with_options(
+            source.as_bytes(),
+            vdtoolkit::IconKind::Notification,
+            vdtoolkit::Fit::contain(24.0),
+            false,
+        )
+        .unwrap();
+        assert_eq!(asset.analysis.minimum_api, Some(api));
+        let xml = asset.to_xml();
+        assert!(!xml.contains("<gradient"));
+        assert!(xml.contains(r#"android:fillAlpha="0.12""#), "{xml}");
+        let api_notes: Vec<_> = asset
+            .analysis
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == DiagnosticCode::ApiLevelRequirement)
+            .collect();
+        if api == 24 {
+            assert_eq!(api_notes.len(), 1);
+            assert!(api_notes[0].message.contains("even-odd"));
+            assert!(!api_notes[0].message.contains("gradients"));
+        } else {
+            assert!(api_notes.is_empty());
+        }
+    }
+}
+
+#[test]
 fn painted_coverage_separates_silhouettes_from_plates() {
     let plate = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
         <path d="M0 0H24V24H0Z" fill="#101010"/>

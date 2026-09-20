@@ -428,14 +428,22 @@ fn notification(args: NotificationArgs) -> Result<Outcome> {
 }
 
 fn notification_one(args: &NotificationArgs, input: &Path, output: Option<Output>) -> Result<()> {
-    let mut asset = vdtoolkit::convert_file_with_options(input, args.allow_approximate)
-        .map_err(hint_raster_convert)?;
+    let source = std::fs::read(input).map_err(|source| Error::Read {
+        path: input.to_owned(),
+        source,
+    })?;
+    let mut asset = vdtoolkit::convert_as_with_options(
+        &source,
+        IconKind::Notification,
+        Fit::contain(args.fit),
+        args.allow_approximate,
+    )
+    .map_err(hint_raster_convert)?;
     if args.strict && asset.analysis.compatibility != Compatibility::Exact {
         return Err(Error::InvalidInput(
             "requires normalization and was rejected by --strict".to_owned(),
         ));
     }
-    asset.to_icon(IconKind::Notification, Fit::contain(args.fit))?;
     print_findings(input, &asset.analysis);
     if args.optimize {
         asset.optimize();

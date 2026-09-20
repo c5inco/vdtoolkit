@@ -52,6 +52,8 @@ pub struct Asset {
     declared_size: bool,
     /// Set by `optimize`: path data is written in its shortest form.
     short_paths: bool,
+    /// Original paints collapsed while lowering for a notification icon.
+    whitening: notification::Whitening,
 }
 
 impl Asset {
@@ -181,7 +183,8 @@ impl Asset {
                 fit.size
             )));
         }
-        let flattening = notification::whiten(&mut self.drawable);
+        let flattening =
+            notification::whiten(&mut self.drawable, std::mem::take(&mut self.whitening));
         self.fit_canvas(notification::NOTIFICATION_ICON_SIZE, fit);
         // Flattening a gradient to solid white can lower the minimum API, and
         // the fit never raises it.
@@ -422,6 +425,7 @@ impl Asset {
             },
             declared_size: true,
             short_paths: false,
+            whitening: Default::default(),
         };
         asset.analysis.metrics.estimated_xml_bytes = asset.to_xml().len();
         asset
@@ -521,11 +525,8 @@ pub fn analyze_as_with_options(
     if bitmap::ImageFormat::sniff(source).is_some() {
         return analyze_layer_as(source, kind);
     }
-    match convert_with_options(source, allow_approximate) {
-        Ok(mut asset) => {
-            asset.to_icon(kind, fit)?;
-            Ok(asset.analysis)
-        }
+    match convert_as_with_options(source, kind, fit, allow_approximate) {
+        Ok(asset) => Ok(asset.analysis),
         Err(Error::Incompatible(analysis)) => Ok(*analysis),
         Err(error) => Err(error),
     }
@@ -586,12 +587,29 @@ pub fn convert(source: &[u8]) -> Result<Asset> {
 /// Convert SVG bytes, optionally allowing approximations.
 #[doc(hidden)]
 pub fn convert_with_options(source: &[u8], allow_approximate: bool) -> Result<Asset> {
+    convert_source(source, allow_approximate, None)
+}
+
+/// Convert SVG bytes for an icon, applying its paint semantics during lowering.
+#[doc(hidden)]
+pub fn convert_as_with_options(
+    source: &[u8],
+    kind: IconKind,
+    fit: Fit,
+    allow_approximate: bool,
+) -> Result<Asset> {
+    let mut asset = convert_source(source, allow_approximate, Some(kind))?;
+    asset.to_icon(kind, fit)?;
+    Ok(asset)
+}
+
+fn convert_source(source: &[u8], allow_approximate: bool, kind: Option<IconKind>) -> Result<Asset> {
     if bitmap::ImageFormat::sniff(source).is_some() {
         return Err(Error::InvalidInput(
             "this is a raster image, not an SVG".to_owned(),
         ));
     }
-    let processed = svg::process(source, true, allow_approximate)?;
+    let processed = svg::process_as(source, true, allow_approximate, kind)?;
     if !processed
         .analysis
         .compatibility
@@ -606,5 +624,6 @@ pub fn convert_with_options(source: &[u8], allow_approximate: bool) -> Result<As
         analysis: processed.analysis,
         declared_size: processed.declared_size,
         short_paths: false,
+        whitening: processed.whitening,
     })
 }

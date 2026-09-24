@@ -150,108 +150,108 @@ pub struct ElementLocation {
 /// Stable diagnostic identifier.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub enum DiagnosticCode {
-    #[serde(rename = "SVGVD001")]
+    #[serde(rename = "VDT001")]
     UnsupportedMask,
-    #[serde(rename = "SVGVD002")]
+    #[serde(rename = "VDT002")]
     UnsupportedFilter,
-    #[serde(rename = "SVGVD003")]
+    #[serde(rename = "VDT003")]
     UnsupportedGradient,
     /// A convertible drawable needs API 24 for gradients, even-odd fills, or
     /// more than one clip path. Informational: it mirrors `minimum_api` and
     /// names what raised it.
-    #[serde(rename = "SVGVD004")]
+    #[serde(rename = "VDT004")]
     ApiLevelRequirement,
-    #[serde(rename = "SVGVD005")]
+    #[serde(rename = "VDT005")]
     ExternalImage,
-    #[serde(rename = "SVGVD006")]
+    #[serde(rename = "VDT006")]
     TextNotOutlined,
-    #[serde(rename = "SVGVD007")]
+    #[serde(rename = "VDT007")]
     EmbeddedImage,
-    #[serde(rename = "SVGVD008")]
+    #[serde(rename = "VDT008")]
     UnsupportedPattern,
-    #[serde(rename = "SVGVD009")]
+    #[serde(rename = "VDT009")]
     UnsupportedAnimation,
-    #[serde(rename = "SVGVD010")]
+    #[serde(rename = "VDT010")]
     ExternalReference,
-    #[serde(rename = "SVGVD011")]
+    #[serde(rename = "VDT011")]
     NormalizationRequired,
-    #[serde(rename = "SVGVD012")]
+    #[serde(rename = "VDT012")]
     UnsupportedStrokeTransform,
-    #[serde(rename = "SVGVD013")]
+    #[serde(rename = "VDT013")]
     UnsupportedPaint,
-    #[serde(rename = "SVGVD014")]
+    #[serde(rename = "VDT014")]
     UnsupportedClipPath,
-    #[serde(rename = "SVGVD015")]
+    #[serde(rename = "VDT015")]
     UnsupportedDimensions,
-    #[serde(rename = "SVGVD016")]
+    #[serde(rename = "VDT016")]
     LargeDimensions,
     /// A notification icon paints almost the whole canvas, so it tints into
     /// a filled square rather than a silhouette.
-    #[serde(rename = "SVGVD017")]
+    #[serde(rename = "VDT017")]
     NotificationPlate,
     /// A notification icon has no painted content.
-    #[serde(rename = "SVGVD018")]
+    #[serde(rename = "VDT018")]
     EmptyArtwork,
     /// Adaptive foreground or monochrome content leaves the 66dp safe zone.
-    #[serde(rename = "SVGVD019")]
+    #[serde(rename = "VDT019")]
     OutsideSafeZone,
     /// An adaptive background does not paint every pixel of the 108dp layer.
-    #[serde(rename = "SVGVD020")]
+    #[serde(rename = "VDT020")]
     BackgroundGap,
     /// Colors or gradients were flattened to white for a notification icon.
-    #[serde(rename = "SVGVD021")]
+    #[serde(rename = "VDT021")]
     PaintFlattened,
     /// Wide-gamut `color()` values were resolved to the sRGB they render as.
-    #[serde(rename = "SVGVD022")]
+    #[serde(rename = "VDT022")]
     WideGamutColor,
     /// An adaptive background was scaled to cover the 108dp layer, so the
     /// layer cropped what overflowed it.
-    #[serde(rename = "SVGVD023")]
+    #[serde(rename = "VDT023")]
     BackgroundCropped,
     /// A bitmap background layer is not square, so Android stretches it onto
     /// the square layer.
-    #[serde(rename = "SVGVD024")]
+    #[serde(rename = "VDT024")]
     BackgroundImageShape,
     /// A bitmap background layer carries fewer or more pixels than the
     /// densest screen draws the layer at.
-    #[serde(rename = "SVGVD025")]
+    #[serde(rename = "VDT025")]
     BackgroundImageResolution,
     /// A bitmap foreground layer has no transparent pixels, so it covers the
     /// background layer entirely.
-    #[serde(rename = "SVGVD026")]
+    #[serde(rename = "VDT026")]
     ForegroundOpaque,
 }
 
 impl DiagnosticCode {
-    /// Return the stable `SVGVDnnn` identifier.
+    /// Return the stable `VDTnnn` identifier.
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::UnsupportedMask => "SVGVD001",
-            Self::UnsupportedFilter => "SVGVD002",
-            Self::UnsupportedGradient => "SVGVD003",
-            Self::ApiLevelRequirement => "SVGVD004",
-            Self::ExternalImage => "SVGVD005",
-            Self::TextNotOutlined => "SVGVD006",
-            Self::EmbeddedImage => "SVGVD007",
-            Self::UnsupportedPattern => "SVGVD008",
-            Self::UnsupportedAnimation => "SVGVD009",
-            Self::ExternalReference => "SVGVD010",
-            Self::NormalizationRequired => "SVGVD011",
-            Self::UnsupportedStrokeTransform => "SVGVD012",
-            Self::UnsupportedPaint => "SVGVD013",
-            Self::UnsupportedClipPath => "SVGVD014",
-            Self::UnsupportedDimensions => "SVGVD015",
-            Self::LargeDimensions => "SVGVD016",
-            Self::NotificationPlate => "SVGVD017",
-            Self::EmptyArtwork => "SVGVD018",
-            Self::OutsideSafeZone => "SVGVD019",
-            Self::BackgroundGap => "SVGVD020",
-            Self::PaintFlattened => "SVGVD021",
-            Self::WideGamutColor => "SVGVD022",
-            Self::BackgroundCropped => "SVGVD023",
-            Self::BackgroundImageShape => "SVGVD024",
-            Self::BackgroundImageResolution => "SVGVD025",
-            Self::ForegroundOpaque => "SVGVD026",
+            Self::UnsupportedMask => "VDT001",
+            Self::UnsupportedFilter => "VDT002",
+            Self::UnsupportedGradient => "VDT003",
+            Self::ApiLevelRequirement => "VDT004",
+            Self::ExternalImage => "VDT005",
+            Self::TextNotOutlined => "VDT006",
+            Self::EmbeddedImage => "VDT007",
+            Self::UnsupportedPattern => "VDT008",
+            Self::UnsupportedAnimation => "VDT009",
+            Self::ExternalReference => "VDT010",
+            Self::NormalizationRequired => "VDT011",
+            Self::UnsupportedStrokeTransform => "VDT012",
+            Self::UnsupportedPaint => "VDT013",
+            Self::UnsupportedClipPath => "VDT014",
+            Self::UnsupportedDimensions => "VDT015",
+            Self::LargeDimensions => "VDT016",
+            Self::NotificationPlate => "VDT017",
+            Self::EmptyArtwork => "VDT018",
+            Self::OutsideSafeZone => "VDT019",
+            Self::BackgroundGap => "VDT020",
+            Self::PaintFlattened => "VDT021",
+            Self::WideGamutColor => "VDT022",
+            Self::BackgroundCropped => "VDT023",
+            Self::BackgroundImageShape => "VDT024",
+            Self::BackgroundImageResolution => "VDT025",
+            Self::ForegroundOpaque => "VDT026",
         }
     }
 }

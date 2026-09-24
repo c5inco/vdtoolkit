@@ -25,8 +25,15 @@ follow [Semantic Versioning](https://semver.org/).
   `allowApproximate` in WebAssembly bindings) allows lossy lowering for
   constructs VectorDrawable cannot draw exactly. When enabled, radial gradients
   with off-center focal points (`fx != cx` or `fy != cy`) are centered with
-  warning `SVGVD003` and reported as `approximate` compatibility, rather than
+  warning `VDT003` and reported as `approximate` compatibility, rather than
   blocking conversion.
+
+### Changed
+
+- Diagnostic codes use the `VDT` prefix. `VDT001` is the same finding
+  `SVGVD001` was, through `VDT026`. `inspect`, generator warnings, JSON
+  reports, the Rust API, and the WebAssembly bindings all emit the new
+  prefix.
 
 ### Fixed
 

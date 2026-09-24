@@ -167,7 +167,7 @@ fn api_level_note_names_every_api_24_feature_without_changing_exit_codes() {
         .analysis
         .diagnostics
         .iter()
-        .find(|diagnostic| diagnostic.code.as_str() == "SVGVD004")
+        .find(|diagnostic| diagnostic.code.as_str() == "VDT004")
         .expect("API level note");
     assert!(matches!(note.severity, Severity::Info));
     assert_eq!(
@@ -207,11 +207,11 @@ fn api_level_note_names_every_api_24_feature_without_changing_exit_codes() {
     for args in [&["check"][..], &["inspect", "--format", "json"]] {
         let output = vdt(args);
         assert_eq!(output.status.code(), Some(0), "{output:?}");
-        assert!(String::from_utf8_lossy(&output.stdout).contains("SVGVD004"));
+        assert!(String::from_utf8_lossy(&output.stdout).contains("VDT004"));
     }
     let converted = vdt(&["convert"]);
     assert!(converted.status.success(), "{converted:?}");
-    assert!(!String::from_utf8_lossy(&converted.stderr).contains("SVGVD004"));
+    assert!(!String::from_utf8_lossy(&converted.stderr).contains("VDT004"));
 }
 
 #[test]
@@ -1142,7 +1142,7 @@ fn cli_allow_approximate_converts_radial_gradient_focal_offset() {
         .unwrap();
     assert!(convert_ok.status.success(), "{:?}", convert_ok.stderr);
     let stderr = String::from_utf8(convert_ok.stderr).unwrap();
-    assert!(stderr.contains("SVGVD003"));
+    assert!(stderr.contains("VDT003"));
     assert!(output.is_file());
 }
 
@@ -1614,7 +1614,7 @@ fn measures_how_far_a_foreground_reaches_from_the_centre() {
             .analysis
             .diagnostics
             .iter()
-            .filter(|d| d.code.as_str() == "SVGVD019")
+            .filter(|d| d.code.as_str() == "VDT019")
             .map(|d| {
                 (
                     format!("{:?}", d.severity),
@@ -1835,7 +1835,7 @@ fn cli_adaptive_places_a_raster_foreground_and_judges_it_as_a_foreground() {
             .lines()
             .filter_map(|line| {
                 line.split_whitespace()
-                    .find(|word| word.starts_with("SVGVD"))
+                    .find(|word| word.starts_with("VDT"))
             })
             .map(str::to_owned)
             .collect()
@@ -1866,21 +1866,21 @@ fn cli_adaptive_places_a_raster_foreground_and_judges_it_as_a_foreground() {
             &["--foreground-image", outside.to_str().unwrap()],
             &temp.path().join("a")
         )),
-        ["SVGVD019"]
+        ["VDT019"]
     );
     assert_eq!(
         codes(&run(
             &["--foreground-image", opaque.to_str().unwrap()],
             &temp.path().join("b")
         )),
-        ["SVGVD026"]
+        ["VDT026"]
     );
     assert_eq!(
         codes(&run(
             &["--foreground-image", empty.to_str().unwrap()],
             &temp.path().join("c")
         )),
-        ["SVGVD018"]
+        ["VDT018"]
     );
 
     // A JPEG has no alpha, so as a foreground it would hide the background.
@@ -1945,7 +1945,7 @@ fn cli_adaptive_places_a_raster_foreground_and_judges_it_as_a_foreground() {
         &mono,
     );
     assert!(output.status.success(), "{output:?}");
-    assert_eq!(codes(&output), ["SVGVD019"]);
+    assert_eq!(codes(&output), ["VDT019"]);
     assert!(
         mono.join("mipmap-nodpi/ic_launcher_monochrome.webp")
             .is_file()
@@ -2454,7 +2454,7 @@ fn cli_adaptive_prints_the_safe_zone_note() {
     let stderr = String::from_utf8(output.stderr).unwrap();
     let note = stderr
         .lines()
-        .find(|line| line.contains("SVGVD019"))
+        .find(|line| line.contains("VDT019"))
         .unwrap_or_else(|| panic!("no safe-zone finding printed:\n{stderr}"));
     assert!(note.starts_with("note:"), "{note}");
     assert!(note.contains("past the 33dp Android asks"), "{note}");
@@ -2586,7 +2586,7 @@ fn cli_adaptive_places_a_bitmap_background_without_resampling_it() {
             .lines()
             .filter_map(|line| {
                 line.split_whitespace()
-                    .find(|word| word.starts_with("SVGVD"))
+                    .find(|word| word.starts_with("VDT"))
             })
             .map(str::to_owned)
             .collect()
@@ -2616,15 +2616,15 @@ fn cli_adaptive_places_a_bitmap_background_without_resampling_it() {
     // What vdt can see about an image it never converts.
     assert_eq!(
         codes(&run(&soft, &[], &temp.path().join("a"))),
-        ["SVGVD025"]
+        ["VDT025"]
     );
     assert_eq!(
         codes(&run(&wide, &[], &temp.path().join("b"))),
-        ["SVGVD024", "SVGVD025"]
+        ["VDT024", "VDT025"]
     );
     assert_eq!(
         codes(&run(&holes, &[], &temp.path().join("c"))),
-        ["SVGVD020"]
+        ["VDT020"]
     );
 
     // WebP reaches the same findings, and lands under its own extension.
@@ -2646,11 +2646,11 @@ fn cli_adaptive_places_a_bitmap_background_without_resampling_it() {
     );
     assert_eq!(
         codes(&run(&webp_clear, &[], &temp.path().join("f"))),
-        ["SVGVD020"]
+        ["VDT020"]
     );
     assert_eq!(
         codes(&run(&webp_wide, &[], &temp.path().join("g"))),
-        ["SVGVD024", "SVGVD025"]
+        ["VDT024", "VDT025"]
     );
 
     // JPEG carries no alpha, so it can only ever be an opaque background; only
@@ -2670,7 +2670,7 @@ fn cli_adaptive_places_a_bitmap_background_without_resampling_it() {
     );
     assert_eq!(
         codes(&run(&jpeg_wide, &[], &temp.path().join("h"))),
-        ["SVGVD024", "SVGVD025"]
+        ["VDT024", "VDT025"]
     );
 
     // The format comes from the file's header, not its name, so a WebP saved
@@ -2770,14 +2770,14 @@ fn cli_adaptive_covers_the_layer_with_a_non_square_background() {
     assert!(output.status.success(), "{output:?}");
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert_eq!(stderr.lines().count(), 1, "{stderr}");
-    assert!(stderr.contains("SVGVD023"), "{stderr}");
+    assert!(stderr.contains("VDT023"), "{stderr}");
     assert!(
         stderr.contains(
             "scaled the background to cover the 108dp layer, which cropped 44% of the artwork"
         ),
         "{stderr}"
     );
-    assert!(!stderr.contains("SVGVD020"), "{stderr}");
+    assert!(!stderr.contains("VDT020"), "{stderr}");
 
     // The layer is 108dp of paint with nothing left transparent.
     let xml = fs::read_to_string(res.join("drawable-anydpi/ic_launcher_background.xml")).unwrap();
@@ -3198,7 +3198,7 @@ fn fit_within_scales_size_but_keeps_the_viewport() {
             .analysis
             .diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.code.as_str() == "SVGVD016")
+            .any(|diagnostic| diagnostic.code.as_str() == "VDT016")
     );
 }
 
@@ -3218,7 +3218,7 @@ fn convert_prints_large_dimension_warnings_to_stderr() {
     assert!(output.status.success());
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains("warning: "));
-    assert!(stderr.contains("SVGVD016"));
+    assert!(stderr.contains("VDT016"));
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("android:width=\"480dp\""));
 }
@@ -3384,7 +3384,7 @@ fn cli_adaptive_rejects_bad_input_without_writing() {
             &foreground,
             "--fit",
         ),
-        (&["--background-color", "#ffffff"], &text, "SVGVD006"),
+        (&["--background-color", "#ffffff"], &text, "VDT006"),
         (
             &["--background", text.to_str().unwrap()],
             &foreground,
@@ -3491,7 +3491,7 @@ fn notification_icons_flatten_gradients_and_keep_varying_opacity() {
             .analysis
             .diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.code.as_str() == "SVGVD004"),
+            .any(|diagnostic| diagnostic.code.as_str() == "VDT004"),
         "{:?}",
         asset.analysis.diagnostics
     );
@@ -3521,7 +3521,7 @@ fn notification_icons_flatten_gradients_and_keep_varying_opacity() {
         .analysis
         .diagnostics
         .iter()
-        .filter(|diagnostic| diagnostic.code.as_str() == "SVGVD004")
+        .filter(|diagnostic| diagnostic.code.as_str() == "VDT004")
         .map(|diagnostic| diagnostic.message.as_str())
         .collect();
     assert_eq!(notes, ["needs API 24 for gradients"]);
@@ -3772,15 +3772,15 @@ fn cli_notification_writes_white_icons_and_warns_about_plates() {
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(
         stderr.contains("note: ")
-            && stderr.contains("bell.svg: SVGVD021  flattened 1 color to white"),
+            && stderr.contains("bell.svg: VDT021  flattened 1 color to white"),
         "{stderr}"
     );
     assert!(
         stderr.contains("warning: ")
-            && stderr.contains("plate.svg: SVGVD017  artwork paints 100% of the 24dp canvas"),
+            && stderr.contains("plate.svg: VDT017  artwork paints 100% of the 24dp canvas"),
         "{stderr}"
     );
-    assert!(!stderr.contains("bell.svg: SVGVD017"), "{stderr}");
+    assert!(!stderr.contains("bell.svg: VDT017"), "{stderr}");
 
     let bell = fs::read_to_string(drawable.join("bell.xml")).unwrap();
     assert!(bell.contains("android:width=\"24dp\""));
@@ -3835,7 +3835,7 @@ fn cli_notification_warns_about_the_output_not_the_source() {
         "{clipped}"
     );
     let large = stderr(&large);
-    assert!(!large.contains("SVGVD016"), "{large}");
+    assert!(!large.contains("VDT016"), "{large}");
 }
 
 #[test]
@@ -4077,7 +4077,7 @@ fn icon_kinds_add_coded_findings_without_changing_compatibility() {
         .iter()
         .map(|diagnostic| diagnostic.code.as_str())
         .collect();
-    assert_eq!(codes, ["SVGVD021", "SVGVD017"], "{codes:?}");
+    assert_eq!(codes, ["VDT021", "VDT017"], "{codes:?}");
     let plate_warning = &asset.analysis.diagnostics[1];
     assert!(matches!(plate_warning.severity, Severity::Warning));
     assert!(
@@ -4105,7 +4105,7 @@ fn icon_kinds_add_coded_findings_without_changing_compatibility() {
         )
         .unwrap();
     assert!(asset.analysis.diagnostics.iter().any(|diagnostic| {
-        diagnostic.code.as_str() == "SVGVD018" && diagnostic.message.contains("no painted content")
+        diagnostic.code.as_str() == "VDT018" && diagnostic.message.contains("no painted content")
     }));
 
     // A plain logo fitted to the full layer is clipped by a circular mask.
@@ -4124,7 +4124,7 @@ fn icon_kinds_add_coded_findings_without_changing_compatibility() {
         .analysis
         .diagnostics
         .iter()
-        .find(|diagnostic| diagnostic.code.as_str() == "SVGVD019")
+        .find(|diagnostic| diagnostic.code.as_str() == "VDT019")
         .expect("safe zone warning");
     assert_eq!(
         outside.message,
@@ -4161,7 +4161,7 @@ fn icon_kinds_add_coded_findings_without_changing_compatibility() {
         .analysis
         .diagnostics
         .iter()
-        .find(|diagnostic| diagnostic.code.as_str() == "SVGVD020")
+        .find(|diagnostic| diagnostic.code.as_str() == "VDT020")
         .expect("background warning");
     assert_eq!(
         gap.message,
@@ -4191,7 +4191,7 @@ fn icon_kinds_add_coded_findings_without_changing_compatibility() {
         .iter()
         .map(|diagnostic| diagnostic.code.as_str())
         .collect();
-    assert_eq!(codes, ["SVGVD023"]);
+    assert_eq!(codes, ["VDT023"]);
     assert_eq!(
         asset.analysis.diagnostics[0].message,
         "scaled the background to cover the 108dp layer, which cropped 50% of the artwork"
@@ -4248,7 +4248,7 @@ fn analyze_as_reports_icon_findings_without_a_drawable() {
         analysis
             .diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.code.as_str() == "SVGVD017")
+            .any(|diagnostic| diagnostic.code.as_str() == "VDT017")
     );
     assert_eq!(analysis.metrics.width, 24.0);
 
@@ -4269,7 +4269,7 @@ fn analyze_as_reports_icon_findings_without_a_drawable() {
         analysis
             .diagnostics
             .iter()
-            .all(|diagnostic| diagnostic.code.as_str() != "SVGVD017")
+            .all(|diagnostic| diagnostic.code.as_str() != "VDT017")
     );
 }
 
@@ -4315,8 +4315,8 @@ fn cli_inspect_as_reports_icon_findings_without_writing() {
     );
     assert!(logo_entry["metrics"].get("paths").is_some());
     assert!(logo_entry["metrics"].get("estimated_xml_bytes").is_some());
-    assert_eq!(codes(logo_entry), ["SVGVD021"]);
-    assert_eq!(codes(plate_entry), ["SVGVD011", "SVGVD021", "SVGVD017"]);
+    assert_eq!(codes(logo_entry), ["VDT021"]);
+    assert_eq!(codes(plate_entry), ["VDT011", "VDT021", "VDT017"]);
     assert_eq!(plate_entry["diagnostics"][2]["severity"], "warning");
     assert_eq!(plate_entry["metrics"]["width"], 24.0);
     assert_eq!(plate_entry["compatibility"], "exact_with_normalization");
@@ -4340,16 +4340,16 @@ fn cli_inspect_as_reports_icon_findings_without_writing() {
     let (code, stdout, _) = run(&["inspect", "--as", "adaptive-foreground"]);
     assert_eq!(code, Some(0));
     assert!(
-        stdout.contains("SVGVD019  content reaches 63.5dp from the centre"),
+        stdout.contains("VDT019  content reaches 63.5dp from the centre"),
         "{stdout}"
     );
     assert!(stdout.contains("Viewport: 108 × 108"), "{stdout}");
     let (code, stdout, _) = run(&["check", "--as", "adaptive-foreground", "--fit", "56"]);
     assert_eq!(code, Some(0));
-    assert!(!stdout.contains("SVGVD019"), "{stdout}");
+    assert!(!stdout.contains("VDT019"), "{stdout}");
     let (_, stdout, _) = run(&["inspect", "--format", "json"]);
     assert!(!stdout.contains("\"icon\""), "{stdout}");
-    assert!(!stdout.contains("SVGVD02"), "{stdout}");
+    assert!(!stdout.contains("VDT02"), "{stdout}");
 
     // --fit needs a kind, and must fit the kind's canvas.
     let (code, _, stderr) = run(&["inspect", "--fit", "20"]);
@@ -4497,7 +4497,7 @@ fn cli_inspect_as_reports_raster_foreground_findings_without_writing() {
     let (code, stdout, _) = inspect(&["inspect", "--as", "adaptive-foreground"], &outside);
     assert_eq!(code, Some(0), "{stdout}");
     assert!(stdout.contains("Adaptive layer image"), "{stdout}");
-    assert!(stdout.contains("SVGVD019"), "{stdout}");
+    assert!(stdout.contains("VDT019"), "{stdout}");
     assert!(stdout.contains("Format: webp"), "{stdout}");
     assert!(stdout.contains("Dimensions: 432 × 432 px"), "{stdout}");
     assert!(stdout.contains("Layer: 108 × 108 dp"), "{stdout}");
@@ -4513,14 +4513,14 @@ fn cli_inspect_as_reports_raster_foreground_findings_without_writing() {
         &opaque,
     );
     assert_eq!(code, Some(0), "{stdout}");
-    assert_eq!(json_codes(&stdout), ["SVGVD026"]);
+    assert_eq!(json_codes(&stdout), ["VDT026"]);
 
     let (code, stdout, _) = inspect(
         &["inspect", "--as", "adaptive-foreground", "--format", "json"],
         &empty,
     );
     assert_eq!(code, Some(0), "{stdout}");
-    assert_eq!(json_codes(&stdout), ["SVGVD018"]);
+    assert_eq!(json_codes(&stdout), ["VDT018"]);
 
     // A JPEG has no alpha, so as a foreground it would hide the background.
     let (code, stdout, stderr) = inspect(
@@ -4541,7 +4541,7 @@ fn cli_inspect_as_reports_raster_foreground_findings_without_writing() {
         &wide,
     );
     assert_eq!(code, Some(0), "{stdout}");
-    assert_eq!(json_codes(&stdout), ["SVGVD024", "SVGVD025"]);
+    assert_eq!(json_codes(&stdout), ["VDT024", "VDT025"]);
     let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(report[0]["image"], "jpg");
     assert_eq!(
@@ -4609,7 +4609,7 @@ fn cli_inspect_as_reports_raster_foreground_findings_without_writing() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|diagnostic| diagnostic["code"] == "SVGVD019")
+            .any(|diagnostic| diagnostic["code"] == "VDT019")
     );
 
     // --as notification on a directory still keeps only SVGs; the WebP is not
@@ -4762,7 +4762,7 @@ fn cli_size_sets_the_longer_side_and_keeps_the_viewport() {
     assert!(
         !String::from_utf8(result.stderr)
             .unwrap()
-            .contains("SVGVD016")
+            .contains("VDT016")
     );
 
     let (result, xml) = convert(LARGE, &[]);
@@ -4770,7 +4770,7 @@ fn cli_size_sets_the_longer_side_and_keeps_the_viewport() {
     assert_eq!(dimension(&xml, "width"), 480.0);
     let stderr = String::from_utf8(result.stderr).unwrap();
     assert!(
-        stderr.contains("SVGVD016") && stderr.contains("--size 24"),
+        stderr.contains("VDT016") && stderr.contains("--size 24"),
         "{stderr}"
     );
 
@@ -4781,7 +4781,7 @@ fn cli_size_sets_the_longer_side_and_keeps_the_viewport() {
     assert_eq!(dimension(&xml, "height"), 24.0);
     let stderr = String::from_utf8(result.stderr).unwrap();
     assert!(
-        stderr.contains("note:") && !stderr.contains("SVGVD016"),
+        stderr.contains("note:") && !stderr.contains("VDT016"),
         "{stderr}"
     );
 
@@ -4807,7 +4807,7 @@ fn set_size_scales_both_ways_and_updates_the_warning() {
     assert!(asset.analysis.diagnostics.is_empty());
     asset.set_size(300.0).unwrap();
     assert_eq!(asset.analysis.metrics.height, 200.0);
-    assert_eq!(asset.analysis.diagnostics[0].code.as_str(), "SVGVD016");
+    assert_eq!(asset.analysis.diagnostics[0].code.as_str(), "VDT016");
     assert!(asset.set_size(0.0).is_err());
     assert!(asset.set_size(f32::NAN).is_err());
 
@@ -4950,7 +4950,7 @@ fn wide_gamut_colors_keep_their_paint_instead_of_vanishing_or_turning_black() {
             .analysis
             .diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.code.as_str() == "SVGVD018"),
+            .any(|diagnostic| diagnostic.code.as_str() == "VDT018"),
         "{:?}",
         icon.analysis.diagnostics
     );
@@ -4968,7 +4968,7 @@ fn resolving_a_wide_gamut_color_is_reported_as_an_informational_note() {
         .analysis
         .diagnostics
         .iter()
-        .filter(|diagnostic| diagnostic.code.as_str() == "SVGVD022")
+        .filter(|diagnostic| diagnostic.code.as_str() == "VDT022")
         .collect::<Vec<_>>()[..]
     else {
         panic!("expected one note: {:?}", asset.analysis.diagnostics);
@@ -5007,6 +5007,6 @@ fn resolving_a_wide_gamut_color_is_reported_as_an_informational_note() {
             .analysis
             .diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.code.as_str() == "SVGVD022"),
+            .any(|diagnostic| diagnostic.code.as_str() == "VDT022"),
     );
 }

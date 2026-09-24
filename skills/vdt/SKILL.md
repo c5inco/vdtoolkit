@@ -1,6 +1,6 @@
 ---
 name: vdt
-description: Convert SVG to Android VectorDrawable XML and generate launcher/app (adaptive, themed) and notification icons. Use when an Android project needs an icon or drawable from an SVG, or to check an SVG before converting or explain an SVGVD diagnostic code.
+description: Convert SVG to Android VectorDrawable XML and generate launcher/app (adaptive, themed) and notification icons. Use when an Android project needs an icon or drawable from an SVG, or to check an SVG before converting or explain a VDT diagnostic code.
 ---
 
 # vdt
@@ -75,7 +75,7 @@ VectorDrawableCompat must load them below API 21, where `anydpi` is unavailable.
      "compatibility": "exact",
      "minimum_api": 21,
      "diagnostics": [
-       { "code": "SVGVD019", "severity": "warning", "message": "...", "suggestion": "..." }
+       { "code": "VDT019", "severity": "warning", "message": "...", "suggestion": "..." }
      ],
      "metrics": { "width": 24.0, "height": 24.0, "content_bounds": { "left": 2.0, "top": 2.0, "right": 22.0, "bottom": 22.0 } }
    }
@@ -119,9 +119,9 @@ vdt adaptive --foreground logo.svg --background-color '#3DDC84' \
 - Give exactly one foreground: `--foreground <svg>` or `--foreground-image
   <png|webp>`. A raster foreground must already be drawn on the full square
   layer with its artwork inside the 66dp safe zone, because `--fit` places
-  vector artwork only; `SVGVD019` measures the painted pixels and says when it
+  vector artwork only; `VDT019` measures the painted pixels and says when it
   is not. A JPEG is rejected for this layer, and for `--monochrome-image`,
-  because a layer with no alpha would hide the background — `SVGVD026` reports
+  because a layer with no alpha would hide the background — `VDT026` reports
   a PNG or WebP with the same problem. `--legacy` is rejected with
   `--foreground-image`.
 - Give exactly one of `--background <svg>` (art
@@ -130,25 +130,25 @@ vdt adaptive --foreground logo.svg --background-color '#3DDC84' \
 - `--background-image` is the answer when the background is a photo, a render,
   or anything else that is not an SVG. Pass the file wherever it sits; vdt
   copies it byte for byte into `mipmap-nodpi/` and points the icon at it. It
-  never resamples the image, but it does decode it, so `SVGVD024`, `SVGVD025`,
-  and `SVGVD020` still report a background that is not square, too small, or
+  never resamples the image, but it does decode it, so `VDT024`, `VDT025`,
+  and `VDT020` still report a background that is not square, too small, or
   not fully opaque. PNG, WebP, and JPEG, recognized from the file's own header
-  rather than its name; a JPEG has no alpha, so it can never raise `SVGVD020`.
+  rather than its name; a JPEG has no alpha, so it can never raise `VDT020`.
   An animated WebP and `--legacy` are both rejected.
 - `--background-fit` is how a background SVG is scaled onto the 108dp layer.
   The default `cover` fills it and crops whatever overflows, which is what a
   background wants: Android masks and shifts that layer, so anything it does
-  not reach shows through. Note `SVGVD023` names how much was cropped. Use
+  not reach shows through. Note `VDT023` names how much was cropped. Use
   `contain` only when the user says the whole background image must stay
-  visible; it letterboxes non-square art and then earns warning `SVGVD020`.
+  visible; it letterboxes non-square art and then earns warning `VDT020`.
 - `--fit` is the square, in dp, the foreground and monochrome art is scaled to,
   centered on the 108dp layer. Keep the default 108 only when the SVG was drawn
   on the full 108dp adaptive layer with its padding built in; otherwise start at
-  66 and let `SVGVD019` correct you. Do not assume 66 is safe: a launcher mask
+  66 and let `VDT019` correct you. Do not assume 66 is safe: a launcher mask
   is a *circle*, so the fit a logo needs depends on its shape. A round mark can
   fill 66, while one drawn into the corners of the box needs about 47, because
   the corners of a 66dp box sit 46.7dp from the centre and the mask shows only
-  36dp. `SVGVD019` measures the painted pixels and names the fit that works —
+  36dp. `VDT019` measures the painted pixels and names the fit that works —
   warning when the artwork is clipped, note when it is past the 33dp Android
   recommends. Pass the fit it suggests rather than guessing.
 - `--monochrome` adds the layer Android 13+ uses for themed icons. Pass the
@@ -193,7 +193,7 @@ convention and reference them with `setSmallIcon(R.drawable.ic_stat_bell)`.
   printed: `Arrow-Left.svg` becomes `arrow_left.xml`. Use the printed name when
   you reference the resource in code.
 - `minimum_api` is 24 when the drawable uses gradients, even-odd fills, or
-  several clips, and an `SVGVD004` note names which. If it is above the
+  several clips, and a `VDT004` note names which. If it is above the
   module's `minSdk`, tell the user and pass on the note's suggestion.
 
 ## Diagnostics
@@ -209,14 +209,14 @@ follow it. As a rule:
 - `warning` means the file converts but will look wrong, for example an icon
   outside the safe zone or a notification icon that tints into a solid square.
   These are usually fixed with an option such as `--fit` or `--size`.
-- `info` needs no action, except `SVGVD004` when the module's `minSdk` is
-  below 24, and `SVGVD023`, which is worth repeating to the user because it
+- `info` needs no action, except `VDT004` when the module's `minSdk` is
+  below 24, and `VDT023`, which is worth repeating to the user because it
   says part of their background artwork was cropped away.
 
 Most errors are fixed in the design tool that produced the SVG. When the fix
 is a mechanical SVG edit that does not change the look (inlining a `<use>`,
 setting a viewBox), you can make it; otherwise explain the trade-off and let
-the user decide. For radial gradients with off-center focal points (`SVGVD003`),
+the user decide. For radial gradients with off-center focal points (`VDT003`),
 `--allow-approximate` allows lossy conversion by centering the focal point.
 
 ## In CI

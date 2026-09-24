@@ -9,7 +9,7 @@ export const MAX_EXPORT_DP = 200;
 
 // Android's warning for drawables over MAX_EXPORT_DP. The dialog always resizes those, so
 // the warning is never a reason a layer can't be exported.
-const LARGE_DIMENSIONS = "SVGVD016";
+const LARGE_DIMENSIONS = "VDT016";
 
 export interface Issue {
   message: string;

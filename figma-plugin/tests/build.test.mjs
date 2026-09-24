@@ -102,16 +102,16 @@ test("sandbox ignores unsupported nodes and correlates concurrent iframe respons
         message: "unsupported",
         analysis: {
           diagnostics: [
-            { code: "SVGVD011", severity: "info", message: "safe SVG normalization is required" },
-            { code: "SVGVD003", severity: "error", message: "gradient paint" },
+            { code: "VDT011", severity: "info", message: "safe SVG normalization is required" },
+            { code: "VDT003", severity: "error", message: "gradient paint" },
             {
-              code: "SVGVD007",
+              code: "VDT007",
               severity: "error",
               message: "embedded raster or SVG images are unsupported",
               location: { element: "image", line: 4, column: 2 },
               suggestion: "Replace the image with vector path geometry.",
             },
-            { code: "SVGVD003", severity: "error", message: "gradient paint" },
+            { code: "VDT003", severity: "error", message: "gradient paint" },
           ],
         },
       },
@@ -122,10 +122,10 @@ test("sandbox ignores unsupported nodes and correlates concurrent iframe respons
   assert.equal(
     diagnostics.code,
     [
-      "• Gradient paint (SVGVD003)",
+      "• Gradient paint (VDT003)",
       "",
       "• Embedded raster or SVG images are unsupported",
-      "  (SVGVD007)",
+      "  (VDT007)",
       "  → Replace the image with vector path geometry.",
     ].join("\n"),
   );
@@ -156,8 +156,8 @@ test("large drawables keep their size and surface warnings", async () => {
       analysis: {
         metrics: { width: 480, height: 320, viewport_width: 480, viewport_height: 320 },
         diagnostics: [
-          { code: "SVGVD011", severity: "info", message: "safe SVG normalization is required" },
-          { code: "SVGVD016", severity: "warning", message: "480×320dp is larger than 200×200dp" },
+          { code: "VDT011", severity: "info", message: "safe SVG normalization is required" },
+          { code: "VDT016", severity: "warning", message: "480×320dp is larger than 200×200dp" },
         ],
       },
     },
@@ -166,5 +166,5 @@ test("large drawables keep their size and surface warnings", async () => {
   assert.equal(drawable.title, "Android Vector Drawable");
   assert.equal(drawable.code, "<vector/>");
   assert.equal(warnings.title, "Warnings");
-  assert.equal(warnings.code, "• 480×320dp is larger than 200×200dp (SVGVD016)");
+  assert.equal(warnings.code, "• 480×320dp is larger than 200×200dp (VDT016)");
 });

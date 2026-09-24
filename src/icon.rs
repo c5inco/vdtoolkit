@@ -60,13 +60,13 @@ impl Asset {
     ///
     /// A notification icon is flattened to white first, as
     /// [`Asset::to_notification_icon`] does, and the flattening is reported
-    /// as an `SVGVD021` note. Artwork that paints almost the whole canvas
-    /// gets an `SVGVD017` warning, and artwork with nothing painted an
-    /// `SVGVD018` warning. An adaptive foreground whose content leaves the
-    /// 66dp safe zone gets `SVGVD019`, an adaptive background that does not
-    /// paint every pixel of the layer gets `SVGVD020`, and an adaptive
+    /// as a `VDT021` note. Artwork that paints almost the whole canvas
+    /// gets a `VDT017` warning, and artwork with nothing painted a
+    /// `VDT018` warning. An adaptive foreground whose content leaves the
+    /// 66dp safe zone gets `VDT019`, an adaptive background that does not
+    /// paint every pixel of the layer gets `VDT020`, and an adaptive
     /// background that [`FitMode::Cover`] scaled past the edges of the layer
-    /// gets `SVGVD023` naming how much the layer cropped. None of these change
+    /// gets `VDT023` naming how much the layer cropped. None of these change
     /// the compatibility or the minimum API.
     pub fn to_icon(&mut self, kind: IconKind, fit: Fit) -> Result<()> {
         match kind {

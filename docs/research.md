@@ -127,7 +127,7 @@ gradient is painted with its last stop, as SVG specifies.
 Radial gradients convert only when the combined transform is a similarity and
 the focal point coincides with the center. Everything else would become an
 ellipse or a focal gradient, which Android cannot draw, so it is rejected with
-`SVGVD003`. The renderer harness includes a skewed linear fixture and a scaled
+`VDT003`. The renderer harness includes a skewed linear fixture and a scaled
 radial fixture whose assertions sit where a naive endpoint mapping would paint
 the wrong color.
 
@@ -166,7 +166,7 @@ adaptive paths.
 
 ## Adaptive icon safe zone
 
-`SVGVD019` used to ask whether foreground content stayed inside a 66dp square
+`VDT019` used to ask whether foreground content stayed inside a 66dp square
 centered on the 108dp layer. A launcher mask is a circle, though: the 72dp
 visible window inscribed as a circle shows 36dp from the center, while the
 corners of the 66dp square sit 46.7dp out. On an API 36 emulator, a
@@ -230,18 +230,18 @@ gradient lowering from #1 is now exercised on real Figma-exported artwork
 rather than fixtures, and the 33 clip paths and 529 groups in the converted
 Noto set cover the clip-scope lowering at illustration scale. The converted
 illlustrations average 69 KiB of XML and 140 paths each, well past icon size,
-and every flowbite file trips the `SVGVD016` large-dimensions warning at
+and every flowbite file trips the `VDT016` large-dimensions warning at
 400 to 770dp.
 
 What blocks the rest, by the constructs that reject a file on their own:
 
 | Construct | Code | Files it alone blocks | Where |
 | --- | --- | --- | --- |
-| Group opacity over overlapping children | `SVGVD013` | 69 | illlustrations (69 of 80 rejected), 1 flowbite, 1 noto |
-| Elliptical or skewed radial gradients | `SVGVD003` | 95 | noto (81 of 82 rejected), 9 fluent, 5 flowbite |
-| Masks that are not one opaque white shape | `SVGVD001` | 13 | flowbite (13 of 21 rejected); a further 6 illlustrations alongside filters |
-| Filters | `SVGVD002` | 190 with the two above | fluent (190 of 199 rejected), 6 illlustrations |
-| Text, patterns, images, dashes, `mix-blend-mode` | `SVGVD006`, `SVGVD008`, `SVGVD007`, `SVGVD013` | 2 to 11 each | scattered |
+| Group opacity over overlapping children | `VDT013` | 69 | illlustrations (69 of 80 rejected), 1 flowbite, 1 noto |
+| Elliptical or skewed radial gradients | `VDT003` | 95 | noto (81 of 82 rejected), 9 fluent, 5 flowbite |
+| Masks that are not one opaque white shape | `VDT001` | 13 | flowbite (13 of 21 rejected); a further 6 illlustrations alongside filters |
+| Filters | `VDT002` | 190 with the two above | fluent (190 of 199 rejected), 6 illlustrations |
+| Text, patterns, images, dashes, `mix-blend-mode` | `VDT006`, `VDT008`, `VDT007`, `VDT013` | 2 to 11 each | scattered |
 
 Decisions from the data:
 

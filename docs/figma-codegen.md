@@ -47,7 +47,7 @@ diagnostic code blocks instead of plugin crashes.
 
 Android warns when a vector icon's `android:width` or `android:height` exceeds
 200dp, because drawing it gets slow. The plugin keeps Figma's dimensions and
-shows the `SVGVD016` warning in a separate **Warnings** block under the XML.
+shows the `VDT016` warning in a separate **Warnings** block under the XML.
 (A `select` codegen preference was tried for an opt-in size cap, but Figma's
 Dev Mode shows the dropdown without delivering the chosen value to the plugin:
 `figma.codegen.preferences.customSettings` stays undefined.)
@@ -105,9 +105,9 @@ not be committed unless the repository adopts a shared registered plugin.
    unsupported node. The plugin should contribute no code block.
 5. To exercise diagnostics, select a frame or component whose SVG export contains an
    unsupported effect such as a blur/filter. The Code panel should show a
-   **Can't convert to Vector Drawable** block listing each blocking issue with its stable `SVGVDnnn` code.
+   **Can't convert to Vector Drawable** block listing each blocking issue with its stable `VDTnnn` code.
 6. Select a frame larger than 200×200. The XML keeps Figma's size and a
-   **Warnings** block shows `SVGVD016`.
+   **Warnings** block shows `VDT016`.
 7. Switch to Design Mode and select several frames, including one with a blur,
    one larger than 200×200, and a group. Run **Export Selection as Vector
    Drawables…**. Every row has a thumbnail. The clean frame and the large frame

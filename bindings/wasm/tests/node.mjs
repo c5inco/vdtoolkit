@@ -28,7 +28,7 @@ test("unsupported and malformed inputs are structured failures", () => {
   assert.equal(unsupportedResult.ok, false);
   assert.equal(unsupportedResult.error.kind, "unsupported");
   assert.equal(unsupportedResult.error.analysis.compatibility, "unsupported");
-  assert.ok(unsupportedResult.error.analysis.diagnostics.some(({ code }) => code === "SVGVD006"));
+  assert.ok(unsupportedResult.error.analysis.diagnostics.some(({ code }) => code === "VDT006"));
 
   const malformedResult = convertSvg(malformed, false);
   assert.equal(malformedResult.ok, false);
@@ -53,7 +53,7 @@ test("large drawables warn and can be fit within a size cap", () => {
   const uncapped = convertSvg(large, false);
   assert.deepEqual(
     uncapped.analysis.diagnostics.map(({ code, severity }) => [code, severity]),
-    [["SVGVD016", "warning"]],
+    [["VDT016", "warning"]],
   );
   assert.match(uncapped.xml, /android:width="480dp"/);
 
@@ -69,5 +69,5 @@ test("notification conversion whitens and fits artwork on a 24dp canvas", () => 
   assert.equal(result.ok, true);
   assert.deepEqual([result.analysis.metrics.width, result.analysis.metrics.height], [24, 24]);
   assert.match(result.xml, /android:fillColor="#FFFFFF"/);
-  assert.ok(result.analysis.diagnostics.some(({ code }) => code === "SVGVD021"));
+  assert.ok(result.analysis.diagnostics.some(({ code }) => code === "VDT021"));
 });

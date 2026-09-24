@@ -1103,7 +1103,7 @@ enum Api24Feature {
     MultipleClips,
 }
 
-/// `SVGVD004` note naming what raises a drawable's minimum API to 24, or
+/// `VDT004` note naming what raises a drawable's minimum API to 24, or
 /// `None` when it renders on API 21.
 pub(crate) fn api_level_note(drawable: &VectorDrawable) -> Option<Diagnostic> {
     let features = drawable.api_24_features();

@@ -118,17 +118,17 @@ struct Decoded {
 /// Decode a raster icon layer and report what it will look like on the 108dp
 /// layer, without changing a byte of it.
 ///
-/// A layer that is not square gets `SVGVD024`, because Android stretches it
+/// A layer that is not square gets `VDT024`, because Android stretches it
 /// onto the square layer, and one that cannot serve
 /// [`ADAPTIVE_ICON_MAX_PIXELS`] sharply, or carries more pixels than that,
-/// gets `SVGVD025`.
+/// gets `VDT025`.
 ///
-/// A [`LayerKind::Background`] that is not fully opaque gets `SVGVD020`, the
+/// A [`LayerKind::Background`] that is not fully opaque gets `VDT020`, the
 /// same finding a vector background that leaves gaps gets. A
 /// [`LayerKind::Foreground`] is judged the other way round: one that is fully
-/// opaque hides the background and gets `SVGVD026`, one with nothing painted
-/// gets `SVGVD018`, and one whose painted pixels leave the 66dp safe zone gets
-/// `SVGVD019`, as a vector foreground does. A JPEG foreground is rejected
+/// opaque hides the background and gets `VDT026`, one with nothing painted
+/// gets `VDT018`, and one whose painted pixels leave the 66dp safe zone gets
+/// `VDT019`, as a vector foreground does. A JPEG foreground is rejected
 /// outright, because a layer with no alpha channel cannot sit over anything.
 pub fn analyze_layer_image(data: &[u8], layer: LayerKind) -> Result<(LayerImage, Vec<Diagnostic>)> {
     let format = ImageFormat::sniff(data).ok_or_else(|| {

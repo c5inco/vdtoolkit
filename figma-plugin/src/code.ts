@@ -136,7 +136,7 @@ async function generate(node: ConvertibleNode): Promise<CodegenResult[]> {
     const source = await node.exportAsync({ format: "SVG" });
     const result = await convert(source);
     if (result.ok) {
-      // Large drawables are kept at Figma's size; SVGVD016 surfaces below the XML instead.
+      // Large drawables are kept at Figma's size; VDT016 surfaces below the XML instead.
       return [
         {
           title: "Android Vector Drawable",

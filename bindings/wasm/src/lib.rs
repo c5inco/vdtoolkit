@@ -347,7 +347,7 @@ mod tests {
     #[test]
     fn size_cap_matches_the_native_api() {
         let uncapped = json(&convert_result(LARGE, false, None, false, false));
-        assert_eq!(uncapped["analysis"]["diagnostics"][0]["code"], "SVGVD016");
+        assert_eq!(uncapped["analysis"]["diagnostics"][0]["code"], "VDT016");
         assert_eq!(uncapped["analysis"]["diagnostics"][0]["severity"], "warning");
 
         let mut native = vdtoolkit::convert(LARGE).unwrap();
@@ -401,6 +401,6 @@ mod tests {
             .as_array()
             .unwrap()
             .iter()
-            .any(|d| d["code"] == "SVGVD003"));
+            .any(|d| d["code"] == "VDT003"));
     }
 }

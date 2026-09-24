@@ -200,7 +200,7 @@ test("review marks convertible layers ready and lists blockers for the rest", ()
   assert.ok(rows.every((row) => row.preview instanceof Uint8Array), "every exported layer keeps its SVG preview");
   assert.ok(rows[1].issues.length > 0);
   const codes = rows[1].issues.map((issue) => issue.code);
-  assert.ok(codes.every((code) => /^SVGVD\d{3}$/.test(code)));
+  assert.ok(codes.every((code) => /^VDT\d{3}$/.test(code)));
   assert.equal(new Set(codes).size, codes.length, "each issue code is listed once");
   assert.deepEqual(rows[2].issues, [{ message: "Only frames, components, and instances can be exported." }]);
 });
@@ -232,7 +232,7 @@ test("notification review exports a white 24dp icon with icon diagnostics", () =
   assert.equal(row.status, "ready");
   assert.deepEqual([row.exportWidth, row.exportHeight, row.resized], [24, 24, false]);
   assert.match(row.xml, /android:fillColor="#FFFFFF"/);
-  assert.ok(row.warnings.some((warning) => warning.code === "SVGVD017"));
+  assert.ok(row.warnings.some((warning) => warning.code === "VDT017"));
 });
 
 test("wide-gamut colors are resolved without saying so in the export dialog", () => {
@@ -266,8 +266,8 @@ test("size is never listed as a reason a large layer can't be exported", () => {
   );
   assert.equal(row.status, "blocked");
   const codes = row.issues.map((issue) => issue.code);
-  assert.ok(codes.includes("SVGVD002"), "the real blocker is listed");
-  assert.ok(!codes.includes("SVGVD016"), "the size warning is not");
+  assert.ok(codes.includes("VDT002"), "the real blocker is listed");
+  assert.ok(!codes.includes("VDT016"), "the size warning is not");
 });
 
 test("filter matches layer and file names, ignoring case and surrounding spaces", () => {

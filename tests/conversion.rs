@@ -1833,10 +1833,7 @@ fn cli_adaptive_places_a_raster_foreground_and_judges_it_as_a_foreground() {
         String::from_utf8(output.stderr.clone())
             .unwrap()
             .lines()
-            .filter_map(|line| {
-                line.split_whitespace()
-                    .find(|word| word.starts_with("VDT"))
-            })
+            .filter_map(|line| line.split_whitespace().find(|word| word.starts_with("VDT")))
             .map(str::to_owned)
             .collect()
     };
@@ -2584,10 +2581,7 @@ fn cli_adaptive_places_a_bitmap_background_without_resampling_it() {
         String::from_utf8(output.stderr.clone())
             .unwrap()
             .lines()
-            .filter_map(|line| {
-                line.split_whitespace()
-                    .find(|word| word.starts_with("VDT"))
-            })
+            .filter_map(|line| line.split_whitespace().find(|word| word.starts_with("VDT")))
             .map(str::to_owned)
             .collect()
     };
@@ -2614,18 +2608,12 @@ fn cli_adaptive_places_a_bitmap_background_without_resampling_it() {
     );
 
     // What vdt can see about an image it never converts.
-    assert_eq!(
-        codes(&run(&soft, &[], &temp.path().join("a"))),
-        ["VDT025"]
-    );
+    assert_eq!(codes(&run(&soft, &[], &temp.path().join("a"))), ["VDT025"]);
     assert_eq!(
         codes(&run(&wide, &[], &temp.path().join("b"))),
         ["VDT024", "VDT025"]
     );
-    assert_eq!(
-        codes(&run(&holes, &[], &temp.path().join("c"))),
-        ["VDT020"]
-    );
+    assert_eq!(codes(&run(&holes, &[], &temp.path().join("c"))), ["VDT020"]);
 
     // WebP reaches the same findings, and lands under its own extension.
     let webp_sharp = write("sharp.webp", &webp(&fill(432, 432, 0xFF), 432, 432));
@@ -4759,11 +4747,7 @@ fn cli_size_sets_the_longer_side_and_keeps_the_viewport() {
     assert_eq!(dimension(&xml, "width"), 24.0);
     assert_eq!(dimension(&xml, "height"), 16.0);
     assert_eq!(attribute(&xml, "viewportWidth"), 480.0);
-    assert!(
-        !String::from_utf8(result.stderr)
-            .unwrap()
-            .contains("VDT016")
-    );
+    assert!(!String::from_utf8(result.stderr).unwrap().contains("VDT016"));
 
     let (result, xml) = convert(LARGE, &[]);
     assert!(result.status.success());

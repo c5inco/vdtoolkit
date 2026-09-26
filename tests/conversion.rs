@@ -366,6 +366,34 @@ fn rejects_non_uniform_transforms_on_strokes() {
 }
 
 #[test]
+fn stroke_transform_checks_hold_when_a_large_viewbox_is_scaled_down() {
+    // A 960-unit viewBox drawn at 24dp scales everything by 0.025, which
+    // shrinks the skew and uneven scale below any absolute tolerance.
+    for (transform, uniform) in [
+        ("skewX(5)", false),
+        ("scale(1 1.003)", false),
+        ("rotate(30)", true),
+        ("scale(3)", true),
+    ] {
+        let source = format!(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 960" width="24" height="24">
+                <path transform="{transform}" d="M100 100L800 800" fill="none" stroke="#000" stroke-width="40"/>
+            </svg>"##
+        );
+        let analysis = vdtoolkit::analyze(source.as_bytes()).unwrap();
+        let rejected = analysis.diagnostics.iter().any(|diagnostic| {
+            matches!(diagnostic.code, DiagnosticCode::UnsupportedStrokeTransform)
+        });
+        assert_eq!(rejected, !uniform, "{transform}: {analysis:?}");
+        assert_eq!(
+            analysis.compatibility.is_convertible(false),
+            uniform,
+            "{transform}"
+        );
+    }
+}
+
+#[test]
 fn rejects_stroke_features_vector_drawable_cannot_express() {
     for extra in [
         r#"stroke-dasharray="2 1""#,

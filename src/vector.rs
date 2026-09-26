@@ -1217,8 +1217,11 @@ fn stroke_scale(
     let x = transform.sx.hypot(transform.ky);
     let y = transform.kx.hypot(transform.sy);
     let dot = transform.sx * transform.kx + transform.ky * transform.sy;
-    let epsilon = 1.0e-4;
-    if (x - y).abs() > epsilon || dot.abs() > epsilon {
+    // Relative to the scale, as in `similarity_scale`: an absolute tolerance
+    // lets a skew or uneven scale through once a large viewBox is scaled
+    // down to dp, such as a 960-unit icon drawn at 24dp.
+    let relative = 1.0e-4;
+    if (x - y).abs() > relative * x.max(y) || dot.abs() > relative * x * y {
         unsupported(
             compatibility,
             diagnostics,

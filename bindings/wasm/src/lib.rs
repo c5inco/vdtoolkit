@@ -138,11 +138,20 @@ pub fn convert_notification_svg(
     ))
 }
 
+/// Turn a layer or file name into the Android resource name the command-line
+/// interface would write it under, or `undefined` when the name has no letters
+/// or digits to keep.
+#[wasm_bindgen(js_name = resourceName, skip_typescript)]
+pub fn resource_name(name: &str) -> Option<String> {
+    vdtoolkit::resource_name(name)
+}
+
 #[wasm_bindgen(typescript_custom_section)]
 const TYPESCRIPT_FUNCTIONS: &'static str = r#"
 export function analyzeSvg(source: Uint8Array, allowApproximate?: boolean): AnalyzeResult;
 export function convertSvg(source: Uint8Array, optimize: boolean, maxSizeDp?: number, pretty?: boolean, allowApproximate?: boolean): ConvertResult;
 export function convertNotificationSvg(source: Uint8Array, optimize: boolean, fitDp?: number, pretty?: boolean, allowApproximate?: boolean): ConvertResult;
+export function resourceName(name: string): string | undefined;
 "#;
 
 fn analyze_result(source: &[u8], allow_approximate: bool) -> OperationResult {

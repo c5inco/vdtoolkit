@@ -1,4 +1,4 @@
-import init, { convertNotificationSvg, convertSvg } from "../vendor/vdtoolkit-wasm/vdtoolkit_wasm.js";
+import init, { convertNotificationSvg, convertSvg, resourceName } from "../vendor/vdtoolkit-wasm/vdtoolkit_wasm.js";
 import wasmBytes from "../vendor/vdtoolkit-wasm/vdtoolkit_wasm_bg.wasm";
 import type { ConvertResult } from "../vendor/vdtoolkit-wasm/vdtoolkit_wasm";
 import { renderExportDialog, renderPreparing } from "./export-dialog";
@@ -24,7 +24,7 @@ window.onmessage = async (event: MessageEvent<{ pluginMessage?: ConvertRequest |
     post(response);
   } else if (request?.type === "review" && Array.isArray(request.candidates)) {
     const convert = converter(await wasmReady, request.kind);
-    renderExportDialog(reviewCandidates(request.candidates, convert, request.kind), request.kind, post);
+    renderExportDialog(reviewCandidates(request.candidates, convert, resourceName, request.kind), request.kind, post);
   }
 };
 

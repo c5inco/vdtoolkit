@@ -14,6 +14,7 @@ mod icon;
 mod notification;
 mod optimize;
 mod render;
+mod resource;
 mod short_path;
 mod svg;
 mod vector;
@@ -41,6 +42,8 @@ pub use error::{Error, Result};
 pub use icon::IconKind;
 #[doc(hidden)]
 pub use notification::{Flattening, NOTIFICATION_ICON_LIVE_AREA, NOTIFICATION_ICON_SIZE};
+#[doc(hidden)]
+pub use resource::{is_resource_name, resource_name};
 
 /// A converted SVG and its compatibility analysis.
 #[doc(hidden)]

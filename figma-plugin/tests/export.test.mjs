@@ -11,7 +11,7 @@ const bundled = await build({
   stdin: {
     contents: [
       'export { matchesFilter, reviewCandidates } from "./src/export-review.ts";',
-      'export { resourceName, uniqueResourceNames } from "./src/resource-names.ts";',
+      'export { uniqueResourceNames } from "./src/resource-names.ts";',
       'export { createDrawableZip, crc32 } from "./src/zip.ts";',
     ].join("\n"),
     resolveDir: new URL("..", import.meta.url).pathname,
@@ -21,7 +21,7 @@ const bundled = await build({
   format: "esm",
   write: false,
 });
-const { matchesFilter, reviewCandidates, resourceName, uniqueResourceNames, createDrawableZip, crc32 } = await import(
+const { matchesFilter, reviewCandidates, uniqueResourceNames, createDrawableZip, crc32 } = await import(
   `data:text/javascript;base64,${Buffer.from(bundled.outputFiles[0].text).toString("base64")}`
 );
 
@@ -183,6 +183,7 @@ test("review marks convertible layers ready and lists blockers for the rest", ()
       { nodeId: "4", name: "arrow-left", source: svg('<rect width="24" height="24"/>') },
     ],
     convert,
+    wasm.resourceName,
   );
 
   assert.deepEqual(
@@ -212,6 +213,7 @@ test("review exports large frames capped at 200dp and says so", () => {
   const [row] = reviewCandidates(
     [{ nodeId: "1", name: "Hero", source: hero, width: 480, height: 320 }],
     (source) => wasm.convertSvg(source, true, 200),
+    wasm.resourceName,
   );
   assert.equal(row.status, "ready");
   assert.deepEqual([row.width, row.height, row.exportWidth, row.exportHeight], [480, 320, 200, 133]);
@@ -226,6 +228,7 @@ test("notification review exports a white 24dp icon with icon diagnostics", () =
   const [row] = reviewCandidates(
     [{ nodeId: "1", name: "Status", source, width: 48, height: 48 }],
     (input) => wasm.convertNotificationSvg(input, true),
+    wasm.resourceName,
     "notification",
   );
 
@@ -247,6 +250,7 @@ test("wide-gamut colors are resolved without saying so in the export dialog", ()
   const [row] = reviewCandidates(
     [{ nodeId: "1", name: "Project", source: folder, width: 20, height: 20 }],
     (input) => wasm.convertNotificationSvg(input, true),
+    wasm.resourceName,
     "notification",
   );
 
@@ -263,6 +267,7 @@ test("size is never listed as a reason a large layer can't be exported", () => {
   const [row] = reviewCandidates(
     [{ nodeId: "1", name: "Hero", source: blurredHero, width: 480, height: 320 }],
     (source) => wasm.convertSvg(source, true, 200),
+    wasm.resourceName,
   );
   assert.equal(row.status, "blocked");
   const codes = row.issues.map((issue) => issue.code);
@@ -281,15 +286,16 @@ test("filter matches layer and file names, ignoring case and surrounding spaces"
   assert.equal(matchesFilter(blocked, ".xml"), false);
 });
 
-test("layer names become valid Android resource names", () => {
-  assert.equal(resourceName("Icons/Arrow Left"), "icons_arrow_left");
-  assert.equal(resourceName("ChevronDown"), "chevron_down");
-  assert.equal(resourceName("24px Café"), "ic_24px_cafe");
-  assert.equal(resourceName("🙂"), "vector");
-  assert.equal(resourceName("C++"), "c_plus_plus");
-  assert.equal(resourceName("C#"), "c_sharp");
-  assert.equal(resourceName("R&D @ 100%"), "r_and_d_at_100_percent");
-  assert.deepEqual(uniqueResourceNames(["Home", "home", "HOME"]), ["home", "home_2", "home_3"]);
+test("layer names become the Android resource names the CLI would write", () => {
+  const names = (layerNames) => uniqueResourceNames(layerNames, wasm.resourceName);
+  assert.deepEqual(
+    names(["Icons/Arrow Left", "ChevronDown", "24px Café", "🙂", "C++", "C#", "R&D @ 100%"]),
+    ["icons_arrow_left", "chevron_down", "ic_24px_cafe", "vector", "c_plus_plus", "c_sharp", "r_and_d_at_100_percent"],
+  );
+  // Java keywords can't be fields of the generated R class, so aapt2 rejects them.
+  assert.deepEqual(names(["class", "New", "int"]), ["ic_class", "ic_new", "ic_int"]);
+  assert.deepEqual(names(["HTTPServer", "_private"]), ["http_server", "_private"]);
+  assert.deepEqual(names(["Home", "home", "HOME"]), ["home", "home_2", "home_3"]);
 });
 
 test("ZIP archive has one stored entry per drawable", () => {

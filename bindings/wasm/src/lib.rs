@@ -192,12 +192,21 @@ fn notification_result(
     pretty: bool,
     allow_approximate: bool,
 ) -> OperationResult {
-    match vdtoolkit::convert_with_options(source, allow_approximate).and_then(|mut asset| {
-        asset.to_icon(vdtoolkit::IconKind::Notification, vdtoolkit::Fit::contain(fit_dp))?;
+    // Converting for the notification kind, rather than converting and then
+    // calling `to_icon`, lowers paint the way the command-line interface does:
+    // a gradient whose alpha is uniform becomes a flat fill before its
+    // geometry is checked.
+    match vdtoolkit::convert_as_with_options(
+        source,
+        vdtoolkit::IconKind::Notification,
+        vdtoolkit::Fit::contain(fit_dp),
+        allow_approximate,
+    )
+    .map(|mut asset| {
         if optimize {
             asset.optimize();
         }
-        Ok(asset)
+        asset
     }) {
         Ok(asset) => OperationResult::Success {
             ok: true,
@@ -299,8 +308,8 @@ mod tests {
     fn raster_conversion_errors_do_not_name_cli_flags() {
         let png = b"\x89PNG\r\n\x1a\n";
         for result in [
-            convert_result(png, false, None, false),
-            notification_result(png, false, 24.0, false),
+            convert_result(png, false, None, false, false),
+            notification_result(png, false, 24.0, false, false),
         ] {
             let result = json(&result);
             assert_eq!(result["error"]["kind"], "invalid_input");
@@ -363,10 +372,13 @@ mod tests {
 
     #[test]
     fn notification_conversion_matches_the_native_api() {
-        let mut native = vdtoolkit::convert(EXACT).unwrap();
-        native
-            .to_icon(vdtoolkit::IconKind::Notification, vdtoolkit::Fit::contain(20.0))
-            .unwrap();
+        let mut native = vdtoolkit::convert_as_with_options(
+            EXACT,
+            vdtoolkit::IconKind::Notification,
+            vdtoolkit::Fit::contain(20.0),
+            false,
+        )
+        .unwrap();
         native.optimize();
 
         let converted = json(&notification_result(EXACT, true, 20.0, false, false));
@@ -377,6 +389,41 @@ mod tests {
         );
         assert_eq!(converted["analysis"]["metrics"]["width"], 24.0);
         assert!(converted["xml"].as_str().unwrap().contains("#FFFFFF"));
+    }
+
+    #[test]
+    fn notification_conversion_flattens_uniform_alpha_gradients_like_the_cli() {
+        // A focal radial gradient cannot be drawn exactly, but with uniform
+        // alpha a notification icon only needs its opacity.
+        const FOCAL_UNIFORM_ALPHA: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+            <defs>
+                <radialGradient id="g" gradientUnits="userSpaceOnUse" cx="12" cy="12" r="8" fx="8">
+                    <stop stop-color="#123456" stop-opacity="0.5"/>
+                    <stop offset="1" stop-color="#ABCDEF" stop-opacity="0.5"/>
+                </radialGradient>
+            </defs>
+            <path d="M4 4H20V20H4Z" fill="url(#g)"/>
+        </svg>"##;
+
+        for allow_approximate in [false, true] {
+            let native = vdtoolkit::convert_as_with_options(
+                FOCAL_UNIFORM_ALPHA,
+                vdtoolkit::IconKind::Notification,
+                vdtoolkit::Fit::contain(24.0),
+                allow_approximate,
+            )
+            .unwrap();
+            let converted = json(&notification_result(
+                FOCAL_UNIFORM_ALPHA,
+                false,
+                24.0,
+                false,
+                allow_approximate,
+            ));
+            assert_eq!(converted["ok"], true);
+            assert_eq!(converted["analysis"]["compatibility"], "exact");
+            assert_eq!(converted["xml"], native.to_compact_xml());
+        }
     }
 
     #[test]

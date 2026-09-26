@@ -47,6 +47,7 @@ await build({
   define: { "import.meta.url": '""' },
   loader: { ".wasm": "binary" },
   plugins: [glueFactory],
+  minify: true,
   logLevel: "info",
 });
 

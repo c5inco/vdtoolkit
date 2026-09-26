@@ -1,18 +1,28 @@
-import init, { convertNotificationSvg, convertSvg, resourceName } from "../vendor/vdtoolkit-wasm/vdtoolkit_wasm.js";
+import createBindings from "../vendor/vdtoolkit-wasm/vdtoolkit_wasm.js?factory";
 import wasmBytes from "../vendor/vdtoolkit-wasm/vdtoolkit_wasm_bg.wasm";
-import type { ConvertResult } from "../vendor/vdtoolkit-wasm/vdtoolkit_wasm";
 import { renderExportDialog, renderPreparing } from "./export-dialog";
-import { MAX_EXPORT_DP, reviewCandidates } from "./export-review";
-import type { ConvertRequest, ConvertResponse, ExportKind, ReviewRequest, SandboxMessage } from "./messages";
+import { reviewCandidates } from "./export-review";
+import type { ConvertRequest, ConvertResponse, ReviewRequest, SandboxMessage } from "./messages";
+import { converter, wasmSession, type WithWasm } from "./wasm-session";
 
 declare const parent: Window;
 
-// One initialization promise is shared by every request received by this
-// iframe, including codegen requests that arrive concurrently.
-// It settles with the initialization error, if any, so each request can report it.
-const wasmReady: Promise<unknown> = init({ module_or_path: wasmBytes }).then(
-  () => undefined,
-  (error: unknown) => error,
+// One compilation is shared by every request received by this iframe, including codegen
+// requests that arrive concurrently. Instances are made from it synchronously, so one that
+// trapped is replaced before the next layer of a batch. If compiling fails, each request
+// reports the error. build.mjs imports the .wasm file as its bytes; TypeScript instead
+// finds wasm-bindgen's declaration of the module's exports beside it.
+const wasmReady: Promise<WithWasm> = WebAssembly.compile(wasmBytes as unknown as Uint8Array<ArrayBuffer>).then(
+  (module) =>
+    wasmSession(() => {
+      const bindings = createBindings();
+      bindings.initSync({ module });
+      return bindings;
+    }),
+  (error: unknown) =>
+    wasmSession(() => {
+      throw error;
+    }),
 );
 
 window.onmessage = async (event: MessageEvent<{ pluginMessage?: ConvertRequest | ReviewRequest }>) => {
@@ -23,7 +33,9 @@ window.onmessage = async (event: MessageEvent<{ pluginMessage?: ConvertRequest |
     const response: ConvertResponse = { type: "converted", id: request.id, result: convert(request.source) };
     post(response);
   } else if (request?.type === "review" && Array.isArray(request.candidates)) {
-    const convert = converter(await wasmReady, request.kind);
+    const withWasm = await wasmReady;
+    const convert = converter(withWasm, request.kind);
+    const resourceName = (name: string) => withWasm((wasm) => wasm.resourceName(name));
     renderExportDialog(reviewCandidates(request.candidates, convert, resourceName, request.kind), request.kind, post);
   }
 };
@@ -33,30 +45,6 @@ window.onmessage = async (event: MessageEvent<{ pluginMessage?: ConvertRequest |
 // It is drawn after the listener is registered so a DOM failure can't break conversion.
 if (document.body) renderPreparing();
 else document.addEventListener("DOMContentLoaded", renderPreparing, { once: true });
-
-function converter(
-  initError: unknown,
-  kind: ExportKind = "drawable",
-  pretty = false,
-  capDrawable = true,
-): (source: Uint8Array) => ConvertResult {
-  return (source) => {
-    try {
-      if (initError !== undefined) throw initError;
-      return kind === "notification"
-        ? convertNotificationSvg(new Uint8Array(source), true, undefined, pretty, true)
-        : convertSvg(new Uint8Array(source), true, capDrawable ? MAX_EXPORT_DP : undefined, pretty, true);
-    } catch (error) {
-      return {
-        ok: false,
-        error: {
-          kind: "svg",
-          message: error instanceof Error ? error.message : String(error),
-        },
-      };
-    }
-  };
-}
 
 function post(message: SandboxMessage): void {
   parent.postMessage({ pluginMessage: message }, "*");

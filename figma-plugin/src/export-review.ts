@@ -1,6 +1,6 @@
-import type { ConvertResult, Diagnostic } from "../vendor/vdtoolkit-wasm/vdtoolkit_wasm";
+import type { Diagnostic } from "../vendor/vdtoolkit-wasm/vdtoolkit_wasm";
 import { blockingDiagnostics, capitalize, warningDiagnostics } from "./diagnostics";
-import type { ExportCandidate, ExportKind } from "./messages";
+import type { ConversionResult, ExportCandidate, ExportKind } from "./messages";
 import { type ResourceName, uniqueResourceNames } from "./resource-names";
 
 // Android's recommended vector icon limit. The dialog scales larger layers down to fit,
@@ -50,7 +50,7 @@ export type ReviewRow = ReadyRow | BlockedRow;
 // `convert` is expected to cap drawables at MAX_EXPORT_DP.
 export function reviewCandidates(
   candidates: ExportCandidate[],
-  convert: (source: Uint8Array) => ConvertResult,
+  convert: (source: Uint8Array) => ConversionResult,
   resourceName: ResourceName,
   kind: ExportKind = "drawable",
 ): ReviewRow[] {

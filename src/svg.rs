@@ -43,7 +43,7 @@ pub(crate) fn process_as(
     // the `color()` functions it cannot read, along with the sRGB fallbacks
     // beside them, leaving strokes unpainted and fills black.
     let resolved = crate::css::resolve_color_functions(text, &document);
-    if let Some(ref resolved) = resolved {
+    if resolved.colors > 0 {
         diagnostics.push(Diagnostic {
             code: DiagnosticCode::WideGamutColor,
             severity: Severity::Info,
@@ -55,10 +55,26 @@ pub(crate) fn process_as(
             suggestion: None,
         });
     }
+    if let Some(location) = resolved.unresolved.first() {
+        push_unsupported(
+            &mut compatibility,
+            &mut diagnostics,
+            DiagnosticCode::UnsupportedPaint,
+            &format!(
+                "{} a color() function that cannot be resolved to sRGB, so the \
+                 color would be dropped along with its fallback",
+                match resolved.unresolved.len() {
+                    1 => "an element's paint uses".to_owned(),
+                    count => format!("{count} elements' paint use"),
+                }
+            ),
+            Some(location.clone()),
+            "Write the color as sRGB hex, or as color() in srgb, srgb-linear, or \
+             display-p3 spelled without character references.",
+        );
+    }
     let tree = usvg::Tree::from_data(
-        resolved
-            .as_ref()
-            .map_or(source, |resolved| resolved.source.as_bytes()),
+        resolved.source.as_deref().map_or(source, str::as_bytes),
         &options,
     )?;
     let mut metrics = Metrics::default();

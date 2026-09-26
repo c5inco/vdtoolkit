@@ -366,6 +366,39 @@ fn rejects_non_uniform_transforms_on_strokes() {
 }
 
 #[test]
+fn color_functions_that_cannot_resolve_are_rejected_not_painted_black() {
+    // The SVG parser drops a `color()` value it cannot read, so the fill
+    // would turn black and the stroke vanish.
+    for paint in [
+        r#"fill="color(rec2020 1 0 0)""#,
+        r#"style="fill:#FF0000;fill:color(lab 50 60 40)""#,
+        r#"style="stroke:color(display-p3 1 0 0)&#59;stroke-width:2""#,
+    ] {
+        let source = format!(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+                <path d="M2 2H22V22H2Z" {paint}/>
+            </svg>"##
+        );
+        let analysis = vdtoolkit::analyze(source.as_bytes()).unwrap();
+        assert_eq!(
+            analysis.compatibility,
+            Compatibility::Unsupported,
+            "{paint}"
+        );
+        let diagnostic = analysis
+            .diagnostics
+            .iter()
+            .find(|diagnostic| matches!(diagnostic.code, DiagnosticCode::UnsupportedPaint))
+            .unwrap_or_else(|| panic!("{paint}: {analysis:?}"));
+        assert_eq!(diagnostic.location.as_ref().unwrap().element, "path");
+        assert!(matches!(
+            vdtoolkit::convert(source.as_bytes()),
+            Err(Error::Incompatible(_))
+        ));
+    }
+}
+
+#[test]
 fn stroke_transform_checks_hold_when_a_large_viewbox_is_scaled_down() {
     // A 960-unit viewBox drawn at 24dp scales everything by 0.025, which
     // shrinks the skew and uneven scale below any absolute tolerance.

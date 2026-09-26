@@ -1624,11 +1624,17 @@ fn plan_outputs(
             let Some(output) = output else {
                 return Ok(None);
             };
-            let (directory, stem, extension) = if root.is_file() {
+            let (directory, stem, extension) = if root.is_file() && !names_directory(output) {
                 (
                     output.parent().unwrap_or(Path::new("")).to_owned(),
                     output.file_stem(),
                     output.extension(),
+                )
+            } else if root.is_file() {
+                (
+                    output.to_owned(),
+                    input.file_stem(),
+                    Some(OsStr::new("xml")),
                 )
             } else {
                 let relative = input.strip_prefix(root).unwrap_or(input);
@@ -1661,6 +1667,18 @@ fn plan_outputs(
             }))
         })
         .collect()
+}
+
+/// Whether `-o` names a directory for a single input: one that exists, or a
+/// path ending in a separator. `Path` drops the trailing separator, so without
+/// this `-o res/drawable/` would be read as a file named `drawable`.
+fn names_directory(output: &Path) -> bool {
+    output.is_dir()
+        || output
+            .as_os_str()
+            .as_encoded_bytes()
+            .last()
+            .is_some_and(|&byte| std::path::is_separator(char::from(byte)))
 }
 
 fn print_error(path: Option<&Path>, error: &Error) {

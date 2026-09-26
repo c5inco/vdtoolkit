@@ -738,6 +738,48 @@ fn cli_converts_directories_and_check_has_ci_exit_code() {
 }
 
 #[test]
+fn single_input_with_a_directory_output_is_written_inside_it() {
+    let temp = tempfile::tempdir().unwrap();
+    let input = temp.path().join("Arrow Left.svg");
+    fs::write(
+        &input,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M2 2H22V22H2Z"/></svg>"##,
+    )
+    .unwrap();
+    let existing = temp.path().join("drawable-anydpi");
+    fs::create_dir(&existing).unwrap();
+    let separator = std::path::MAIN_SEPARATOR;
+    // An existing directory, with and without a trailing separator, and a
+    // directory that does not exist yet but is spelled as one.
+    for (output, directory) in [
+        (existing.display().to_string(), existing.clone()),
+        (
+            format!("{}{separator}", existing.display()),
+            existing.clone(),
+        ),
+        (
+            format!("{}{separator}", temp.path().join("drawable-new").display()),
+            temp.path().join("drawable-new"),
+        ),
+    ] {
+        for command in ["convert", "notification"] {
+            let result = Command::new(env!("CARGO_BIN_EXE_vdt"))
+                .args([command, input.to_str().unwrap(), "-o", &output])
+                .output()
+                .unwrap();
+            assert!(result.status.success(), "{command} -o {output}: {result:?}");
+            let written = directory.join("arrow_left.xml");
+            assert!(written.is_file(), "{command} -o {output}");
+            fs::remove_file(written).unwrap();
+            let stderr = String::from_utf8(result.stderr).unwrap();
+            assert!(stderr.contains("\"Arrow Left\" is not a valid"), "{stderr}");
+        }
+    }
+    assert!(!temp.path().join("drawable_anydpi").exists());
+    assert!(!temp.path().join("drawable_new").exists());
+}
+
+#[test]
 fn optimize_reports_before_and_after_sizes() {
     let temp = tempfile::tempdir().unwrap();
     let input = temp.path().join("decimal.svg");

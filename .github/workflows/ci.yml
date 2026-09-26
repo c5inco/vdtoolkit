@@ -48,6 +48,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           targets: wasm32-unknown-unknown
+          components: rustfmt, clippy
       # Resolving without compiling separates a stale lock file from a build
       # failure, and cargo's own message suggests dropping --locked, which is
       # the wrong fix here.
@@ -57,6 +58,9 @@ jobs:
             echo "::error file=bindings/wasm/Cargo.lock::bindings/wasm/Cargo.lock does not match vdtoolkit's dependencies. Run 'cargo check' in bindings/wasm and commit the updated lock file."
             exit 1
           fi
+      # The root crate's fmt and clippy runs stop at its workspace boundary.
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
       - name: Build for WebAssembly
         run: cargo check --locked --target wasm32-unknown-unknown
       # The binding's tests compare its results with the native API. They run

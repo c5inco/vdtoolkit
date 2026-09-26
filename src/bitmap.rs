@@ -17,6 +17,10 @@ use crate::{Error, Result};
 /// density asks of a layer image.
 pub const ADAPTIVE_ICON_MAX_PIXELS: u32 = 432;
 
+/// Largest bitmap Android draws, in bytes: from API 28 drawing a larger one
+/// throws. A layer image is drawn at its own size as 4-byte ARGB pixels.
+const MAX_BITMAP_BYTES: u64 = 100 * 1024 * 1024;
+
 /// Which layer of the icon an image is for, which decides what is worth
 /// reporting about it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -204,7 +208,27 @@ fn scan(pixels: &[u8], width: u32, height: u32, stride: usize, alpha_offset: usi
     }
 }
 
+/// Refuse an image too large for Android to draw before decoding it, so a small
+/// file whose header claims a huge image cannot exhaust memory.
+fn check_size(width: u32, height: u32) -> Result<()> {
+    if u64::from(width) * u64::from(height) > MAX_BITMAP_BYTES / 4 {
+        return Err(Error::InvalidInput(format!(
+            "layer image is {width}×{height}px, over the 100 MB Android can draw a bitmap at; \
+             export it at {ADAPTIVE_ICON_MAX_PIXELS}×{ADAPTIVE_ICON_MAX_PIXELS}px"
+        )));
+    }
+    Ok(())
+}
+
 fn decode_png(data: &[u8]) -> Result<Decoded> {
+    // The first chunk of every PNG is IHDR, which opens with the size.
+    if let Some(header) = data
+        .get(12..24)
+        .filter(|header| header.starts_with(b"IHDR"))
+    {
+        let size = |bytes: &[u8]| u32::from_be_bytes(bytes.try_into().expect("four bytes"));
+        check_size(size(&header[4..8]), size(&header[8..12]))?;
+    }
     let pixmap = tiny_skia::Pixmap::decode_png(data)
         .map_err(|error| Error::InvalidInput(format!("cannot decode PNG: {error}")))?;
     let (width, height) = (pixmap.width(), pixmap.height());
@@ -220,6 +244,7 @@ fn decode_webp(data: &[u8]) -> Result<Decoded> {
         ));
     }
     let (width, height) = decoder.dimensions();
+    check_size(width, height)?;
     // The image data is decoded even when there is no alpha to scan: a file
     // whose header reads but whose data is damaged would otherwise be copied
     // into the project and fail only when Android packages or draws it.
@@ -245,6 +270,12 @@ fn decode_webp(data: &[u8]) -> Result<Decoded> {
 /// here or by any other decoder.
 fn decode_jpeg(data: &[u8]) -> Result<Decoded> {
     let mut decoder = jpeg_decoder::Decoder::new(std::io::Cursor::new(data));
+    decoder
+        .read_info()
+        .map_err(|error| Error::InvalidInput(format!("cannot decode JPEG: {error}")))?;
+    if let Some(info) = decoder.info() {
+        check_size(info.width.into(), info.height.into())?;
+    }
     decoder
         .decode()
         .map_err(|error| Error::InvalidInput(format!("cannot decode JPEG: {error}")))?;
@@ -384,4 +415,68 @@ fn findings(image: LayerImage, layer: LayerKind) -> Vec<Diagnostic> {
     }
 
     diagnostics
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Rewrite the size a WebP, PNG, or JPEG header claims, leaving the data.
+    fn claiming(format: ImageFormat, width: u32, height: u32) -> Vec<u8> {
+        match format {
+            ImageFormat::Webp => {
+                let mut data = Vec::new();
+                image_webp::WebPEncoder::new(&mut data)
+                    .encode(&[0; 16], 2, 2, image_webp::ColorType::Rgba8)
+                    .unwrap();
+                // A lossless header: signature, then width and height less
+                // one in 14 bits each.
+                assert_eq!((&data[12..16], data[20]), (&b"VP8L"[..], 0x2f));
+                let bits = u32::from_le_bytes(data[21..25].try_into().unwrap());
+                let bits = (bits & !0x0FFF_FFFF) | (width - 1) | ((height - 1) << 14);
+                data[21..25].copy_from_slice(&bits.to_le_bytes());
+                data
+            }
+            ImageFormat::Png => {
+                let mut data = tiny_skia::Pixmap::new(2, 2).unwrap().encode_png().unwrap();
+                data[16..20].copy_from_slice(&width.to_be_bytes());
+                data[20..24].copy_from_slice(&height.to_be_bytes());
+                data
+            }
+            ImageFormat::Jpeg => {
+                let mut data = include_bytes!("../tests/fixtures/background_square.jpg").to_vec();
+                let frame = data
+                    .windows(2)
+                    .position(|marker| marker == [0xFF, 0xC0] || marker == [0xFF, 0xC2])
+                    .unwrap();
+                data[frame + 5..frame + 7].copy_from_slice(&(height as u16).to_be_bytes());
+                data[frame + 7..frame + 9].copy_from_slice(&(width as u16).to_be_bytes());
+                data
+            }
+        }
+    }
+
+    #[test]
+    fn images_too_large_for_android_are_refused_before_decoding() {
+        for (format, width, height) in [
+            (ImageFormat::Webp, 16383, 16383),
+            (ImageFormat::Png, 100_000, 100_000),
+            (ImageFormat::Jpeg, 65_500, 65_500),
+        ] {
+            let data = claiming(format, width, height);
+            assert_eq!(ImageFormat::sniff(&data), Some(format));
+            let error = analyze_layer_image(&data, LayerKind::Background).unwrap_err();
+            assert!(
+                error.to_string().contains(&format!("{width}×{height}px")),
+                "{format:?}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_size_limit_is_android_s_100_mb() {
+        assert!(check_size(5120, 5120).is_ok());
+        assert!(check_size(5121, 5120).is_err());
+        assert!(check_size(u32::MAX, u32::MAX).is_err());
+    }
 }

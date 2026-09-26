@@ -66,6 +66,11 @@ follow [Semantic Versioning](https://semver.org/).
   WebAssembly `resourceName`. A layer named after a Java keyword such as
   `class` exported as `class.xml`, which aapt2 rejects; it is now
   `ic_class.xml`.
+- A crash inside vdtoolkit in the Figma plugin is reported as an internal
+  error, not a problem with the layer, and the next layer is converted by a
+  new WebAssembly instance. A Rust panic showed as the SVG error
+  `unreachable`, and the rest of the batch and every later conversion reused
+  the crashed instance.
 
 ## [0.5.0] - 2026-09-19
 

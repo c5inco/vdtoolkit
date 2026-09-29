@@ -1,6 +1,13 @@
-import type { Analysis, ConvertResult, Diagnostic } from "../vendor/vdtoolkit-wasm/vdtoolkit_wasm";
+import type { Analysis, Diagnostic } from "../vendor/vdtoolkit-wasm/vdtoolkit_wasm";
 import { blockingDiagnostics, capitalize, warningDiagnostics } from "./diagnostics";
-import type { ConvertRequest, ExportCandidate, ExportKind, ReviewRequest, SandboxMessage } from "./messages";
+import type {
+  ConversionResult,
+  ConvertRequest,
+  ExportCandidate,
+  ExportKind,
+  ReviewRequest,
+  SandboxMessage,
+} from "./messages";
 
 declare const __html__: string;
 
@@ -10,7 +17,7 @@ let requestSequence = 0;
 const pending = new Map<
   string,
   {
-    resolve: (result: ConvertResult) => void;
+    resolve: (result: ConversionResult) => void;
     reject: (error: Error) => void;
     timer: ReturnType<typeof setTimeout>;
   }
@@ -153,7 +160,7 @@ async function generate(node: ConvertibleNode): Promise<CodegenResult[]> {
   }
 }
 
-function settle(id: string, result: ConvertResult): void {
+function settle(id: string, result: ConversionResult): void {
   const request = typeof id === "string" ? pending.get(id) : undefined;
   if (!request) return;
   pending.delete(id);
@@ -161,7 +168,7 @@ function settle(id: string, result: ConvertResult): void {
   request.resolve(result);
 }
 
-function convert(source: Uint8Array): Promise<ConvertResult> {
+function convert(source: Uint8Array): Promise<ConversionResult> {
   const id = `${Date.now()}-${requestSequence++}`;
   const request: ConvertRequest = { type: "convert", id, source };
   return new Promise((resolve, reject) => {

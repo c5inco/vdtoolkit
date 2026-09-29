@@ -168,3 +168,49 @@ test("large drawables keep their size and surface warnings", async () => {
   assert.equal(warnings.title, "Warnings");
   assert.equal(warnings.code, "• 480×320dp is larger than 200×200dp (VDT016)");
 });
+
+test("a trap in the iframe is an internal error and the next request gets a new instance", async () => {
+  const script = ui.slice(ui.indexOf("<script>") + "<script>".length, ui.lastIndexOf("</script>"));
+  // Every instance is real, but the first one's convertSvg traps as a Rust panic would.
+  const instances = [];
+  function Instance(module, imports) {
+    const { exports } = new WebAssembly.Instance(module, imports);
+    instances.push(exports);
+    if (instances.length > 1) return { exports };
+    return {
+      exports: {
+        ...exports,
+        convertSvg: () => {
+          throw new WebAssembly.RuntimeError("unreachable");
+        },
+      },
+    };
+  }
+  const window = {};
+  const posted = [];
+  vm.runInNewContext(script.replaceAll("<\\/script", "</script"), {
+    window,
+    parent: { postMessage: (message) => posted.push(message.pluginMessage) },
+    document: { body: null, addEventListener() {} },
+    WebAssembly: Object.create(WebAssembly, { Instance: { value: Instance } }),
+    TextDecoder,
+    TextEncoder,
+  });
+  const source = new TextEncoder().encode(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><rect width="24" height="24"/></svg>',
+  );
+  const convert = async (id) => {
+    await window.onmessage({ data: { pluginMessage: { type: "convert", id, source } } });
+    return posted.find((message) => message.id === id).result;
+  };
+
+  const crashed = await convert("1");
+  assert.equal(crashed.ok, false);
+  assert.equal(crashed.error.kind, "internal");
+  assert.match(crashed.error.message, /RuntimeError: unreachable/);
+  const converted = await convert("2");
+  assert.equal(converted.ok, true);
+  assert.match(converted.xml, /<vector/);
+  assert.equal((await convert("3")).ok, true);
+  assert.equal(instances.length, 2);
+});

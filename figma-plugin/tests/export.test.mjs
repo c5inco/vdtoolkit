@@ -13,6 +13,7 @@ const bundled = await build({
       'export { matchesFilter, reviewCandidates } from "./src/export-review.ts";',
       'export { uniqueResourceNames } from "./src/resource-names.ts";',
       'export { createDrawableZip, crc32 } from "./src/zip.ts";',
+      'export { converter, wasmSession } from "./src/wasm-session.ts";',
     ].join("\n"),
     resolveDir: new URL("..", import.meta.url).pathname,
     loader: "ts",
@@ -21,7 +22,7 @@ const bundled = await build({
   format: "esm",
   write: false,
 });
-const { matchesFilter, reviewCandidates, uniqueResourceNames, createDrawableZip, crc32 } = await import(
+const { matchesFilter, reviewCandidates, uniqueResourceNames, createDrawableZip, crc32, converter, wasmSession } = await import(
   `data:text/javascript;base64,${Buffer.from(bundled.outputFiles[0].text).toString("base64")}`
 );
 
@@ -273,6 +274,39 @@ test("size is never listed as a reason a large layer can't be exported", () => {
   const codes = row.issues.map((issue) => issue.code);
   assert.ok(codes.includes("VDT002"), "the real blocker is listed");
   assert.ok(!codes.includes("VDT016"), "the size warning is not");
+});
+
+test("a trap is an internal error and the rest of the batch gets a new instance", () => {
+  // A Rust panic reaches JavaScript as this trap. The first instance traps; the second is real.
+  const trapping = {
+    ...wasm,
+    convertSvg: () => {
+      throw new WebAssembly.RuntimeError("unreachable");
+    },
+  };
+  const instances = [];
+  const withWasm = wasmSession(() => instances[instances.push(instances.length === 0 ? trapping : wasm) - 1]);
+  const source = svg('<rect width="24" height="24"/>');
+  const rows = reviewCandidates(
+    [
+      { nodeId: "1", name: "Crash", source },
+      { nodeId: "2", name: "Square", source },
+    ],
+    converter(withWasm),
+    (name) => withWasm((bindings) => bindings.resourceName(name)),
+  );
+
+  assert.deepEqual(
+    rows.map((row) => [row.name, row.status]),
+    [
+      ["Crash", "blocked"],
+      ["Square", "ready"],
+    ],
+  );
+  assert.deepEqual(rows[0].issues, [
+    { message: "Internal error in vdtoolkit, not in the layer: RuntimeError: unreachable" },
+  ]);
+  assert.equal(instances.length, 2);
 });
 
 test("filter matches layer and file names, ignoring case and surrounding spaces", () => {

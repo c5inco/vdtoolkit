@@ -7,6 +7,12 @@ on:
 permissions:
   contents: read
 
+# wasm-pack's release archive, checked against the digest GitHub records for
+# it, installs in seconds where `cargo install` would compile for minutes.
+env:
+  WASM_PACK_VERSION: 0.15.0
+  WASM_PACK_SHA256: c09f971ecaed9a2efc80fdcea7a00ef6b53c7fadc8c57d1f61b53a6aa66b668a
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -42,6 +48,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           targets: wasm32-unknown-unknown
+          components: rustfmt, clippy
       # Resolving without compiling separates a stale lock file from a build
       # failure, and cargo's own message suggests dropping --locked, which is
       # the wrong fix here.
@@ -51,9 +58,53 @@ jobs:
             echo "::error file=bindings/wasm/Cargo.lock::bindings/wasm/Cargo.lock does not match vdtoolkit's dependencies. Run 'cargo check' in bindings/wasm and commit the updated lock file."
             exit 1
           fi
+      # The root crate's fmt and clippy runs stop at its workspace boundary.
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
       - name: Build for WebAssembly
         run: cargo check --locked --target wasm32-unknown-unknown
       # The binding's tests compare its results with the native API. They run
       # natively; `cargo check` above never compiles them.
       - name: Test the binding
         run: cargo test --locked
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+      - name: Install wasm-pack
+        run: |
+          archive="wasm-pack-v${WASM_PACK_VERSION}-x86_64-unknown-linux-musl"
+          curl -sSfL -o "$RUNNER_TEMP/wasm-pack.tar.gz" "https://github.com/wasm-bindgen/wasm-pack/releases/download/v${WASM_PACK_VERSION}/${archive}.tar.gz"
+          echo "${WASM_PACK_SHA256}  $RUNNER_TEMP/wasm-pack.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/wasm-pack.tar.gz" -C "$RUNNER_TEMP" "${archive}/wasm-pack"
+          echo "$RUNNER_TEMP/${archive}" >> "$GITHUB_PATH"
+      # The generated JavaScript glue is what the plugin loads, and only a
+      # real WebAssembly build exercises it.
+      - name: Build the JavaScript package
+        run: wasm-pack build --target web --release -- --locked
+      - name: Test the JavaScript package
+        run: node --test tests/node.mjs
+
+  figma-plugin:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: figma-plugin
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+      - name: Install wasm-pack
+        run: |
+          archive="wasm-pack-v${WASM_PACK_VERSION}-x86_64-unknown-linux-musl"
+          curl -sSfL -o "$RUNNER_TEMP/wasm-pack.tar.gz" "https://github.com/wasm-bindgen/wasm-pack/releases/download/v${WASM_PACK_VERSION}/${archive}.tar.gz"
+          echo "${WASM_PACK_SHA256}  $RUNNER_TEMP/wasm-pack.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/wasm-pack.tar.gz" -C "$RUNNER_TEMP" "${archive}/wasm-pack"
+          echo "$RUNNER_TEMP/${archive}" >> "$GITHUB_PATH"
+      - run: npm ci
+      - run: npm run build
+      - run: npm run typecheck
+      - run: npm test

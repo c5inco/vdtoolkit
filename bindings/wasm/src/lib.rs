@@ -89,13 +89,17 @@ export type ConvertResult =
   | { ok: false; error: VdtoolkitError };
 "#;
 
+/// Send a panic's message and location to `console.error` when the module
+/// starts, so a crash shows more than `RuntimeError: unreachable`.
+#[wasm_bindgen(start)]
+fn start() {
+    console_error_panic_hook::set_once();
+}
+
 /// Analyze SVG bytes and return a structured JavaScript result.
 #[wasm_bindgen(js_name = analyzeSvg, skip_typescript)]
 pub fn analyze_svg(source: &[u8], allow_approximate: Option<bool>) -> JsValue {
-    serialize(&analyze_result(
-        source,
-        allow_approximate.unwrap_or(false),
-    ))
+    serialize(&analyze_result(source, allow_approximate.unwrap_or(false)))
 }
 
 /// Convert SVG bytes to VectorDrawable XML, optionally optimizing numbers and
@@ -326,10 +330,7 @@ mod tests {
                 result["error"]["message"],
                 "this is a raster image, not an SVG"
             );
-            assert!(!result["error"]["message"]
-                .as_str()
-                .unwrap()
-                .contains("--"));
+            assert!(!result["error"]["message"].as_str().unwrap().contains("--"));
         }
     }
 
@@ -366,7 +367,10 @@ mod tests {
     fn size_cap_matches_the_native_api() {
         let uncapped = json(&convert_result(LARGE, false, None, false, false));
         assert_eq!(uncapped["analysis"]["diagnostics"][0]["code"], "VDT016");
-        assert_eq!(uncapped["analysis"]["diagnostics"][0]["severity"], "warning");
+        assert_eq!(
+            uncapped["analysis"]["diagnostics"][0]["severity"],
+            "warning"
+        );
 
         let mut native = vdtoolkit::convert(LARGE).unwrap();
         assert!(native.fit_within(200.0));
@@ -404,7 +408,8 @@ mod tests {
     fn notification_conversion_flattens_uniform_alpha_gradients_like_the_cli() {
         // A focal radial gradient cannot be drawn exactly, but with uniform
         // alpha a notification icon only needs its opacity.
-        const FOCAL_UNIFORM_ALPHA: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        const FOCAL_UNIFORM_ALPHA: &[u8] =
+            br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
             <defs>
                 <radialGradient id="g" gradientUnits="userSpaceOnUse" cx="12" cy="12" r="8" fx="8">
                     <stop stop-color="#123456" stop-opacity="0.5"/>
@@ -437,7 +442,8 @@ mod tests {
 
     #[test]
     fn allow_approximate_enables_approximating_radial_gradients() {
-        const FOCAL_OFFSET_GRADIENT: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        const FOCAL_OFFSET_GRADIENT: &[u8] =
+            br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
             <defs>
                 <radialGradient id="g" cx="12" cy="12" r="10" fx="10" fy="10">
                     <stop offset="0%" stop-color="#fff"/>
@@ -447,16 +453,30 @@ mod tests {
             <rect width="24" height="24" fill="url(#g)"/>
         </svg>"##;
 
-        let rejected = json(&convert_result(FOCAL_OFFSET_GRADIENT, false, None, false, false));
+        let rejected = json(&convert_result(
+            FOCAL_OFFSET_GRADIENT,
+            false,
+            None,
+            false,
+            false,
+        ));
         assert_eq!(rejected["error"]["kind"], "unsupported");
 
-        let allowed = json(&convert_result(FOCAL_OFFSET_GRADIENT, false, None, false, true));
+        let allowed = json(&convert_result(
+            FOCAL_OFFSET_GRADIENT,
+            false,
+            None,
+            false,
+            true,
+        ));
         assert_eq!(allowed["ok"], true);
         assert_eq!(allowed["analysis"]["compatibility"], "approximate");
-        assert!(allowed["analysis"]["diagnostics"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|d| d["code"] == "VDT003"));
+        assert!(
+            allowed["analysis"]["diagnostics"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|d| d["code"] == "VDT003")
+        );
     }
 }

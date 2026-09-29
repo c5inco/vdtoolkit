@@ -69,7 +69,8 @@ npm test
 `npm run build` compiles the browser-targeted WASM package and emits the
 self-contained plugin files in `figma-plugin/dist`. The generated
 `dist/ui.html` embeds both the JavaScript glue and WASM bytes; it does not load
-a CDN or other remote resource.
+a CDN or other remote resource. `npm test` runs the build first, because the
+tests load those generated files.
 
 To test the generated WebAssembly module itself:
 

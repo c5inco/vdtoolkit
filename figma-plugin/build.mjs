@@ -1,5 +1,29 @@
-import { build } from "esbuild";
+import { build, transform } from "esbuild";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
+
+// wasm-bindgen's glue creates one WebAssembly instance and keeps it for good, but an
+// instance that trapped must not be used again. Importing the glue with "?factory"
+// gives a function that evaluates a fresh copy of it, with its own instance, per call.
+const glueFactory = {
+  name: "glue-factory",
+  setup(plugin) {
+    plugin.onResolve({ filter: /\?factory$/ }, (args) => ({
+      path: path.resolve(args.resolveDir, args.path.slice(0, -"?factory".length)),
+      namespace: "glue-factory",
+    }));
+    plugin.onLoad({ filter: /.*/, namespace: "glue-factory" }, async (args) => {
+      const glue = await transform(await readFile(args.path, "utf8"), {
+        format: "cjs",
+        define: { "import.meta.url": '""' },
+      });
+      return {
+        contents: `export default function () {\nconst module = { exports: {} };\n${glue.code}\nreturn module.exports;\n}\n`,
+        watchFiles: [args.path],
+      };
+    });
+  },
+};
 
 await mkdir("dist", { recursive: true });
 
@@ -22,6 +46,8 @@ await build({
   format: "iife",
   define: { "import.meta.url": '""' },
   loader: { ".wasm": "binary" },
+  plugins: [glueFactory],
+  minify: true,
   logLevel: "info",
 });
 

@@ -48,16 +48,13 @@ follow [Semantic Versioning](https://semver.org/).
   small the drawing is scaled. The check used an absolute tolerance, so in a
   960-unit viewBox drawn at 24dp, `skewX(5)` passed and the stroke was drawn
   with one uniform width.
-- Paint whose `color()` function cannot be resolved to sRGB, in a color
-  space other than sRGB, linear sRGB, and Display P3, is rejected with
-  `VDT013` instead of silently turning black, vanishing, or losing the
-  gradient or fallback beside it. Only a function that changes the artwork
-  is rejected: one in a CSS comment or quoted string, a rule that matches
-  nothing, a hidden or unused element, an overridden property, or fully
-  transparent paint is left alone, and a notification icon, drawn white,
-  only rejects one that changes its opacity or what is painted. `color()`
-  in a `<style>` element's CDATA section or in a value spelled with
-  character references is now resolved like any other.
+- Paint whose `color()` function cannot be resolved to sRGB is rejected with
+  `VDT013` instead of silently turning black or vanishing: color spaces other
+  than sRGB, linear sRGB, and Display P3, and values spelled with character
+  references. Only a function that would be painted is rejected: one in a
+  CSS comment, a rule that matches nothing, a hidden or unused element, or an
+  overridden property is left alone. `color()` in a `<style>` element's CDATA
+  section is now resolved like any other.
 - `convert`, `optimize`, and `notification` with one input write into the
   directory `-o` names when it exists or ends in a separator. Previously
   `-o res/drawable-anydpi/` wrote a file named `res/drawable_anydpi`.

@@ -59,12 +59,7 @@ pub(crate) fn process_as(
         resolved.source.as_deref().map_or(source, str::as_bytes),
         &options,
     )?;
-    let painted = resolved.painted(
-        text,
-        &tree,
-        &options,
-        kind == Some(crate::IconKind::Notification),
-    );
+    let painted = resolved.painted(text, &tree, &options);
     if let Some(location) = painted.first() {
         push_unsupported(
             &mut compatibility,
@@ -80,7 +75,7 @@ pub(crate) fn process_as(
             ),
             Some(location.clone()),
             "Write the color as sRGB hex, or as color() in srgb, srgb-linear, or \
-             display-p3.",
+             display-p3 spelled without character references.",
         );
     }
     let mut metrics = Metrics::default();

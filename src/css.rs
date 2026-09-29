@@ -14,7 +14,6 @@
 //! each `color()` function to sRGB before parsing keeps the artwork painted,
 //! and sRGB is what VectorDrawable renders in anyway.
 
-use std::collections::HashSet;
 use std::ops::Range;
 
 use crate::ElementLocation;
@@ -25,19 +24,38 @@ pub(crate) struct Resolved {
     pub source: Option<String>,
     /// How many `color()` functions resolved.
     pub colors: usize,
-    /// Each resolved function's range in the source, and its sRGB.
-    edits: Vec<(Range<usize>, String)>,
+    /// Every attribute value and `<style>` text holding a `color()` function.
+    values: Vec<Value>,
     /// `color()` functions in paint that did not resolve, which the SVG
     /// parser drops along with their sRGB fallbacks.
     unresolved: Vec<Unresolved>,
 }
 
+/// An attribute value or `<style>` text holding `color()` functions.
+struct Value {
+    /// Where the value sits in the source.
+    range: Range<usize>,
+    /// The value with character references replaced.
+    text: String,
+    /// Whether the source spells the value as `text`, without character
+    /// references, so a function can be replaced where it sits.
+    literal: bool,
+    functions: Vec<Function>,
+}
+
+/// A `color()` function in a value.
+struct Function {
+    /// Where the function sits in the value's text.
+    range: Range<usize>,
+    /// The sRGB it resolves to, when it does.
+    color: Option<String>,
+}
+
 /// A `color()` function in paint that did not resolve.
 struct Unresolved {
+    value: usize,
+    function: usize,
     location: ElementLocation,
-    /// Where the function sits in the source, when the source spells it
-    /// literally.
-    range: Option<Range<usize>>,
 }
 
 /// Attributes that take a color, where a `color()` function left unresolved
@@ -53,199 +71,308 @@ const PAINT_ATTRIBUTES: &[&str] = &[
     "style",
 ];
 
+/// How many unresolved functions are probed one at a time; the rest are
+/// probed together, so a document full of them costs a bounded number of
+/// parses.
+const PROBES: usize = 16;
+
 /// Rewrite every `color()` function in `source` as a plain sRGB color.
 ///
-/// Only attribute values and `<style>` text are touched, and only where the
-/// source spells the value literally, so nothing else in the document moves.
+/// Only attribute values and `<style>` text holding a `color()` function are
+/// touched, so nothing else in the document moves.
 pub(crate) fn resolve_color_functions(
     source: &str,
     document: &roxmltree::Document<'_>,
 ) -> Resolved {
-    let mut edits = Vec::new();
+    let mut values = Vec::new();
     let mut unresolved = Vec::new();
     for node in document.descendants() {
-        let (element, left) = if node.is_element() {
-            let mut left = Vec::new();
+        let mut found = Vec::new();
+        let element = if node.is_element() {
             for attribute in node.attributes() {
-                let found = push_edits(
-                    source,
-                    attribute.range_value(),
-                    attribute.value(),
-                    &mut edits,
-                );
-                if attribute.namespace().is_none() && PAINT_ATTRIBUTES.contains(&attribute.name()) {
-                    left.extend(found);
-                }
+                let paint =
+                    attribute.namespace().is_none() && PAINT_ATTRIBUTES.contains(&attribute.name());
+                found.push((attribute.range_value(), attribute.value(), paint));
             }
-            (node, left)
+            node
         } else if let Some(style) = node
             .parent_element()
             .filter(|parent| node.is_text() && parent.has_tag_name("style"))
         {
-            let left = push_edits(
-                source,
-                cdata_content(source, node.range()),
-                node.text().unwrap_or_default(),
-                &mut edits,
-            );
-            (style, left)
+            let range = cdata_content(source, node.range());
+            found.push((range, node.text().unwrap_or_default(), true));
+            style
         } else {
             continue;
         };
-        if left.is_empty() {
-            continue;
+        let mut location = None;
+        for (range, text, paint) in found {
+            let functions = functions(text);
+            if functions.is_empty() {
+                continue;
+            }
+            for (index, function) in functions.iter().enumerate() {
+                if paint && function.color.is_none() {
+                    let location = location.get_or_insert_with(|| {
+                        let position = document.text_pos_at(element.range().start);
+                        ElementLocation {
+                            element: element.tag_name().name().to_owned(),
+                            line: position.row,
+                            column: position.col,
+                        }
+                    });
+                    unresolved.push(Unresolved {
+                        value: values.len(),
+                        function: index,
+                        location: location.clone(),
+                    });
+                }
+            }
+            values.push(Value {
+                literal: source.get(range.clone()) == Some(text),
+                range,
+                text: text.to_owned(),
+                functions,
+            });
         }
-        let position = document.text_pos_at(element.range().start);
-        let location = ElementLocation {
-            element: element.tag_name().name().to_owned(),
-            line: position.row,
-            column: position.col,
-        };
-        unresolved.extend(left.into_iter().map(|range| Unresolved {
-            location: location.clone(),
-            range,
-        }));
     }
-    Resolved {
-        source: (!edits.is_empty()).then(|| splice(source, edits.iter().cloned())),
-        colors: edits.len(),
-        edits,
+    let colors = values
+        .iter()
+        .flat_map(|value| &value.functions)
+        .filter(|function| function.color.is_some())
+        .count();
+    let mut resolved = Resolved {
+        source: None,
+        colors,
+        values,
         unresolved,
+    };
+    if colors > 0 {
+        resolved.source = Some(resolved.splice(source, |_| None));
     }
+    resolved
 }
 
 impl Resolved {
     /// Elements whose paint a `color()` function left unresolved would reach.
     ///
-    /// The parser drops such a function along with the fallback beside it,
-    /// so the paint turns black or takes an inherited color. But a function
-    /// in a rule that matches nothing, on an element that is hidden or never
-    /// used, or in a property something else overrides paints nothing. To tell
-    /// them apart, each function is swapped for a color `tree` does not use
-    /// and the document parsed again: the functions whose colors come through
-    /// are the ones that would have been painted.
+    /// The parser drops such a function, and the declaration or fallback
+    /// around it, so the paint turns black, takes an inherited color, or
+    /// loses the gradient it names. But a function in a rule that matches
+    /// nothing, on an element that is hidden or never used, in a property
+    /// something else overrides, or in paint that is fully transparent
+    /// changes nothing. To tell them apart, each function is swapped for an
+    /// sRGB color, and then removed, and the document parsed again: a
+    /// function matters when the paint comes out different. A notification icon is drawn white, so
+    /// there only a change of opacity or of what is painted matters.
     pub(crate) fn painted(
         &self,
         source: &str,
         tree: &usvg::Tree,
         options: &usvg::Options<'_>,
+        notification: bool,
     ) -> Vec<ElementLocation> {
         if self.unresolved.is_empty() {
             return Vec::new();
         }
-        let mut used = HashSet::new();
-        paint_colors(tree.root(), &mut used);
-        let mut spare = (1..=0xFF_FFFF).filter(|color| !used.contains(color));
-        let probes: Vec<Option<u32>> = self
-            .unresolved
+        let mut looks = Vec::new();
+        paint_looks(tree.root(), 1.0, notification, &mut looks);
+        // A color the artwork does not use, so swapping it in shows.
+        let spare = (1..=0xFF_FFFF)
+            .find(|&color| {
+                !looks.iter().any(|look| match look {
+                    Look::Solid(used, _) => *used == color,
+                    Look::Gradient(_, stops) => stops.iter().any(|(used, _)| *used == color),
+                    _ => false,
+                })
+            })
+            .unwrap_or(0);
+        let differs = |swapped: &[&Unresolved], stand_in: &dyn Fn(&str) -> String| {
+            let probe = self.splice(source, |(value, function)| {
+                swapped
+                    .iter()
+                    .any(|unresolved| (unresolved.value, unresolved.function) == (value, function))
+                    .then(|| {
+                        let range = &self.values[value].functions[function].range;
+                        stand_in(&self.values[value].text[range.clone()])
+                    })
+            });
+            match usvg::Tree::from_data(probe.as_bytes(), options) {
+                Ok(probed) => {
+                    let mut probed_looks = Vec::new();
+                    paint_looks(probed.root(), 1.0, notification, &mut probed_looks);
+                    probed_looks != looks
+                }
+                // Without a parse to go by, the function counts as painted.
+                Err(_) => true,
+            }
+        };
+        // Swapped for a color, a function shows where its own color would
+        // be painted. Removed, it shows where it spoils a value around it:
+        // `color(...) #FF0000` or `url(#g) color(...)` is dropped whole, so
+        // the fallback beside the function never applies either.
+        let changes = |swapped: &[&Unresolved]| {
+            differs(swapped, &|function| substitute(function, spare))
+                || differs(swapped, &|_| String::new())
+        };
+        let (single, rest) = self.unresolved.split_at(self.unresolved.len().min(PROBES));
+        let mut painted: Vec<&Unresolved> = single
             .iter()
-            .map(|function| function.range.as_ref().and_then(|_| spare.next()))
+            .filter(|unresolved| changes(&[unresolved]))
             .collect();
-        let mut edits = self.edits.clone();
-        edits.extend(
-            self.unresolved
-                .iter()
-                .zip(&probes)
-                .filter_map(|(function, probe)| {
-                    Some((function.range.clone()?, format!("#{:06X}", (*probe)?)))
-                }),
-        );
-        edits.sort_by_key(|(range, _)| range.start);
-        let mut painted = HashSet::new();
-        match usvg::Tree::from_data(splice(source, edits).as_bytes(), options) {
-            Ok(probed) => paint_colors(probed.root(), &mut painted),
-            // Without a parse to go by, every function counts as painted.
-            Err(_) => painted.extend(probes.iter().flatten()),
+        let rest: Vec<&Unresolved> = rest.iter().collect();
+        if !rest.is_empty() && changes(&rest) {
+            painted.extend(rest.first());
         }
         let mut locations: Vec<ElementLocation> = Vec::new();
-        for (function, probe) in self.unresolved.iter().zip(probes) {
-            // A function spelled with character references cannot be swapped
-            // out, so it counts as painted.
-            if probe.is_none_or(|probe| painted.contains(&probe))
-                && locations.last().is_none_or(|last| {
-                    (last.line, last.column) != (function.location.line, function.location.column)
-                })
+        for unresolved in painted {
+            let location = &unresolved.location;
+            if locations
+                .last()
+                .is_none_or(|last| (last.line, last.column) != (location.line, location.column))
             {
-                locations.push(function.location.clone());
+                locations.push(location.clone());
             }
         }
         locations
     }
+
+    /// `source` with each resolved function replaced by its sRGB, and each
+    /// unresolved one by whatever `swap` gives for it, if anything. A value
+    /// spelled with character references is written out again whole.
+    fn splice(&self, source: &str, swap: impl Fn((usize, usize)) -> Option<String>) -> String {
+        let mut spliced = String::with_capacity(source.len());
+        let mut copied = 0;
+        for (index, value) in self.values.iter().enumerate() {
+            let mut text = String::with_capacity(value.text.len());
+            let mut kept = 0;
+            for (position, function) in value.functions.iter().enumerate() {
+                let Some(replacement) = function.color.clone().or_else(|| swap((index, position)))
+                else {
+                    continue;
+                };
+                text.push_str(&value.text[kept..function.range.start]);
+                text.push_str(&replacement);
+                kept = function.range.end;
+            }
+            if kept == 0 {
+                continue;
+            }
+            text.push_str(&value.text[kept..]);
+            // Values do not overlap, but keep the source intact if they did.
+            if value.range.start < copied {
+                continue;
+            }
+            spliced.push_str(&source[copied..value.range.start]);
+            if value.literal {
+                spliced.push_str(&text);
+            } else {
+                spliced.push_str(&escape(&text));
+            }
+            copied = value.range.end;
+        }
+        spliced.push_str(&source[copied..]);
+        spliced
+    }
 }
 
-/// Every color the paint under `group` uses, as `0xRRGGBB`.
-fn paint_colors(group: &usvg::Group, colors: &mut HashSet<u32>) {
-    fn key(color: usvg::Color) -> u32 {
-        u32::from(color.red) << 16 | u32::from(color.green) << 8 | u32::from(color.blue)
-    }
+/// How one fill or stroke looks, for telling whether a probe changed it.
+#[derive(PartialEq)]
+enum Look {
+    /// A paint with no opacity; its color does not matter.
+    Clear,
+    /// `0xRRGGBB` and an 8-bit opacity.
+    Solid(u32, u8),
+    /// A gradient's id, and each stop's color and opacity.
+    Gradient(String, Vec<(u32, u8)>),
+    /// A pattern's id; its content is looked at on its own.
+    Pattern(String),
+}
+
+/// How each fill and stroke under `group` looks, in drawing order, with
+/// `none` left out. `opacity` is the groups' around `group`.
+fn paint_looks(group: &usvg::Group, opacity: f32, notification: bool, looks: &mut Vec<Look>) {
+    let opacity = opacity * group.opacity().get();
+    let byte = |value: f32| (value.clamp(0.0, 1.0) * 255.0).round() as u8;
+    // A notification icon is repainted white, so only opacity survives.
+    let rgb = |color: usvg::Color| {
+        if notification {
+            0
+        } else {
+            u32::from(color.red) << 16 | u32::from(color.green) << 8 | u32::from(color.blue)
+        }
+    };
     for node in group.children() {
         match node {
-            usvg::Node::Group(group) => paint_colors(group, colors),
+            usvg::Node::Group(group) => paint_looks(group, opacity, notification, looks),
             usvg::Node::Path(path) => {
-                let fill = path.fill().map(usvg::Fill::paint);
-                let stroke = path.stroke().map(usvg::Stroke::paint);
-                for paint in fill.into_iter().chain(stroke) {
-                    match paint {
-                        usvg::Paint::Color(color) => {
-                            colors.insert(key(*color));
-                        }
+                let fill = path.fill().map(|fill| (fill.paint(), fill.opacity().get()));
+                let stroke = path
+                    .stroke()
+                    .map(|stroke| (stroke.paint(), stroke.opacity().get()));
+                for (paint, alpha) in fill.into_iter().chain(stroke) {
+                    let alpha = opacity * alpha;
+                    let stops = |stops: &[usvg::Stop]| {
+                        stops
+                            .iter()
+                            .map(|stop| match byte(alpha * stop.opacity().get()) {
+                                0 => (0, 0),
+                                opacity => (rgb(stop.color()), opacity),
+                            })
+                            .collect()
+                    };
+                    looks.push(match paint {
+                        _ if byte(alpha) == 0 => Look::Clear,
+                        usvg::Paint::Color(color) => Look::Solid(rgb(*color), byte(alpha)),
                         usvg::Paint::LinearGradient(gradient) => {
-                            colors.extend(gradient.stops().iter().map(|stop| key(stop.color())));
+                            Look::Gradient(gradient.id().to_owned(), stops(gradient.stops()))
                         }
                         usvg::Paint::RadialGradient(gradient) => {
-                            colors.extend(gradient.stops().iter().map(|stop| key(stop.color())));
+                            Look::Gradient(gradient.id().to_owned(), stops(gradient.stops()))
                         }
-                        // Its content is one of the path's subroots.
-                        usvg::Paint::Pattern(_) => {}
-                    }
+                        usvg::Paint::Pattern(pattern) => Look::Pattern(pattern.id().to_owned()),
+                    });
                 }
             }
             usvg::Node::Image(_) | usvg::Node::Text(_) => {}
         }
-        node.subroots(|root| paint_colors(root, colors));
+        node.subroots(|root| paint_looks(root, opacity, notification, looks));
     }
 }
 
-/// `source` with each range, in order, replaced.
-fn splice(source: &str, edits: impl IntoIterator<Item = (Range<usize>, String)>) -> String {
-    let mut spliced = String::with_capacity(source.len());
-    let mut copied = 0;
-    for (range, replacement) in edits {
-        // Functions do not nest across values, so ranges only overlap when
-        // one function sits inside another; keeping the outer one is enough.
-        if range.start < copied {
-            continue;
-        }
-        spliced.push_str(&source[copied..range.start]);
-        spliced.push_str(&replacement);
-        copied = range.end;
+/// An sRGB stand-in for an unresolved `color()` function: `color` with the
+/// function's own opacity, so a probe changes the hue and nothing else.
+fn substitute(function: &str, color: u32) -> String {
+    let alpha = function
+        .strip_suffix(')')
+        .and_then(|function| function.split_once('/'))
+        .and_then(|(_, alpha)| component(alpha))
+        .unwrap_or(1.0);
+    let [_, red, green, blue] = color.to_be_bytes();
+    if alpha >= 1.0 {
+        format!("#{red:02X}{green:02X}{blue:02X}")
+    } else {
+        format!(
+            "rgba({red}, {green}, {blue}, {})",
+            crate::xml::number(alpha.clamp(0.0, 1.0))
+        )
     }
-    spliced.push_str(&source[copied..]);
-    spliced
 }
 
-/// Queue a rewrite of each `color()` function in `value` that resolves, when
-/// the source spells `value` literally at `range`. Returns one entry for each
-/// function left unresolved: its range in the source, or `None` when the
-/// source does not spell it literally.
-fn push_edits(
-    source: &str,
-    range: Range<usize>,
-    value: &str,
-    edits: &mut Vec<(Range<usize>, String)>,
-) -> Vec<Option<Range<usize>>> {
-    // Character references make the parsed value differ from the source text,
-    // and splicing over them would corrupt the document.
-    let literal = source.get(range.clone()) == Some(value);
-    let mut left = Vec::new();
-    for (function, color) in functions(value) {
-        let function = range.start + function.start..range.start + function.end;
-        match color {
-            Some(color) if literal => edits.push((function, color)),
-            _ => left.push(literal.then_some(function)),
+/// `text` escaped to stand in an attribute value or element text.
+fn escape(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for character in text.chars() {
+        match character {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&apos;"),
+            character => escaped.push(character),
         }
     }
-    left
+    escaped
 }
 
 /// The range of the text inside a `<![CDATA[...]]>` section, which design
@@ -266,17 +393,21 @@ fn cdata_content(source: &str, range: Range<usize>) -> Range<usize> {
 }
 
 /// Byte indexes where a `color()` function starts in `value`, outside CSS
-/// comments, which paint nothing.
+/// comments, which paint nothing, and quoted strings, which are not colors.
 fn function_starts(value: &str) -> impl Iterator<Item = usize> + '_ {
-    let mut comment_end = 0;
+    let mut skip_to = 0;
     value.char_indices().filter_map(move |(start, character)| {
-        if start < comment_end {
+        if start < skip_to {
             return None;
         }
         if value[start..].starts_with("/*") {
-            comment_end = value[start + 2..]
+            skip_to = value[start + 2..]
                 .find("*/")
                 .map_or(value.len(), |end| start + 2 + end + 2);
+            return None;
+        }
+        if character == '"' || character == '\'' {
+            skip_to = string_end(value, start, character);
             return None;
         }
         let function = (character == 'c' || character == 'C')
@@ -292,9 +423,26 @@ fn function_starts(value: &str) -> impl Iterator<Item = usize> + '_ {
     })
 }
 
-/// The `color()` functions in one value: each one's range in the value, and
-/// the sRGB it resolves to when it does.
-fn functions(value: &str) -> Vec<(Range<usize>, Option<String>)> {
+/// Byte index just past the CSS string opening with `quote` at `start`. A
+/// string ends at its closing quote, or unclosed at the end of the line.
+fn string_end(value: &str, start: usize, quote: char) -> usize {
+    let mut escaped = false;
+    for (offset, character) in value[start + 1..].char_indices() {
+        let index = start + 1 + offset;
+        match character {
+            _ if escaped => escaped = false,
+            '\\' => escaped = true,
+            '\n' => return index,
+            _ if character == quote => return index + 1,
+            _ => {}
+        }
+    }
+    value.len()
+}
+
+/// The `color()` functions in one value, each with the sRGB it resolves to
+/// when it does.
+fn functions(value: &str) -> Vec<Function> {
     let mut functions = Vec::new();
     let mut end = 0;
     for start in function_starts(value) {
@@ -306,7 +454,10 @@ fn functions(value: &str) -> Vec<(Range<usize>, Option<String>)> {
         let closing = closing_parenthesis(value, body);
         end = closing.map_or(value.len(), |closing| closing + 1);
         let color = closing.and_then(|closing| srgb(&value[body..closing]));
-        functions.push((start..end, color));
+        functions.push(Function {
+            range: start..end,
+            color,
+        });
     }
     functions
 }
@@ -433,8 +584,8 @@ mod tests {
             r##"<svg xmlns="http://www.w3.org/2000/svg"><path fill="color(rec2020 1 0 0)"/></svg>"##,
             // Resolved beside one that is not.
             r##"<svg xmlns="http://www.w3.org/2000/svg"><path style="fill:color(srgb 1 0 0);stroke:color(lab 50 20 30)"/></svg>"##,
-            // A character reference keeps the value out of the rewrite.
-            r##"<svg xmlns="http://www.w3.org/2000/svg"><path style="fill:color(srgb 1 0 0)&#59;"/></svg>"##,
+            // Spelled with a character reference.
+            r##"<svg xmlns="http://www.w3.org/2000/svg"><path style="fill:color(rec2020 1 0 0)&#59;"/></svg>"##,
             // No closing parenthesis.
             r##"<svg xmlns="http://www.w3.org/2000/svg"><path fill="color(srgb 1 0 0"/></svg>"##,
         ] {
@@ -565,14 +716,38 @@ mod tests {
     }
 
     #[test]
-    fn character_references_keep_a_value_out_of_the_rewrite() {
-        // The parsed value is shorter than the source text, so splicing over
-        // it would corrupt the document; leaving it alone is the safe answer.
+    fn values_with_character_references_are_written_out_again() {
+        // The parsed value is not the source text, so the value is replaced
+        // whole, escaped again, rather than spliced where the function sits.
+        let source = r##"<svg xmlns="http://www.w3.org/2000/svg"><path style="fill:color(srgb 1 0 0)&#59;stroke:none" data-a="&amp;"/><style>.a { fill: color(display-p3 0 0 1) } .b::after { content: "&lt;" }</style></svg>"##;
+        let rewritten = rewrite(source).unwrap();
+        let document = roxmltree::Document::parse(&rewritten).unwrap();
+        let path = document
+            .descendants()
+            .find(|node| node.has_tag_name("path"))
+            .unwrap();
+        assert_eq!(path.attribute("style"), Some("fill:#FF0000;stroke:none"));
+        assert_eq!(path.attribute("data-a"), Some("&"));
+        let style = document
+            .descendants()
+            .find(|node| node.has_tag_name("style"))
+            .unwrap();
+        assert_eq!(
+            style.text(),
+            Some(r#".a { fill: #0000FF } .b::after { content: "<" }"#)
+        );
+        assert!(unresolved(source).is_empty());
+    }
+
+    #[test]
+    fn quoted_strings_are_not_colors_or_comments() {
+        let rewritten = rewrite(
+            r##"<svg xmlns="http://www.w3.org/2000/svg"><style>path { font-family: "a/*b", 'color(srgb 0 1 0)'; fill: color(display-p3 1 0 0); }</style></svg>"##,
+        )
+        .unwrap();
         assert!(
-            rewrite(
-                r##"<svg xmlns="http://www.w3.org/2000/svg"><path style="fill:color(srgb 1 0 0)&#59;"/></svg>"##
-            )
-            .is_none()
+            rewritten.contains(r#""a/*b", 'color(srgb 0 1 0)'; fill: #FF0000;"#),
+            "{rewritten}"
         );
     }
 }

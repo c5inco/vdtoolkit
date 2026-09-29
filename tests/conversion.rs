@@ -372,7 +372,10 @@ fn color_functions_that_cannot_resolve_are_rejected_not_painted_black() {
     for paint in [
         r#"fill="color(rec2020 1 0 0)""#,
         r#"style="fill:#FF0000;fill:color(lab 50 60 40)""#,
-        r#"style="stroke:color(display-p3 1 0 0)&#59;stroke-width:2""#,
+        r#"style="stroke:color(rec2020 1 0 0)&#59;stroke-width:2""#,
+        // Beside a fallback in one value, which the parser drops whole.
+        r##"fill="color(rec2020 1 0 0) #FF0000""##,
+        r##"fill="url(#missing) color(rec2020 1 0 0)""##,
     ] {
         let source = format!(
             r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
@@ -443,6 +446,16 @@ fn color_functions_that_paint_nothing_are_left_alone() {
             r##"fill="#FF0000""##,
         ),
         ("", r##"fill="color(rec2020 1 0 0)" style="fill:#FF0000""##),
+        // Spelled with a character reference, in a rule that matches nothing.
+        (
+            ".unused { fill: color(rec2020 1 0 0)&#59; }",
+            r##"fill="#FF0000""##,
+        ),
+        // Quoted, `/*` opens no comment, so the color after it resolves.
+        (
+            r#"path { font-family: "a/*b"; fill: color(display-p3 1 0 0); }"#,
+            "",
+        ),
     ] {
         let source = format!(
             r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
@@ -459,6 +472,59 @@ fn color_functions_that_paint_nothing_are_left_alone() {
         );
         let xml = vdtoolkit::convert(source.as_bytes()).unwrap().to_xml();
         assert!(xml.contains(r##"android:fillColor="#FF0000""##), "{xml}");
+    }
+}
+
+#[test]
+fn a_gradient_with_an_unresolved_fallback_is_rejected_not_painted_black() {
+    // The parser drops `url(#g) color(...)` whole, gradient and all.
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <defs><linearGradient id="g"><stop stop-color="#FF0000"/><stop offset="1" stop-color="#0000FF"/></linearGradient></defs>
+        <path d="M2 2H22V22H2Z" fill="url(#g) color(rec2020 1 0 0)"/>
+    </svg>"##;
+    let analysis = vdtoolkit::analyze(source).unwrap();
+    assert_eq!(analysis.compatibility, Compatibility::Unsupported);
+}
+
+#[test]
+fn transparent_paint_with_an_unresolved_color_is_left_alone() {
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <path d="M0 0H4V4Z" fill="color(rec2020 1 0 0)" fill-opacity="0"/>
+        <path d="M2 2H22V22H2Z" fill="#FF0000"/>
+    </svg>"##;
+    let xml = vdtoolkit::convert(source).unwrap().to_xml();
+    assert!(xml.contains(r##"android:fillColor="#FF0000""##), "{xml}");
+}
+
+#[test]
+fn notification_icons_only_reject_unresolved_colors_that_change_the_silhouette() {
+    let notification = |paint: &str| {
+        let source = format!(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+                <path d="M2 2H22V22H2Z" {paint}/>
+            </svg>"##
+        );
+        vdtoolkit::convert_as_with_options(
+            source.as_bytes(),
+            vdtoolkit::IconKind::Notification,
+            vdtoolkit::Fit::contain(24.0),
+            false,
+        )
+    };
+    // Drawn white either way, an opaque hue makes no difference.
+    let xml = notification(r#"fill="color(rec2020 1 0 0)""#)
+        .unwrap()
+        .to_xml();
+    assert!(xml.contains(r##"android:fillColor="#FFFFFF""##), "{xml}");
+    // A stroke that would vanish, or an opacity that would be lost, does.
+    for paint in [
+        r#"fill="none" stroke="color(rec2020 1 0 0)" stroke-width="2""#,
+        r#"fill="color(rec2020 1 0 0 / 0.5)""#,
+    ] {
+        assert!(
+            matches!(notification(paint), Err(Error::Incompatible(_))),
+            "{paint}"
+        );
     }
 }
 

@@ -160,22 +160,31 @@ fn cdata_content(source: &str, range: std::ops::Range<usize>) -> std::ops::Range
     }
 }
 
-/// Byte indexes where a `color()` function starts in `value`.
+/// Byte indexes where a `color()` function starts in `value`, outside CSS
+/// comments, which paint nothing.
 fn function_starts(value: &str) -> impl Iterator<Item = usize> + '_ {
-    value
-        .char_indices()
-        .filter(|&(_, character)| character == 'c' || character == 'C')
-        .map(|(index, _)| index)
-        .filter(move |&start| {
-            value
+    let mut comment_end = 0;
+    value.char_indices().filter_map(move |(start, character)| {
+        if start < comment_end {
+            return None;
+        }
+        if value[start..].starts_with("/*") {
+            comment_end = value[start + 2..]
+                .find("*/")
+                .map_or(value.len(), |end| start + 2 + end + 2);
+            return None;
+        }
+        let function = (character == 'c' || character == 'C')
+            && value
                 .get(start..start + "color(".len())
                 .is_some_and(|text| text.eq_ignore_ascii_case("color("))
-                // `color(` has to start a token: `stop-color(` is not a
-                // color function.
-                && !value[..start].chars().next_back().is_some_and(|previous| {
-                    previous.is_alphanumeric() || previous == '-' || previous == '_'
-                })
-        })
+            // `color(` has to start a token: `stop-color(` is not a
+            // color function.
+            && !value[..start].chars().next_back().is_some_and(|previous| {
+                previous.is_alphanumeric() || previous == '-' || previous == '_'
+            });
+        function.then_some(start)
+    })
 }
 
 /// Replace the `color()` functions in one value. `None` when it has none, or
@@ -364,6 +373,9 @@ mod tests {
             r##"<svg xmlns="http://www.w3.org/2000/svg"><path style="fill:color(srgb 1 0 0);stroke:color(display-p3 0 1 0)"/></svg>"##,
             r##"<svg xmlns="http://www.w3.org/2000/svg" data-x="color(rec2020 1 0 0)"/>"##,
             r##"<svg xmlns="http://www.w3.org/2000/svg"><path fill="#6C707E" stroke="currentColor"/></svg>"##,
+            // Comments paint nothing.
+            r##"<svg xmlns="http://www.w3.org/2000/svg"><style>/* color(rec2020 1 0 0) */ path { fill: #FF0000; }</style></svg>"##,
+            r##"<svg xmlns="http://www.w3.org/2000/svg"><path style="/* color(lab 50 20 30) */fill:#FF0000"/></svg>"##,
         ] {
             assert!(unresolved(source).is_empty(), "{source}");
         }

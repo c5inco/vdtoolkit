@@ -1,7 +1,7 @@
 import type { ConvertResult, Diagnostic } from "../vendor/vdtoolkit-wasm/vdtoolkit_wasm";
 import { blockingDiagnostics, capitalize, warningDiagnostics } from "./diagnostics";
 import type { ExportCandidate, ExportKind } from "./messages";
-import { uniqueResourceNames } from "./resource-names";
+import { type ResourceName, uniqueResourceNames } from "./resource-names";
 
 // Android's recommended vector icon limit. The dialog scales larger layers down to fit,
 // keeping proportions, instead of refusing them; the Code panel keeps Figma's size.
@@ -51,6 +51,7 @@ export type ReviewRow = ReadyRow | BlockedRow;
 export function reviewCandidates(
   candidates: ExportCandidate[],
   convert: (source: Uint8Array) => ConvertResult,
+  resourceName: ResourceName,
   kind: ExportKind = "drawable",
 ): ReviewRow[] {
   const results = candidates.map((candidate) =>
@@ -58,6 +59,7 @@ export function reviewCandidates(
   );
   const readyNames = uniqueResourceNames(
     candidates.filter((_, index) => results[index]?.ok).map((candidate) => candidate.name),
+    resourceName,
   );
 
   let readyIndex = 0;

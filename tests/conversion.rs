@@ -366,6 +366,116 @@ fn rejects_non_uniform_transforms_on_strokes() {
 }
 
 #[test]
+fn color_functions_that_cannot_resolve_are_rejected_not_painted_black() {
+    // The SVG parser drops a `color()` value it cannot read, so the fill
+    // would turn black and the stroke vanish.
+    for paint in [
+        r#"fill="color(rec2020 1 0 0)""#,
+        r#"style="fill:#FF0000;fill:color(lab 50 60 40)""#,
+        r#"style="stroke:color(display-p3 1 0 0)&#59;stroke-width:2""#,
+    ] {
+        let source = format!(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+                <path d="M2 2H22V22H2Z" {paint}/>
+            </svg>"##
+        );
+        let analysis = vdtoolkit::analyze(source.as_bytes()).unwrap();
+        assert_eq!(
+            analysis.compatibility,
+            Compatibility::Unsupported,
+            "{paint}"
+        );
+        let diagnostic = analysis
+            .diagnostics
+            .iter()
+            .find(|diagnostic| matches!(diagnostic.code, DiagnosticCode::UnsupportedPaint))
+            .unwrap_or_else(|| panic!("{paint}: {analysis:?}"));
+        assert_eq!(diagnostic.location.as_ref().unwrap().element, "path");
+        assert!(matches!(
+            vdtoolkit::convert(source.as_bytes()),
+            Err(Error::Incompatible(_))
+        ));
+    }
+}
+
+#[test]
+fn notification_icons_whiten_color_functions_that_cannot_resolve() {
+    // A notification icon is repainted white, so the hue the parser drops
+    // does not matter there.
+    let source = r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <path d="M2 2H22V22H2Z" fill="color(rec2020 1 0 0)"/>
+    </svg>"##;
+    let asset = vdtoolkit::convert_as_with_options(
+        source.as_bytes(),
+        vdtoolkit::IconKind::Notification,
+        vdtoolkit::Fit::contain(24.0),
+        false,
+    )
+    .unwrap();
+    assert!(
+        !asset
+            .analysis
+            .diagnostics
+            .iter()
+            .any(|diagnostic| matches!(diagnostic.code, DiagnosticCode::UnsupportedPaint))
+    );
+    let xml = asset.to_xml();
+    assert!(xml.contains(r##"android:fillColor="#FFFFFF""##), "{xml}");
+    // A stroke that would vanish, or an opacity that would be lost, is not
+    // whitened back.
+    for paint in [
+        r#"fill="none" stroke="color(rec2020 1 0 0)" stroke-width="2""#,
+        r#"fill="color(rec2020 1 0 0 / 0.5)""#,
+    ] {
+        let source = format!(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+                <path d="M2 2H22V22H2Z" {paint}/>
+            </svg>"##
+        );
+        assert!(
+            matches!(
+                vdtoolkit::convert_as_with_options(
+                    source.as_bytes(),
+                    vdtoolkit::IconKind::Notification,
+                    vdtoolkit::Fit::contain(24.0),
+                    false,
+                ),
+                Err(Error::Incompatible(_))
+            ),
+            "{paint}"
+        );
+    }
+}
+
+#[test]
+fn stroke_transform_checks_hold_when_a_large_viewbox_is_scaled_down() {
+    // A 960-unit viewBox drawn at 24dp scales everything by 0.025, which
+    // shrinks the skew and uneven scale below any absolute tolerance.
+    for (transform, uniform) in [
+        ("skewX(5)", false),
+        ("scale(1 1.003)", false),
+        ("rotate(30)", true),
+        ("scale(3)", true),
+    ] {
+        let source = format!(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 960" width="24" height="24">
+                <path transform="{transform}" d="M100 100L800 800" fill="none" stroke="#000" stroke-width="40"/>
+            </svg>"##
+        );
+        let analysis = vdtoolkit::analyze(source.as_bytes()).unwrap();
+        let rejected = analysis.diagnostics.iter().any(|diagnostic| {
+            matches!(diagnostic.code, DiagnosticCode::UnsupportedStrokeTransform)
+        });
+        assert_eq!(rejected, !uniform, "{transform}: {analysis:?}");
+        assert_eq!(
+            analysis.compatibility.is_convertible(false),
+            uniform,
+            "{transform}"
+        );
+    }
+}
+
+#[test]
 fn rejects_stroke_features_vector_drawable_cannot_express() {
     for extra in [
         r#"stroke-dasharray="2 1""#,
@@ -674,6 +784,48 @@ fn cli_converts_directories_and_check_has_ci_exit_code() {
         .unwrap();
     assert!(convert.status.success(), "{:?}", convert.stderr);
     assert!(output.join("ok.xml").is_file());
+}
+
+#[test]
+fn single_input_with_a_directory_output_is_written_inside_it() {
+    let temp = tempfile::tempdir().unwrap();
+    let input = temp.path().join("Arrow Left.svg");
+    fs::write(
+        &input,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M2 2H22V22H2Z"/></svg>"##,
+    )
+    .unwrap();
+    let existing = temp.path().join("drawable-anydpi");
+    fs::create_dir(&existing).unwrap();
+    let separator = std::path::MAIN_SEPARATOR;
+    // An existing directory, with and without a trailing separator, and a
+    // directory that does not exist yet but is spelled as one.
+    for (output, directory) in [
+        (existing.display().to_string(), existing.clone()),
+        (
+            format!("{}{separator}", existing.display()),
+            existing.clone(),
+        ),
+        (
+            format!("{}{separator}", temp.path().join("drawable-new").display()),
+            temp.path().join("drawable-new"),
+        ),
+    ] {
+        for command in ["convert", "notification"] {
+            let result = Command::new(env!("CARGO_BIN_EXE_vdt"))
+                .args([command, input.to_str().unwrap(), "-o", &output])
+                .output()
+                .unwrap();
+            assert!(result.status.success(), "{command} -o {output}: {result:?}");
+            let written = directory.join("arrow_left.xml");
+            assert!(written.is_file(), "{command} -o {output}");
+            fs::remove_file(written).unwrap();
+            let stderr = String::from_utf8(result.stderr).unwrap();
+            assert!(stderr.contains("\"Arrow Left\" is not a valid"), "{stderr}");
+        }
+    }
+    assert!(!temp.path().join("drawable_anydpi").exists());
+    assert!(!temp.path().join("drawable_new").exists());
 }
 
 #[test]

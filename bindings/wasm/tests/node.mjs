@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import init, { analyzeSvg, convertNotificationSvg, convertSvg } from "../pkg/vdtoolkit_wasm.js";
+import init, { analyzeSvg, convertNotificationSvg, convertSvg, resourceName } from "../pkg/vdtoolkit_wasm.js";
 
 const wasm = await readFile(new URL("../pkg/vdtoolkit_wasm_bg.wasm", import.meta.url));
 await init({ module_or_path: wasm });
@@ -70,4 +70,12 @@ test("notification conversion whitens and fits artwork on a 24dp canvas", () => 
   assert.deepEqual([result.analysis.metrics.width, result.analysis.metrics.height], [24, 24]);
   assert.match(result.xml, /android:fillColor="#FFFFFF"/);
   assert.ok(result.analysis.diagnostics.some(({ code }) => code === "VDT021"));
+});
+
+test("resource names match the command-line interface", () => {
+  assert.equal(resourceName("Icons/Arrow Left"), "icons_arrow_left");
+  assert.equal(resourceName("HTTPServer"), "http_server");
+  assert.equal(resourceName("class"), "ic_class");
+  assert.equal(resourceName("_private"), "_private");
+  assert.equal(resourceName("🙂"), undefined);
 });

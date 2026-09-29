@@ -44,6 +44,30 @@ follow [Semantic Versioning](https://semver.org/).
   can express, and the gradient radius is derived from the clamped scale so the
   ellipse's short axis stays exact rather than being stretched to match.
   Verified on Android across API 21 to 36.
+- A stroke under a skew or uneven scale is rejected with `VDT012` however
+  small the drawing is scaled. The check used an absolute tolerance, so in a
+  960-unit viewBox drawn at 24dp, `skewX(5)` passed and the stroke was drawn
+  with one uniform width.
+- Paint whose `color()` function cannot be resolved to sRGB is rejected with
+  `VDT013` instead of silently turning black or vanishing: color spaces other
+  than sRGB, linear sRGB, and Display P3, and values spelled with character
+  references. `color()` in a `<style>` element's CDATA section is now
+  resolved like any other, and `color()` inside a CSS comment or string is
+  ignored. A notification icon, repainted white, still whitens an opaque
+  fill as before; only a stroke or an opacity it would lose is rejected.
+- `convert`, `optimize`, and `notification` with one input write into the
+  directory `-o` names when it exists or ends in a separator. Previously
+  `-o res/drawable-anydpi/` wrote a file named `res/drawable_anydpi`.
+- A layer image over the 100 MB Android can draw is refused from its header,
+  before it is decoded. A small file claiming a huge size could take tens of
+  gigabytes of memory, and was then accepted.
+- WebAssembly `convertNotificationSvg` lowers paint for notification icons as
+  the CLI does, so a gradient with uniform alpha is no longer rejected or
+  reported as approximate when the CLI converts it exactly.
+- The Figma plugin names exported files with the CLI's rules, exposed as
+  WebAssembly `resourceName`. A layer named after a Java keyword such as
+  `class` exported as `class.xml`, which aapt2 rejects; it is now
+  `ic_class.xml`.
 
 ## [0.5.0] - 2026-09-19
 

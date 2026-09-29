@@ -43,7 +43,7 @@ pub(crate) fn process_as(
     // the `color()` functions it cannot read, along with the sRGB fallbacks
     // beside them, leaving strokes unpainted and fills black.
     let resolved = crate::css::resolve_color_functions(text, &document);
-    if let Some(ref resolved) = resolved {
+    if resolved.colors > 0 {
         diagnostics.push(Diagnostic {
             code: DiagnosticCode::WideGamutColor,
             severity: Severity::Info,
@@ -55,16 +55,42 @@ pub(crate) fn process_as(
             suggestion: None,
         });
     }
+    // A notification icon is repainted white, so the hue of an opaque fill
+    // the parser drops is lost there anyway. A dropped stroke or opacity is
+    // not.
+    let notification = kind == Some(crate::IconKind::Notification);
+    let unresolved: Vec<&ElementLocation> = resolved
+        .unresolved
+        .iter()
+        .filter(|unresolved| !(notification && unresolved.opaque_fill))
+        .map(|unresolved| &unresolved.location)
+        .collect();
+    if let Some(location) = unresolved.first() {
+        push_unsupported(
+            &mut compatibility,
+            &mut diagnostics,
+            DiagnosticCode::UnsupportedPaint,
+            &format!(
+                "{} a color() function that cannot be resolved to sRGB, so the \
+                 color would be dropped along with its fallback",
+                match unresolved.len() {
+                    1 => "an element's paint uses".to_owned(),
+                    count => format!("{count} elements' paint use"),
+                }
+            ),
+            Some((*location).clone()),
+            "Write the color as sRGB hex, or as color() in srgb, srgb-linear, or \
+             display-p3 spelled without character references.",
+        );
+    }
     let tree = usvg::Tree::from_data(
-        resolved
-            .as_ref()
-            .map_or(source, |resolved| resolved.source.as_bytes()),
+        resolved.source.as_deref().map_or(source, str::as_bytes),
         &options,
     )?;
     let mut metrics = Metrics::default();
     let mut options = vector::LowerOptions {
         allow_approximate,
-        notification: (kind == Some(crate::IconKind::Notification)).then(Default::default),
+        notification: notification.then(Default::default),
     };
     let drawable = vector::lower(
         &tree,

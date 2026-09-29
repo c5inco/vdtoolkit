@@ -5,7 +5,6 @@ use std::process::ExitCode;
 
 use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
-use unicode_normalization::UnicodeNormalization;
 use vdtoolkit::{
     Analysis, Asset, Bounds, Compatibility, Diagnostic, DiagnosticCode, Error, Fit, FitMode,
     IconKind, ImageFormat, Metrics, Result, Severity,
@@ -988,7 +987,7 @@ fn adaptive_layer(
 }
 
 fn validate_resource_name(name: &str) -> Result<()> {
-    if is_resource_name(name) {
+    if vdtoolkit::is_resource_name(name) {
         Ok(())
     } else {
         Err(Error::InvalidInput(format!(
@@ -997,136 +996,14 @@ fn validate_resource_name(name: &str) -> Result<()> {
     }
 }
 
-/// Java keywords and literals, which aapt2 rejects as resource names because
-/// they cannot be fields of the generated `R` class.
-const JAVA_KEYWORDS: &[&str] = &[
-    "abstract",
-    "assert",
-    "boolean",
-    "break",
-    "byte",
-    "case",
-    "catch",
-    "char",
-    "class",
-    "const",
-    "continue",
-    "default",
-    "do",
-    "double",
-    "else",
-    "enum",
-    "extends",
-    "false",
-    "final",
-    "finally",
-    "float",
-    "for",
-    "goto",
-    "if",
-    "implements",
-    "import",
-    "instanceof",
-    "int",
-    "interface",
-    "long",
-    "native",
-    "new",
-    "null",
-    "package",
-    "private",
-    "protected",
-    "public",
-    "return",
-    "short",
-    "static",
-    "strictfp",
-    "super",
-    "switch",
-    "synchronized",
-    "this",
-    "throw",
-    "throws",
-    "transient",
-    "true",
-    "try",
-    "void",
-    "volatile",
-    "while",
-];
-
-fn is_resource_name(name: &str) -> bool {
-    let mut chars = name.chars();
-    chars
-        .next()
-        .is_some_and(|first| first.is_ascii_lowercase() || first == '_')
-        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
-        && name != "_"
-        && !JAVA_KEYWORDS.contains(&name)
-}
-
-/// Turn a file name into a valid Android resource name. A valid name is kept;
-/// otherwise words become lowercase and are joined by underscores, as
-/// `Arrow-Left` becomes `arrow_left` and `HTTPServer` becomes `http_server`,
-/// and a name that would start with a digit or be a Java keyword gains an
-/// `ic_` prefix. Accents are dropped, so `Café` becomes `cafe`, and symbols
-/// that carry meaning become words, so `C++` becomes `c_plus_plus` rather than
-/// colliding with `C`.
+/// [`vdtoolkit::resource_name`], failing when the name has no letters or
+/// digits to keep.
 fn resource_name(stem: &str) -> Result<String> {
-    if is_resource_name(stem) {
-        return Ok(stem.to_owned());
-    }
-    let mut chars = Vec::with_capacity(stem.len());
-    for c in stem.nfkd().filter(|c| !('\u{300}'..='\u{36f}').contains(c)) {
-        let word = match c {
-            '+' => "plus",
-            '#' => "sharp",
-            '&' => "and",
-            '@' => "at",
-            '%' => "percent",
-            _ => {
-                chars.push(c);
-                continue;
-            }
-        };
-        chars.push('_');
-        chars.extend(word.chars());
-        chars.push('_');
-    }
-    let mut name = String::with_capacity(stem.len());
-    for (index, &c) in chars.iter().enumerate() {
-        if c.is_ascii_uppercase() {
-            let previous = index.checked_sub(1).map(|previous| chars[previous]);
-            let next = chars.get(index + 1);
-            // A word starts after a lowercase letter or digit, and at the last
-            // capital of an acronym followed by a lowercase word.
-            let word_start = previous
-                .is_some_and(|previous| previous.is_ascii_lowercase() || previous.is_ascii_digit())
-                || (previous.is_some_and(|previous| previous.is_ascii_uppercase())
-                    && next.is_some_and(char::is_ascii_lowercase));
-            if word_start {
-                name.push('_');
-            }
-            name.push(c.to_ascii_lowercase());
-        } else if c.is_ascii_lowercase() || c.is_ascii_digit() {
-            name.push(c);
-        } else if !name.ends_with('_') {
-            name.push('_');
-        }
-    }
-    let name = name.trim_matches('_');
-    if name.is_empty() {
-        return Err(Error::InvalidInput(format!(
+    vdtoolkit::resource_name(stem).ok_or_else(|| {
+        Error::InvalidInput(format!(
             "cannot make an Android resource name from {stem:?}; use letters or digits in the file name"
-        )));
-    }
-    Ok(
-        if name.starts_with(|c: char| c.is_ascii_digit()) || JAVA_KEYWORDS.contains(&name) {
-            format!("ic_{name}")
-        } else {
-            name.to_owned()
-        },
-    )
+        ))
+    })
 }
 
 fn normalize_color(color: &str) -> Result<String> {
@@ -1624,11 +1501,17 @@ fn plan_outputs(
             let Some(output) = output else {
                 return Ok(None);
             };
-            let (directory, stem, extension) = if root.is_file() {
+            let (directory, stem, extension) = if root.is_file() && !names_directory(output) {
                 (
                     output.parent().unwrap_or(Path::new("")).to_owned(),
                     output.file_stem(),
                     output.extension(),
+                )
+            } else if root.is_file() {
+                (
+                    output.to_owned(),
+                    input.file_stem(),
+                    Some(OsStr::new("xml")),
                 )
             } else {
                 let relative = input.strip_prefix(root).unwrap_or(input);
@@ -1661,6 +1544,18 @@ fn plan_outputs(
             }))
         })
         .collect()
+}
+
+/// Whether `-o` names a directory for a single input: one that exists, or a
+/// path ending in a separator. `Path` drops the trailing separator, so without
+/// this `-o res/drawable/` would be read as a file named `drawable`.
+fn names_directory(output: &Path) -> bool {
+    output.is_dir()
+        || output
+            .as_os_str()
+            .as_encoded_bytes()
+            .last()
+            .is_some_and(|&byte| std::path::is_separator(char::from(byte)))
 }
 
 fn print_error(path: Option<&Path>, error: &Error) {

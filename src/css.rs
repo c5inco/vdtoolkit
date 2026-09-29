@@ -14,39 +14,99 @@
 //! each `color()` function to sRGB before parsing keeps the artwork painted,
 //! and sRGB is what VectorDrawable renders in anyway.
 
-/// A document with its `color()` functions resolved, and how many resolved.
+use crate::ElementLocation;
+
+/// A document with its `color()` functions resolved, and what did not resolve.
 pub(crate) struct Resolved {
-    pub source: String,
+    /// The rewritten document, or `None` when no function resolved.
+    pub source: Option<String>,
+    /// How many `color()` functions resolved.
     pub colors: usize,
+    /// Elements whose paint keeps a `color()` function that did not resolve,
+    /// which the SVG parser drops along with its sRGB fallback.
+    pub unresolved: Vec<Unresolved>,
 }
 
+/// An element whose paint keeps a `color()` function that did not resolve.
+pub(crate) struct Unresolved {
+    pub location: ElementLocation,
+    /// Whether each such function is the whole of an opaque `fill`. Dropped,
+    /// the fill falls back to the inherited one, black by default, which a
+    /// notification icon repaints white all the same.
+    pub opaque_fill: bool,
+}
+
+/// Attributes that take a color, where a `color()` function left unresolved
+/// changes how the artwork is painted. `style` covers the same properties.
+const PAINT_ATTRIBUTES: &[&str] = &[
+    "fill",
+    "stroke",
+    "stop-color",
+    "flood-color",
+    "lighting-color",
+    "solid-color",
+    "color",
+    "style",
+];
+
 /// Rewrite every `color()` function in `source` as a plain sRGB color.
-/// `None` when there is nothing to rewrite.
 ///
 /// Only attribute values and `<style>` text are touched, and only where the
 /// source spells the value literally, so nothing else in the document moves.
 pub(crate) fn resolve_color_functions(
     source: &str,
     document: &roxmltree::Document<'_>,
-) -> Option<Resolved> {
+) -> Resolved {
     let mut edits: Vec<(std::ops::Range<usize>, Rewrite)> = Vec::new();
+    let mut unresolved = Vec::new();
     for node in document.descendants() {
-        if node.is_element() {
+        let (element, left) = if node.is_element() {
+            let mut left = None;
             for attribute in node.attributes() {
                 let range = attribute.range_value();
-                push_edit(source, range, attribute.value(), &mut edits);
+                let paint =
+                    attribute.namespace().is_none() && PAINT_ATTRIBUTES.contains(&attribute.name());
+                let name = (attribute.name() != "style").then(|| attribute.name());
+                if let Some(opaque_fill) =
+                    push_edit(source, range, attribute.value(), name, &mut edits).filter(|_| paint)
+                {
+                    left = Some(left.unwrap_or(true) && opaque_fill);
+                }
             }
-        } else if node.is_text()
-            && node
-                .parent_element()
-                .is_some_and(|p| p.has_tag_name("style"))
+            (node, left)
+        } else if let Some(style) = node
+            .parent_element()
+            .filter(|parent| node.is_text() && parent.has_tag_name("style"))
         {
-            let range = node.range();
-            push_edit(source, range, node.text().unwrap_or_default(), &mut edits);
+            let left = push_edit(
+                source,
+                cdata_content(source, node.range()),
+                node.text().unwrap_or_default(),
+                None,
+                &mut edits,
+            );
+            (style, left)
+        } else {
+            continue;
+        };
+        if let Some(opaque_fill) = left {
+            let position = document.text_pos_at(element.range().start);
+            unresolved.push(Unresolved {
+                location: ElementLocation {
+                    element: element.tag_name().name().to_owned(),
+                    line: position.row,
+                    column: position.col,
+                },
+                opaque_fill,
+            });
         }
     }
     if edits.is_empty() {
-        return None;
+        return Resolved {
+            source: None,
+            colors: 0,
+            unresolved,
+        };
     }
     edits.sort_by_key(|(range, _)| range.start);
     let mut rewritten = String::with_capacity(source.len());
@@ -64,10 +124,11 @@ pub(crate) fn resolve_color_functions(
         colors += replacement.colors;
     }
     rewritten.push_str(&source[copied..]);
-    Some(Resolved {
-        source: rewritten,
+    Resolved {
+        source: Some(rewritten),
         colors,
-    })
+        unresolved,
+    }
 }
 
 /// One rewritten value, and how many `color()` functions it resolved.
@@ -77,50 +138,153 @@ struct Rewrite {
 }
 
 /// Queue a rewrite of `range` when the source spells `value` literally there
-/// and the value holds a `color()` function that resolves.
+/// and the value holds a `color()` function that resolves. When a `color()`
+/// function is left in the value unresolved, whether each one left is the
+/// whole of an opaque fill. `attribute` names the attribute `value` belongs
+/// to, or is `None` for the declarations in `style` or a `<style>` element.
 fn push_edit(
     source: &str,
     range: std::ops::Range<usize>,
     value: &str,
+    attribute: Option<&str>,
     edits: &mut Vec<(std::ops::Range<usize>, Rewrite)>,
-) {
+) -> Option<bool> {
+    let left = |value: &str| {
+        function_starts(value)
+            .next()
+            .is_some()
+            .then(|| only_opaque_fills(value, attribute))
+    };
     // Character references make the parsed value differ from the source text,
     // and splicing over them would corrupt the document.
     if source.get(range.clone()) != Some(value) {
-        return;
+        return left(value);
     }
-    if let Some(resolved) = resolve(value) {
-        edits.push((range, resolved));
+    match resolve(value) {
+        Some(resolved) => {
+            let unresolved = left(&resolved.value);
+            edits.push((range, resolved));
+            unresolved
+        }
+        None => left(value),
     }
+}
+
+/// Whether every `color()` function in `value` is the whole of a `fill`,
+/// with no alpha. `attribute` is as for [`push_edit`].
+fn only_opaque_fills(value: &str, attribute: Option<&str>) -> bool {
+    function_starts(value).all(|start| {
+        let (property, paint) = match attribute {
+            Some(name) => (name, value),
+            None => {
+                let begin = value[..start]
+                    .rfind([';', '{'])
+                    .map_or(0, |index| index + 1);
+                let end = value[start..]
+                    .find([';', '}'])
+                    .map_or(value.len(), |index| start + index);
+                match value[begin..end].split_once(':') {
+                    Some(declaration) => declaration,
+                    None => return false,
+                }
+            }
+        };
+        let paint = paint.trim();
+        property.trim().eq_ignore_ascii_case("fill")
+            && paint
+                .get(.."color(".len())
+                .is_some_and(|text| text.eq_ignore_ascii_case("color("))
+            && closing_parenthesis(paint, "color(".len()) == Some(paint.len() - 1)
+            && !paint.contains('/')
+    })
+}
+
+/// The range of the text inside a `<![CDATA[...]]>` section, which design
+/// tools wrap `<style>` text in; any other range as it is.
+fn cdata_content(source: &str, range: std::ops::Range<usize>) -> std::ops::Range<usize> {
+    const OPEN: &str = "<![CDATA[";
+    const CLOSE: &str = "]]>";
+    match source.get(range.clone()) {
+        Some(text)
+            if text.starts_with(OPEN)
+                && text.ends_with(CLOSE)
+                && text.len() >= OPEN.len() + CLOSE.len() =>
+        {
+            range.start + OPEN.len()..range.end - CLOSE.len()
+        }
+        _ => range,
+    }
+}
+
+/// Byte indexes where a `color()` function starts in `value`, outside CSS
+/// comments, which paint nothing, and quoted strings, which are not colors.
+fn function_starts(value: &str) -> impl Iterator<Item = usize> + '_ {
+    let mut skip_to = 0;
+    value.char_indices().filter_map(move |(start, character)| {
+        if start < skip_to {
+            return None;
+        }
+        if value[start..].starts_with("/*") {
+            skip_to = value[start + 2..]
+                .find("*/")
+                .map_or(value.len(), |end| start + 2 + end + 2);
+            return None;
+        }
+        if character == '"' || character == '\'' {
+            skip_to = string_end(value, start, character);
+            return None;
+        }
+        let function = (character == 'c' || character == 'C')
+            && value
+                .get(start..start + "color(".len())
+                .is_some_and(|text| text.eq_ignore_ascii_case("color("))
+            // `color(` has to start a token: `stop-color(` is not a
+            // color function.
+            && !value[..start].chars().next_back().is_some_and(|previous| {
+                previous.is_alphanumeric() || previous == '-' || previous == '_'
+            });
+        function.then_some(start)
+    })
+}
+
+/// Byte index just past the CSS string opening with `quote` at `start`. A
+/// string ends at its closing quote, or unclosed at the end of the line.
+fn string_end(value: &str, start: usize, quote: char) -> usize {
+    let mut escaped = false;
+    for (offset, character) in value[start + 1..].char_indices() {
+        let index = start + 1 + offset;
+        match character {
+            _ if escaped => escaped = false,
+            '\\' => escaped = true,
+            '\n' => return index,
+            _ if character == quote => return index + 1,
+            _ => {}
+        }
+    }
+    value.len()
 }
 
 /// Replace the `color()` functions in one value. `None` when it has none, or
 /// none that resolve.
 fn resolve(value: &str) -> Option<Rewrite> {
-    let lowercase = value.to_ascii_lowercase();
     let mut resolved = String::new();
     let mut copied = 0;
-    let mut search = 0;
     let mut colors = 0;
-    while let Some(offset) = lowercase[search..].find("color(") {
-        let start = search + offset;
-        search = start + "color(".len();
-        // `color(` has to start a token: `stop-color(` is not a color function.
-        if value[..start].chars().next_back().is_some_and(|previous| {
-            previous.is_alphanumeric() || previous == '-' || previous == '_'
-        }) {
+    for start in function_starts(value) {
+        // A function nested inside one already resolved went with it.
+        if start < copied {
             continue;
         }
-        let Some(end) = closing_parenthesis(value, search) else {
+        let body = start + "color(".len();
+        let Some(end) = closing_parenthesis(value, body) else {
             continue;
         };
-        let Some(color) = srgb(&value[search..end]) else {
+        let Some(color) = srgb(&value[body..end]) else {
             continue;
         };
         resolved.push_str(&value[copied..start]);
         resolved.push_str(&color);
         copied = end + 1;
-        search = copied;
         colors += 1;
     }
     (copied > 0).then(|| {
@@ -230,12 +394,107 @@ mod tests {
 
     fn rewrite(source: &str) -> Option<String> {
         let document = roxmltree::Document::parse(source).unwrap();
-        resolve_color_functions(source, &document).map(|resolved| resolved.source)
+        resolve_color_functions(source, &document).source
     }
 
     fn colors(source: &str) -> usize {
         let document = roxmltree::Document::parse(source).unwrap();
-        resolve_color_functions(source, &document).map_or(0, |resolved| resolved.colors)
+        resolve_color_functions(source, &document).colors
+    }
+
+    fn unresolved(source: &str) -> Vec<String> {
+        let document = roxmltree::Document::parse(source).unwrap();
+        resolve_color_functions(source, &document)
+            .unresolved
+            .into_iter()
+            .map(|unresolved| unresolved.location.element)
+            .collect()
+    }
+
+    fn opaque_fill(source: &str) -> bool {
+        let document = roxmltree::Document::parse(source).unwrap();
+        let unresolved = resolve_color_functions(source, &document).unresolved;
+        assert_eq!(unresolved.len(), 1, "{source}");
+        unresolved[0].opaque_fill
+    }
+
+    #[test]
+    fn only_a_whole_opaque_fill_is_told_apart() {
+        for source in [
+            r##"<svg xmlns="http://www.w3.org/2000/svg"><path fill="color(rec2020 1 0 0)"/></svg>"##,
+            r##"<svg xmlns="http://www.w3.org/2000/svg"><path style="stroke:#FF0000;fill: color(rec2020 1 0 0) ;"/></svg>"##,
+            r##"<svg xmlns="http://www.w3.org/2000/svg"><path fill="color(srgb 1 0 0)" style="fill:#FF0000;fill:color(lab 50 20 30)"/></svg>"##,
+            r##"<svg xmlns="http://www.w3.org/2000/svg"><style>path { stroke: color(srgb 1 0 0); fill: color(rec2020 1 0 0) }</style></svg>"##,
+        ] {
+            assert!(opaque_fill(source), "{source}");
+        }
+        for source in [
+            r##"<svg xmlns="http://www.w3.org/2000/svg"><path stroke="color(rec2020 1 0 0)"/></svg>"##,
+            r##"<svg xmlns="http://www.w3.org/2000/svg"><path fill="color(rec2020 1 0 0 / 0.5)"/></svg>"##,
+            r##"<svg xmlns="http://www.w3.org/2000/svg"><path fill="url(#g) color(rec2020 1 0 0)"/></svg>"##,
+            r##"<svg xmlns="http://www.w3.org/2000/svg"><path fill="color(rec2020 1 0 0" /></svg>"##,
+            r##"<svg xmlns="http://www.w3.org/2000/svg"><path fill="color(rec2020 1 0 0)" stroke="color(lab 50 20 30)"/></svg>"##,
+            r##"<svg xmlns="http://www.w3.org/2000/svg"><path style="stop-color:color(rec2020 1 0 0)"/></svg>"##,
+            r##"<svg xmlns="http://www.w3.org/2000/svg"><style>.a { fill: color(rec2020 1 0 0) !important }</style></svg>"##,
+        ] {
+            assert!(!opaque_fill(source), "{source}");
+        }
+    }
+
+    #[test]
+    fn paint_left_with_a_color_function_is_reported() {
+        for source in [
+            // A color space that is not a plain RGB one.
+            r##"<svg xmlns="http://www.w3.org/2000/svg"><path fill="color(rec2020 1 0 0)"/></svg>"##,
+            // Resolved beside one that is not.
+            r##"<svg xmlns="http://www.w3.org/2000/svg"><path style="fill:color(srgb 1 0 0);stroke:color(lab 50 20 30)"/></svg>"##,
+            // A character reference keeps the value out of the rewrite.
+            r##"<svg xmlns="http://www.w3.org/2000/svg"><path style="fill:color(srgb 1 0 0)&#59;"/></svg>"##,
+            // No closing parenthesis.
+            r##"<svg xmlns="http://www.w3.org/2000/svg"><path fill="color(srgb 1 0 0"/></svg>"##,
+        ] {
+            assert_eq!(unresolved(source), ["path"], "{source}");
+        }
+        assert_eq!(
+            unresolved(
+                r##"<svg xmlns="http://www.w3.org/2000/svg"><style>.a { fill: color(rec2020 1 0 0); }</style></svg>"##
+            ),
+            ["style"]
+        );
+    }
+
+    #[test]
+    fn style_text_in_a_cdata_section_is_rewritten() {
+        let source = r##"<svg xmlns="http://www.w3.org/2000/svg"><style><![CDATA[ .a { fill: color(display-p3 1 0 0); } ]]></style></svg>"##;
+        let rewritten = rewrite(source).unwrap();
+        assert!(
+            rewritten.contains("<![CDATA[ .a { fill: #FF0000; } ]]>"),
+            "{rewritten}"
+        );
+        assert!(unresolved(source).is_empty());
+    }
+
+    #[test]
+    fn a_comment_opening_inside_a_string_hides_nothing() {
+        let source = r##"<svg xmlns="http://www.w3.org/2000/svg"><style>path { font-family: "a/*b"; fill: color(srgb 1 0 0); }</style></svg>"##;
+        let rewritten = rewrite(source).unwrap();
+        assert!(rewritten.contains("fill: #FF0000;"), "{rewritten}");
+    }
+
+    #[test]
+    fn resolved_colors_and_other_attributes_are_not_reported() {
+        for source in [
+            r##"<svg xmlns="http://www.w3.org/2000/svg"><path style="fill:color(srgb 1 0 0);stroke:color(display-p3 0 1 0)"/></svg>"##,
+            r##"<svg xmlns="http://www.w3.org/2000/svg" data-x="color(rec2020 1 0 0)"/>"##,
+            r##"<svg xmlns="http://www.w3.org/2000/svg"><path fill="#6C707E" stroke="currentColor"/></svg>"##,
+            // Comments paint nothing.
+            r##"<svg xmlns="http://www.w3.org/2000/svg"><style>/* color(rec2020 1 0 0) */ path { fill: #FF0000; }</style></svg>"##,
+            r##"<svg xmlns="http://www.w3.org/2000/svg"><path style="/* color(lab 50 20 30) */fill:#FF0000"/></svg>"##,
+            // Neither do strings.
+            r##"<svg xmlns="http://www.w3.org/2000/svg"><style>text { font-family: "color(rec2020 1 0 0)"; }</style></svg>"##,
+        ] {
+            assert!(unresolved(source).is_empty(), "{source}");
+        }
     }
 
     #[test]

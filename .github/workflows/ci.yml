@@ -53,3 +53,7 @@ jobs:
           fi
       - name: Build for WebAssembly
         run: cargo check --locked --target wasm32-unknown-unknown
+      # The binding's tests compare its results with the native API. They run
+      # natively; `cargo check` above never compiles them.
+      - name: Test the binding
+        run: cargo test --locked

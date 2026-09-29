@@ -399,6 +399,31 @@ fn color_functions_that_cannot_resolve_are_rejected_not_painted_black() {
 }
 
 #[test]
+fn notification_icons_whiten_color_functions_that_cannot_resolve() {
+    // A notification icon is repainted white, so the hue the parser drops
+    // does not matter there.
+    let source = r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <path d="M2 2H22V22H2Z" fill="color(rec2020 1 0 0)"/>
+    </svg>"##;
+    let asset = vdtoolkit::convert_as_with_options(
+        source.as_bytes(),
+        vdtoolkit::IconKind::Notification,
+        vdtoolkit::Fit::contain(24.0),
+        false,
+    )
+    .unwrap();
+    assert!(
+        !asset
+            .analysis
+            .diagnostics
+            .iter()
+            .any(|diagnostic| matches!(diagnostic.code, DiagnosticCode::UnsupportedPaint))
+    );
+    let xml = asset.to_xml();
+    assert!(xml.contains(r##"android:fillColor="#FFFFFF""##), "{xml}");
+}
+
+#[test]
 fn stroke_transform_checks_hold_when_a_large_viewbox_is_scaled_down() {
     // A 960-unit viewBox drawn at 24dp scales everything by 0.025, which
     // shrinks the skew and uneven scale below any absolute tolerance.

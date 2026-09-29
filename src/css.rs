@@ -161,17 +161,21 @@ fn cdata_content(source: &str, range: std::ops::Range<usize>) -> std::ops::Range
 }
 
 /// Byte indexes where a `color()` function starts in `value`, outside CSS
-/// comments, which paint nothing.
+/// comments, which paint nothing, and quoted strings, which are not colors.
 fn function_starts(value: &str) -> impl Iterator<Item = usize> + '_ {
-    let mut comment_end = 0;
+    let mut skip_to = 0;
     value.char_indices().filter_map(move |(start, character)| {
-        if start < comment_end {
+        if start < skip_to {
             return None;
         }
         if value[start..].starts_with("/*") {
-            comment_end = value[start + 2..]
+            skip_to = value[start + 2..]
                 .find("*/")
                 .map_or(value.len(), |end| start + 2 + end + 2);
+            return None;
+        }
+        if character == '"' || character == '\'' {
+            skip_to = string_end(value, start, character);
             return None;
         }
         let function = (character == 'c' || character == 'C')
@@ -185,6 +189,23 @@ fn function_starts(value: &str) -> impl Iterator<Item = usize> + '_ {
             });
         function.then_some(start)
     })
+}
+
+/// Byte index just past the CSS string opening with `quote` at `start`. A
+/// string ends at its closing quote, or unclosed at the end of the line.
+fn string_end(value: &str, start: usize, quote: char) -> usize {
+    let mut escaped = false;
+    for (offset, character) in value[start + 1..].char_indices() {
+        let index = start + 1 + offset;
+        match character {
+            _ if escaped => escaped = false,
+            '\\' => escaped = true,
+            '\n' => return index,
+            _ if character == quote => return index + 1,
+            _ => {}
+        }
+    }
+    value.len()
 }
 
 /// Replace the `color()` functions in one value. `None` when it has none, or
@@ -368,6 +389,13 @@ mod tests {
     }
 
     #[test]
+    fn a_comment_opening_inside_a_string_hides_nothing() {
+        let source = r##"<svg xmlns="http://www.w3.org/2000/svg"><style>path { font-family: "a/*b"; fill: color(srgb 1 0 0); }</style></svg>"##;
+        let rewritten = rewrite(source).unwrap();
+        assert!(rewritten.contains("fill: #FF0000;"), "{rewritten}");
+    }
+
+    #[test]
     fn resolved_colors_and_other_attributes_are_not_reported() {
         for source in [
             r##"<svg xmlns="http://www.w3.org/2000/svg"><path style="fill:color(srgb 1 0 0);stroke:color(display-p3 0 1 0)"/></svg>"##,
@@ -376,6 +404,8 @@ mod tests {
             // Comments paint nothing.
             r##"<svg xmlns="http://www.w3.org/2000/svg"><style>/* color(rec2020 1 0 0) */ path { fill: #FF0000; }</style></svg>"##,
             r##"<svg xmlns="http://www.w3.org/2000/svg"><path style="/* color(lab 50 20 30) */fill:#FF0000"/></svg>"##,
+            // Neither do strings.
+            r##"<svg xmlns="http://www.w3.org/2000/svg"><style>text { font-family: "color(rec2020 1 0 0)"; }</style></svg>"##,
         ] {
             assert!(unresolved(source).is_empty(), "{source}");
         }

@@ -55,7 +55,10 @@ pub(crate) fn process_as(
             suggestion: None,
         });
     }
-    if let Some(location) = resolved.unresolved.first() {
+    // A notification icon is repainted white, so the hue of a color() the
+    // parser drops is lost there anyway.
+    let notification = kind == Some(crate::IconKind::Notification);
+    if let Some(location) = resolved.unresolved.first().filter(|_| !notification) {
         push_unsupported(
             &mut compatibility,
             &mut diagnostics,
@@ -80,7 +83,7 @@ pub(crate) fn process_as(
     let mut metrics = Metrics::default();
     let mut options = vector::LowerOptions {
         allow_approximate,
-        notification: (kind == Some(crate::IconKind::Notification)).then(Default::default),
+        notification: notification.then(Default::default),
     };
     let drawable = vector::lower(
         &tree,

@@ -421,6 +421,30 @@ fn notification_icons_whiten_color_functions_that_cannot_resolve() {
     );
     let xml = asset.to_xml();
     assert!(xml.contains(r##"android:fillColor="#FFFFFF""##), "{xml}");
+    // A stroke that would vanish, or an opacity that would be lost, is not
+    // whitened back.
+    for paint in [
+        r#"fill="none" stroke="color(rec2020 1 0 0)" stroke-width="2""#,
+        r#"fill="color(rec2020 1 0 0 / 0.5)""#,
+    ] {
+        let source = format!(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+                <path d="M2 2H22V22H2Z" {paint}/>
+            </svg>"##
+        );
+        assert!(
+            matches!(
+                vdtoolkit::convert_as_with_options(
+                    source.as_bytes(),
+                    vdtoolkit::IconKind::Notification,
+                    vdtoolkit::Fit::contain(24.0),
+                    false,
+                ),
+                Err(Error::Incompatible(_))
+            ),
+            "{paint}"
+        );
+    }
 }
 
 #[test]

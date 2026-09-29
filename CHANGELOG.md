@@ -53,7 +53,8 @@ follow [Semantic Versioning](https://semver.org/).
   than sRGB, linear sRGB, and Display P3, and values spelled with character
   references. `color()` in a `<style>` element's CDATA section is now
   resolved like any other, and `color()` inside a CSS comment or string is
-  ignored. Notification icons are exempt, since they are repainted white.
+  ignored. A notification icon, repainted white, still whitens an opaque
+  fill as before; only a stroke or an opacity it would lose is rejected.
 - `convert`, `optimize`, and `notification` with one input write into the
   directory `-o` names when it exists or ends in a separator. Previously
   `-o res/drawable-anydpi/` wrote a file named `res/drawable_anydpi`.

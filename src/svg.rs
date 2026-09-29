@@ -55,10 +55,17 @@ pub(crate) fn process_as(
             suggestion: None,
         });
     }
-    // A notification icon is repainted white, so the hue of a color() the
-    // parser drops is lost there anyway.
+    // A notification icon is repainted white, so the hue of an opaque fill
+    // the parser drops is lost there anyway. A dropped stroke or opacity is
+    // not.
     let notification = kind == Some(crate::IconKind::Notification);
-    if let Some(location) = resolved.unresolved.first().filter(|_| !notification) {
+    let unresolved: Vec<&ElementLocation> = resolved
+        .unresolved
+        .iter()
+        .filter(|unresolved| !(notification && unresolved.opaque_fill))
+        .map(|unresolved| &unresolved.location)
+        .collect();
+    if let Some(location) = unresolved.first() {
         push_unsupported(
             &mut compatibility,
             &mut diagnostics,
@@ -66,12 +73,12 @@ pub(crate) fn process_as(
             &format!(
                 "{} a color() function that cannot be resolved to sRGB, so the \
                  color would be dropped along with its fallback",
-                match resolved.unresolved.len() {
+                match unresolved.len() {
                     1 => "an element's paint uses".to_owned(),
                     count => format!("{count} elements' paint use"),
                 }
             ),
-            Some(location.clone()),
+            Some((*location).clone()),
             "Write the color as sRGB hex, or as color() in srgb, srgb-linear, or \
              display-p3 spelled without character references.",
         );

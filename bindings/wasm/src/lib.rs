@@ -89,6 +89,13 @@ export type ConvertResult =
   | { ok: false; error: VdtoolkitError };
 "#;
 
+/// Send a panic's message and location to `console.error` when the module
+/// starts, so a crash shows more than `RuntimeError: unreachable`.
+#[wasm_bindgen(start)]
+fn start() {
+    console_error_panic_hook::set_once();
+}
+
 /// Analyze SVG bytes and return a structured JavaScript result.
 #[wasm_bindgen(js_name = analyzeSvg, skip_typescript)]
 pub fn analyze_svg(source: &[u8], allow_approximate: Option<bool>) -> JsValue {

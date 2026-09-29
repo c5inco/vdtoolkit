@@ -55,12 +55,7 @@ pub(crate) fn process_as(
             suggestion: None,
         });
     }
-    let tree = usvg::Tree::from_data(
-        resolved.source.as_deref().map_or(source, str::as_bytes),
-        &options,
-    )?;
-    let painted = resolved.painted(text, &tree, &options);
-    if let Some(location) = painted.first() {
+    if let Some(location) = resolved.unresolved.first() {
         push_unsupported(
             &mut compatibility,
             &mut diagnostics,
@@ -68,7 +63,7 @@ pub(crate) fn process_as(
             &format!(
                 "{} a color() function that cannot be resolved to sRGB, so the \
                  color would be dropped along with its fallback",
-                match painted.len() {
+                match resolved.unresolved.len() {
                     1 => "an element's paint uses".to_owned(),
                     count => format!("{count} elements' paint use"),
                 }
@@ -78,6 +73,10 @@ pub(crate) fn process_as(
              display-p3 spelled without character references.",
         );
     }
+    let tree = usvg::Tree::from_data(
+        resolved.source.as_deref().map_or(source, str::as_bytes),
+        &options,
+    )?;
     let mut metrics = Metrics::default();
     let mut options = vector::LowerOptions {
         allow_approximate,

@@ -167,7 +167,9 @@ becomes, with `--pretty` (by default the same XML is written on one line):
 
 ## Using with AI agents
 
-[`skills/vdt/SKILL.md`](skills/vdt/SKILL.md) is an agent skill. With `vdt` and the skill installed, agents inspect SVGs, choose `--fit` from diagnostics, and generate drawables with `vdt` instead of writing VectorDrawable XML by hand.
+`vdt guide` prints the workflow and a page for each kind of icon (`adaptive`, `notification`, `drawables`, `diagnostics`, `ci`); `vdt explain VDT019` explains a diagnostic code, and `vdt explain` lists them all. The guidance is compiled into the binary, so it always matches the installed version and any agent with a shell can read it.
+
+[`skills/vdt/SKILL.md`](skills/vdt/SKILL.md) is a short agent skill: it tells agents to use `vdt` instead of writing VectorDrawable XML by hand, points them at `vdt guide`, and sets the rules (inspect first; ask before changing artwork or deleting resources). [tools/eval-guide](tools/eval-guide) compares agents using the guide with agents using the longer skill it replaced.
 
 ## WebAssembly and Figma
 
@@ -181,7 +183,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-Behavior is checked against AOSP's `Svg2Vector` ([docs/research.md](docs/research.md)); see [docs/v1-acceptance.md](docs/v1-acceptance.md) for the Android renderer harness and [docs/releasing.md](docs/releasing.md) for the release checklist. Update [skills/vdt/SKILL.md](skills/vdt/SKILL.md) whenever CLI flags change (`cargo test` verifies skill coverage).
+Behavior is checked against AOSP's `Svg2Vector` ([docs/research.md](docs/research.md)); see [docs/v1-acceptance.md](docs/v1-acceptance.md) for the Android renderer harness and [docs/releasing.md](docs/releasing.md) for the release checklist. When a command, flag, or diagnostic changes, update [src/guide/](src/guide) and [skills/vdt/SKILL.md](skills/vdt/SKILL.md); `cargo test` fails while either names a command or flag `vdt` lacks, or a diagnostic code has no `vdt explain` entry.
 
 ## License
 

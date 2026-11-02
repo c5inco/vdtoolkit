@@ -8,6 +8,12 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `vdt guide [topic]` prints usage guidance compiled into the binary: the
+  workflow, and pages for `adaptive`, `notification`, `drawables`,
+  `diagnostics`, and `ci`. `vdt explain <code>` explains a diagnostic code
+  such as `VDT019` in depth, and `vdt explain` lists every code. `vdt --help`
+  points to both.
+
 - `adaptive --legacy` writes its API 21–23 density fallbacks as lossless WebP
   instead of PNG when the composed icon needs API 24. The files decode to the
   renderer's exact RGBA pixels, are deterministic, and replace generated PNGs
@@ -29,6 +35,10 @@ follow [Semantic Versioning](https://semver.org/).
   blocking conversion.
 
 ### Changed
+
+- The agent skill in `skills/vdt/SKILL.md` is now a short entry point that
+  sends the agent to `vdt guide` and `vdt explain`, so its guidance always
+  matches the installed binary.
 
 - Diagnostic codes use the `VDT` prefix. `VDT001` is the same finding
   `SVGVD001` was, through `VDT026`. `inspect`, generator warnings, JSON

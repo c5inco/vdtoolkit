@@ -1,10 +1,31 @@
-//! Keeps the agent skill in `skills/vdt/SKILL.md` in step with the command
-//! line: every command and flag it names must exist in `vdt --help`.
+//! Keeps the agent skill in `skills/vdt/SKILL.md` and the pages of `vdt guide`
+//! in step with the command line: every command and flag they name must exist
+//! in `vdt --help`, every guide topic they name must exist, and every
+//! diagnostic code must have a `vdt explain` entry.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::process::Command;
 
 const SKILL: &str = include_str!("../skills/vdt/SKILL.md");
+
+/// Every page `vdt guide` and `vdt explain` print, by file name.
+const GUIDE: [(&str, &str); 7] = [
+    ("workflow.md", include_str!("../src/guide/workflow.md")),
+    ("adaptive.md", include_str!("../src/guide/adaptive.md")),
+    (
+        "notification.md",
+        include_str!("../src/guide/notification.md"),
+    ),
+    ("drawables.md", include_str!("../src/guide/drawables.md")),
+    (
+        "diagnostics.md",
+        include_str!("../src/guide/diagnostics.md"),
+    ),
+    ("ci.md", include_str!("../src/guide/ci.md")),
+    ("codes.md", include_str!("../src/guide/codes.md")),
+];
+
+const ANALYSIS: &str = include_str!("../src/analysis.rs");
 
 fn help(command: Option<&str>) -> String {
     let output = Command::new(env!("CARGO_BIN_EXE_vdt"))
@@ -119,6 +140,74 @@ fn skill_names_only_commands_and_flags_vdt_has() {
         "skills/vdt/SKILL.md is out of date with `vdt --help`:\n{}",
         problems.join("\n")
     );
+}
+
+#[test]
+fn guide_names_only_commands_and_flags_vdt_has() {
+    let known = known_flags();
+    let problems: Vec<_> = GUIDE
+        .iter()
+        .flat_map(|(name, page)| {
+            unknown(page, &known)
+                .into_iter()
+                .map(move |problem| format!("src/guide/{name}: {problem}"))
+        })
+        .collect();
+    assert!(
+        problems.is_empty(),
+        "the guide is out of date with `vdt --help`:\n{}",
+        problems.join("\n")
+    );
+}
+
+#[test]
+fn guide_topics_named_anywhere_exist() {
+    let pages = GUIDE.iter().map(|(_, page)| *page).chain([SKILL]);
+    let mut topics = BTreeSet::new();
+    for page in pages {
+        for line in command_lines(page) {
+            if let Some(topic) = line.strip_prefix("vdt guide ") {
+                topics.insert(topic.split_whitespace().next().unwrap().to_owned());
+            }
+        }
+    }
+    assert!(topics.len() >= 5, "found only {topics:?}");
+    for topic in topics {
+        let output = Command::new(env!("CARGO_BIN_EXE_vdt"))
+            .args(["guide", &topic])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "`vdt guide {topic}` failed");
+        assert!(!output.stdout.is_empty());
+    }
+}
+
+/// `VDTnnn` codes in `text` that directly follow `prefix`.
+fn codes(text: &str, prefix: &str) -> BTreeSet<String> {
+    text.split(prefix)
+        .skip(1)
+        .filter_map(|rest| rest.get(..6))
+        .filter(|code| code.starts_with("VDT") && code[3..].bytes().all(|b| b.is_ascii_digit()))
+        .map(str::to_owned)
+        .collect()
+}
+
+#[test]
+fn every_diagnostic_code_has_an_explanation() {
+    let defined = codes(ANALYSIS, "#[serde(rename = \"");
+    let explained = codes(GUIDE[6].1, "\n## ");
+    assert_eq!(defined.len(), 26, "expected VDT001 through VDT026");
+    assert_eq!(
+        defined, explained,
+        "src/guide/codes.md and DiagnosticCode differ"
+    );
+    for code in &defined {
+        let output = Command::new(env!("CARGO_BIN_EXE_vdt"))
+            .args(["explain", code])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "`vdt explain {code}` failed");
+    }
 }
 
 #[test]

@@ -11,8 +11,15 @@ use vdtoolkit::{
 };
 use walkdir::WalkDir;
 
+mod guide;
+
 #[derive(Parser)]
-#[command(name = "vdt", version, about)]
+#[command(
+    name = "vdt",
+    version,
+    about,
+    after_help = "New to vdt? `vdt guide` explains the workflow. `vdt explain VDT019` explains a diagnostic code."
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -32,6 +39,23 @@ enum Command {
     Adaptive(AdaptiveArgs),
     /// Convert SVG files to white 24dp notification icon drawables.
     Notification(NotificationArgs),
+    /// Explain how to use vdt: the workflow, each kind of icon, diagnostics.
+    Guide(GuideArgs),
+    /// Explain a diagnostic code such as VDT019, or list every code.
+    Explain(ExplainArgs),
+}
+
+#[derive(Args)]
+struct GuideArgs {
+    /// Page to show. Defaults to the workflow, which links the others.
+    #[arg(value_enum)]
+    topic: Option<guide::Topic>,
+}
+
+#[derive(Args)]
+struct ExplainArgs {
+    /// Diagnostic code, such as VDT019. Omit it to list every code.
+    code: Option<String>,
 }
 
 #[derive(Args)]
@@ -374,7 +398,15 @@ fn normalized_args() -> Vec<OsString> {
         .is_some_and(|first| {
             !matches!(
                 first,
-                "convert" | "check" | "inspect" | "optimize" | "adaptive" | "notification"
+                "convert"
+                    | "check"
+                    | "inspect"
+                    | "optimize"
+                    | "adaptive"
+                    | "notification"
+                    | "guide"
+                    | "explain"
+                    | "help"
             ) && !first.starts_with('-')
         })
     {
@@ -391,7 +423,26 @@ fn run(cli: Cli) -> Result<Outcome> {
         Command::Inspect(args) => report(args, true),
         Command::Adaptive(args) => adaptive(args),
         Command::Notification(args) => notification(args),
+        Command::Guide(args) => {
+            print!("{}", args.topic.unwrap_or(guide::Topic::Workflow).page());
+            Ok(Outcome::Passed)
+        }
+        Command::Explain(args) => explain(args),
     }
+}
+
+fn explain(args: ExplainArgs) -> Result<Outcome> {
+    let Some(code) = args.code else {
+        print!("{}", guide::index());
+        return Ok(Outcome::Passed);
+    };
+    let text = guide::explain(&code).ok_or_else(|| {
+        Error::InvalidInput(format!(
+            "no diagnostic code {code}; `vdt explain` lists every code"
+        ))
+    })?;
+    print!("{text}");
+    Ok(Outcome::Passed)
 }
 
 fn notification(args: NotificationArgs) -> Result<Outcome> {

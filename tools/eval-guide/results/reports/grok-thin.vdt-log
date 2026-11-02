@@ -1,0 +1,27 @@
+--version
+guide
+guide adaptive
+guide notification
+guide drawables
+guide diagnostics
+inspect design/logo.svg --as adaptive-foreground --fit 66 --format json
+inspect design/logo.svg --as adaptive-monochrome --fit 66 --format json
+inspect design/bell.svg --as notification --format json
+inspect design/hero.svg --format json
+inspect design/logo.svg --as adaptive-foreground --fit 50 --format json
+inspect design/bell.svg --as notification --fit 20 --format json
+explain VDT019
+explain VDT002
+explain VDT006
+explain VDT013
+explain VDT003
+explain VDT016
+explain VDT021
+explain VDT011
+explain VDT004
+adaptive --help
+notification --help
+optimize --help
+convert --help
+adaptive --foreground design/logo.svg --background-color #1E88E5 --monochrome design/logo.svg --fit 50 --legacy --optimize -o app/src/main/res
+notification design/bell.svg --fit 20 --optimize -o app/src/main/res/drawable-anydpi/ic_stat_bell.xml

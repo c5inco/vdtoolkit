@@ -1,0 +1,18 @@
+--help
+--version
+adaptive --help
+notification --help
+convert --help
+inspect --help
+inspect design/logo.svg --as adaptive-foreground --fit 66 --format json
+inspect design/logo.svg --as adaptive-foreground --fit 108 --format json
+inspect design/bell.svg --as notification --format json
+inspect design/bell.svg --as notification --fit 20 --format json
+inspect design/hero.svg --format json
+check design/hero.svg --format json
+inspect design/logo.svg --as adaptive-foreground --fit 50 --format json
+inspect design/logo.svg --as adaptive-foreground --fit 49 --format json
+inspect design/logo.svg --as adaptive-foreground --fit 47 --format json
+adaptive --foreground design/logo.svg --background-color #1E88E5 --monochrome design/logo.svg --fit 50 --legacy -o app/src/main/res
+notification design/bell.svg --fit 20 -o app/src/main/res/drawable-anydpi/ic_stat_bell.xml
+convert design/hero.svg --allow-approximate -o app/src/main/res/drawable-anydpi/onboarding_hero.xml

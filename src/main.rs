@@ -39,6 +39,8 @@ enum Command {
     Adaptive(AdaptiveArgs),
     /// Convert SVG files to white 24dp notification icon drawables.
     Notification(NotificationArgs),
+    /// Convert SVG files to Compose ImageVector Kotlin source.
+    Compose(ComposeArgs),
     /// Explain how to use vdt: the workflow, each kind of icon, diagnostics.
     Guide(GuideArgs),
     /// Explain a diagnostic code such as VDT019, or list every code.
@@ -79,6 +81,37 @@ struct ConvertArgs {
     /// Keep readable indentation and line breaks instead of compact XML.
     #[arg(long)]
     pretty: bool,
+}
+
+#[derive(Args)]
+struct ComposeArgs {
+    /// SVG file or directory to convert.
+    input: PathBuf,
+    /// Output Kotlin file or directory. Required for directory input.
+    #[arg(short, long)]
+    output: Option<PathBuf>,
+    /// Kotlin name of the generated property, and of the file when the output
+    /// is a directory. Defaults to the input's file name in PascalCase.
+    #[arg(long, value_name = "NAME")]
+    name: Option<String>,
+    /// Kotlin package of the generated file. Without it the property lands in
+    /// the default package, which no other package can import.
+    #[arg(long, value_name = "PACKAGE")]
+    package: Option<String>,
+    /// Size in dp of the vector's longer side; the other side keeps the
+    /// aspect ratio and the drawing is unchanged. Defaults to the SVG's width
+    /// and height, or 24 for an SVG with only a viewBox larger than 200.
+    #[arg(long, value_name = "DP")]
+    size: Option<f32>,
+    /// Shorten numbers where it cannot change rendering, as `optimize` does.
+    #[arg(long)]
+    optimize: bool,
+    /// Reject SVGs that require safe normalization.
+    #[arg(long)]
+    strict: bool,
+    /// Allow lossy lowering for constructs Compose cannot draw exactly.
+    #[arg(long)]
+    allow_approximate: bool,
 }
 
 #[derive(Args)]
@@ -404,6 +437,7 @@ fn normalized_args() -> Vec<OsString> {
                     | "optimize"
                     | "adaptive"
                     | "notification"
+                    | "compose"
                     | "guide"
                     | "explain"
                     | "help"
@@ -423,6 +457,7 @@ fn run(cli: Cli) -> Result<Outcome> {
         Command::Inspect(args) => report(args, true),
         Command::Adaptive(args) => adaptive(args),
         Command::Notification(args) => notification(args),
+        Command::Compose(args) => compose(args),
         Command::Guide(args) => {
             print!("{}", args.topic.unwrap_or(guide::Topic::Workflow).page());
             Ok(Outcome::Passed)
@@ -459,7 +494,13 @@ fn notification(args: NotificationArgs) -> Result<Outcome> {
             args.fit
         )));
     }
-    let outputs = plan_outputs(&args.input, &inputs, args.output.as_deref());
+    let outputs = plan_outputs(
+        &args.input,
+        &inputs,
+        args.output.as_deref(),
+        RESOURCE_NAMING,
+        None,
+    );
     let mut failures = 0;
     for (input, output) in inputs.iter().zip(outputs) {
         if let Err(error) = output.and_then(|output| notification_one(&args, input, output)) {
@@ -504,6 +545,125 @@ fn notification_one(args: &NotificationArgs, input: &Path, output: Option<Output
         None => print!("{xml}"),
     }
     Ok(())
+}
+
+/// Convert SVG files to Kotlin that builds Compose `ImageVector`s.
+fn compose(args: ComposeArgs) -> Result<Outcome> {
+    let inputs = inputs(&args.input)?;
+    if args.input.is_dir() && args.output.is_none() {
+        return Err(Error::InvalidInput(
+            "directory conversion requires an output directory".to_owned(),
+        ));
+    }
+    if args.name.is_some() && args.input.is_dir() {
+        return Err(Error::InvalidInput(
+            "--name names one ImageVector, and a directory writes one per SVG; rename the files \
+             instead, or convert them one at a time"
+                .to_owned(),
+        ));
+    }
+    if let Some(name) = args
+        .name
+        .as_deref()
+        .filter(|name| !vdtoolkit::is_kotlin_name(name))
+    {
+        return Err(Error::InvalidInput(format!(
+            "--name must match [A-Za-z_][A-Za-z0-9_]* and not be a Kotlin keyword, got {name:?}"
+        )));
+    }
+    if let Some(size) = args.size.filter(|size| !(size.is_finite() && *size > 0.0)) {
+        return Err(Error::InvalidInput(format!(
+            "--size must be a positive number of dp, got {size}"
+        )));
+    }
+    if let Some(package) = args.package.as_deref().and_then(|package| {
+        package
+            .split('.')
+            .find(|part| !vdtoolkit::is_kotlin_name(part))
+    }) {
+        return Err(Error::InvalidInput(format!(
+            "--package must be dot-separated Kotlin identifiers and not a keyword, got {package:?}"
+        )));
+    }
+    let outputs = plan_outputs(
+        &args.input,
+        &inputs,
+        args.output.as_deref(),
+        KOTLIN_NAMING,
+        args.name.as_deref(),
+    );
+    // One package holds one property per name, so two SVGs of a directory run
+    // that derive the same name would become a duplicate declaration even when
+    // their files land in different directories. Nothing is written until
+    // every name is known to be its own.
+    let mut names: HashMap<String, &Path> = HashMap::new();
+    for (input, output) in inputs.iter().zip(&outputs) {
+        let Ok(Some(output)) = output else {
+            continue;
+        };
+        let name = stem_of(Some(&output.path), input);
+        if let Some(first) = names.insert(name.clone(), input) {
+            return Err(Error::InvalidInput(format!(
+                "{}: {name} is already the Kotlin name of {}; two ImageVectors in one package \
+                 cannot share a name, so rename one of the SVGs",
+                input.display(),
+                first.display()
+            )));
+        }
+    }
+    let mut failures = 0;
+    for (input, output) in inputs.iter().zip(outputs) {
+        if let Err(error) = output.and_then(|output| compose_one(&args, input, output)) {
+            print_error(Some(input), &error);
+            failures += 1;
+        }
+    }
+    if failures > 0 && inputs.len() > 1 {
+        eprintln!("{failures} of {} SVGs failed", inputs.len());
+    }
+    Ok(if failures == 0 {
+        Outcome::Passed
+    } else {
+        Outcome::Failed
+    })
+}
+
+fn compose_one(args: &ComposeArgs, input: &Path, output: Option<Output>) -> Result<()> {
+    let mut asset = vdtoolkit::convert_file_with_options(input, args.allow_approximate)
+        .map_err(hint_raster_convert)?;
+    if args.strict && asset.analysis.compatibility != Compatibility::Exact {
+        return Err(Error::InvalidInput(
+            "requires normalization and was rejected by --strict".to_owned(),
+        ));
+    }
+    apply_size(args.size, &mut asset, input)?;
+    print_findings(input, &asset.analysis);
+    print_size_hint(args.size, &asset);
+    if args.optimize {
+        asset.optimize();
+    }
+    let name = match &args.name {
+        Some(name) => name.clone(),
+        // The file was planned under its Kotlin name, so the property is named
+        // after the file it is written in; to stdout, after the SVG.
+        None => kotlin_name(&stem_of(output.as_ref().map(|output| &output.path), input))?,
+    };
+    let kotlin = asset.to_kotlin(&name, args.package.as_deref());
+    match output {
+        Some(output) => output.write(input, &kotlin)?,
+        None => print!("{kotlin}"),
+    }
+    Ok(())
+}
+
+/// The file name a single output derives its Kotlin name from: the file that
+/// is written, or the SVG when the Kotlin goes to stdout.
+fn stem_of(output: Option<&PathBuf>, input: &Path) -> String {
+    output
+        .map_or(input, PathBuf::as_path)
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 /// Print a converted file's warnings, and the flattening note a notification
@@ -1057,6 +1217,16 @@ fn resource_name(stem: &str) -> Result<String> {
     })
 }
 
+/// [`vdtoolkit::kotlin_name`], failing when the name has no letters or digits
+/// to keep.
+fn kotlin_name(stem: &str) -> Result<String> {
+    vdtoolkit::kotlin_name(stem).ok_or_else(|| {
+        Error::InvalidInput(format!(
+            "cannot make a Kotlin name from {stem:?}; use letters or digits in the file name"
+        ))
+    })
+}
+
 fn normalize_color(color: &str) -> Result<String> {
     let digits = color.strip_prefix('#').unwrap_or(color);
     if matches!(digits.len(), 6 | 8) && digits.chars().all(|c| c.is_ascii_hexdigit()) {
@@ -1093,7 +1263,13 @@ fn convert(args: ConvertArgs, optimize: bool) -> Result<Outcome> {
             "--size must be a positive number of dp, got {size}"
         )));
     }
-    let outputs = plan_outputs(&args.input, &inputs, args.output.as_deref());
+    let outputs = plan_outputs(
+        &args.input,
+        &inputs,
+        args.output.as_deref(),
+        RESOURCE_NAMING,
+        None,
+    );
     let mut failures = 0;
     for (input, output) in inputs.iter().zip(outputs) {
         if let Err(error) = output.and_then(|output| convert_one(&args, input, output, optimize)) {
@@ -1124,25 +1300,7 @@ fn convert_one(
             "requires normalization and was rejected by --strict".to_owned(),
         ));
     }
-    if let Some(size) = args.size {
-        asset.set_size(size)?;
-    } else if !asset.has_declared_size() && is_large(&asset.analysis) {
-        // Without width and height the viewBox units become dp, and a viewBox
-        // this large is a drawing grid, such as Material Symbols' 960, rather
-        // than an intended size.
-        let metrics = &asset.analysis.metrics;
-        let viewbox = (metrics.viewport_width, metrics.viewport_height);
-        asset.set_size(DEFAULT_ICON_SIZE)?;
-        let metrics = &asset.analysis.metrics;
-        eprintln!(
-            "note: {}: no width or height and a {}×{} viewBox, so it is drawn at {}×{}dp; pass --size to choose",
-            input.display(),
-            viewbox.0,
-            viewbox.1,
-            metrics.width,
-            metrics.height
-        );
-    }
+    apply_size(args.size, &mut asset, input)?;
     for diagnostic in &asset.analysis.diagnostics {
         if matches!(diagnostic.severity, Severity::Warning) {
             eprintln!(
@@ -1153,11 +1311,7 @@ fn convert_one(
             );
         }
     }
-    if args.size.is_none() && is_large(&asset.analysis) {
-        eprintln!(
-            "hint: pass --size {DEFAULT_ICON_SIZE} to draw it at {DEFAULT_ICON_SIZE}dp; the drawing is unchanged"
-        );
-    }
+    print_size_hint(args.size, &asset);
     let generated_bytes = asset_xml(&asset, args.pretty).len();
     if optimize {
         asset.optimize();
@@ -1188,6 +1342,44 @@ fn convert_one(
 /// Size in dp of a Material icon, used for an SVG whose only size is a large
 /// viewBox.
 const DEFAULT_ICON_SIZE: f32 = 24.0;
+
+/// Apply `--size`, or draw an SVG whose only size is a large viewBox at
+/// [`DEFAULT_ICON_SIZE`], and report what that chose.
+///
+/// Without width and height the viewBox units become dp, and a viewBox this
+/// large is a drawing grid, such as Material Symbols' 960, rather than an
+/// intended size.
+fn apply_size(size: Option<f32>, asset: &mut Asset, input: &Path) -> Result<()> {
+    if let Some(size) = size {
+        return asset.set_size(size);
+    }
+    if asset.has_declared_size() || !is_large(&asset.analysis) {
+        return Ok(());
+    }
+    let metrics = &asset.analysis.metrics;
+    let viewbox = (metrics.viewport_width, metrics.viewport_height);
+    asset.set_size(DEFAULT_ICON_SIZE)?;
+    let metrics = &asset.analysis.metrics;
+    eprintln!(
+        "note: {}: no width or height and a {}×{} viewBox, so it is drawn at {}×{}dp; pass --size to choose",
+        input.display(),
+        viewbox.0,
+        viewbox.1,
+        metrics.width,
+        metrics.height
+    );
+    Ok(())
+}
+
+/// Tell the user the drawing is large and how to draw it smaller, which
+/// changes the size it is drawn at and not the drawing itself.
+fn print_size_hint(size: Option<f32>, asset: &Asset) {
+    if size.is_none() && is_large(&asset.analysis) {
+        eprintln!(
+            "hint: pass --size {DEFAULT_ICON_SIZE} to draw it at {DEFAULT_ICON_SIZE}dp; the drawing is unchanged"
+        );
+    }
+}
 
 /// Whether the analysis carries the warning for a drawable larger than
 /// Android recommends.
@@ -1517,18 +1709,20 @@ fn is_jpeg(path: &Path) -> bool {
 }
 
 /// Where a converted file is written, and the name it would have had when
-/// that is not a valid Android resource name.
+/// that is not a valid name for the target.
 struct Output {
     path: PathBuf,
-    renamed_from: Option<String>,
+    /// The requested stem and the kind of name it had to become, printed
+    /// after the file is written.
+    renamed_from: Option<(String, &'static str)>,
 }
 
 impl Output {
     fn write(&self, input: &Path, contents: &str) -> Result<()> {
         write_file(&self.path, contents)?;
-        if let Some(requested) = &self.renamed_from {
+        if let Some((requested, what)) = &self.renamed_from {
             eprintln!(
-                "note: {}: written as {} because {requested:?} is not a valid Android resource name",
+                "note: {}: written as {} because {requested:?} is not a valid {what}",
                 input.display(),
                 self.path.display()
             );
@@ -1537,13 +1731,46 @@ impl Output {
     }
 }
 
-/// Plan every input's output up front with a valid Android resource name, so
-/// an input whose name is already taken fails instead of overwriting the
-/// earlier file. `None` writes to stdout.
+/// How a conversion target names the files it writes.
+#[derive(Clone, Copy)]
+struct Naming {
+    /// The name a source file stem becomes, which is also the name inside the
+    /// file: an Android resource name, or a Kotlin name.
+    name: fn(&str) -> Result<String>,
+    /// Whether a stem is already a valid name for this target, which decides
+    /// whether a name that changed is worth reporting.
+    valid: fn(&str) -> bool,
+    /// Extension of the files written, unless `-o` names one.
+    extension: &'static str,
+    /// What the name has to be, named in the note about a renamed file.
+    what: &'static str,
+}
+
+/// Android resource naming, for `convert`, `optimize`, and `notification`.
+const RESOURCE_NAMING: Naming = Naming {
+    name: resource_name,
+    valid: vdtoolkit::is_resource_name,
+    extension: "xml",
+    what: "Android resource name",
+};
+
+/// Kotlin naming, for `compose`.
+const KOTLIN_NAMING: Naming = Naming {
+    name: kotlin_name,
+    valid: vdtoolkit::is_kotlin_name,
+    extension: "kt",
+    what: "Kotlin name",
+};
+
+/// Plan every input's output up front with a valid target name, so an input
+/// whose name is already taken fails instead of overwriting the earlier file.
+/// `None` writes to stdout.
 fn plan_outputs(
     root: &Path,
     inputs: &[PathBuf],
     output: Option<&Path>,
+    naming: Naming,
+    stem_override: Option<&str>,
 ) -> Vec<Result<Option<Output>>> {
     let mut taken: HashMap<PathBuf, &Path> = HashMap::new();
     inputs
@@ -1561,8 +1788,8 @@ fn plan_outputs(
             } else if root.is_file() {
                 (
                     output.to_owned(),
-                    input.file_stem(),
-                    Some(OsStr::new("xml")),
+                    stem_override.map(OsStr::new).or_else(|| input.file_stem()),
+                    Some(OsStr::new(naming.extension)),
                 )
             } else {
                 let relative = input.strip_prefix(root).unwrap_or(input);
@@ -1570,13 +1797,13 @@ fn plan_outputs(
                 (
                     destination.parent().unwrap_or(output).to_owned(),
                     input.file_stem(),
-                    Some(OsStr::new("xml")),
+                    Some(OsStr::new(naming.extension)),
                 )
             };
             let requested = stem
                 .map(|stem| stem.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            let name = resource_name(&requested)?;
+            let name = (naming.name)(&requested)?;
             let mut path = directory.join(&name);
             if let Some(extension) = extension {
                 path.set_extension(extension);
@@ -1590,7 +1817,8 @@ fn plan_outputs(
             }
             taken.insert(path.clone(), input);
             Ok(Some(Output {
-                renamed_from: (name != requested).then_some(requested),
+                renamed_from: (name != requested && !(naming.valid)(&requested))
+                    .then_some((requested, naming.what)),
                 path,
             }))
         })

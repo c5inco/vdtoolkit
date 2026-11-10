@@ -166,3 +166,267 @@ with diagnostics for filters, patterns, unsupported masks, and non-uniform
 stroke transforms; and emitted XML without diagnostics for animation and focal
 radial gradients. vdtoolkit remains the only target in this comparison that
 reports unrepresentable input as a failing conversion.
+
+## Compose ImageVector benchmark
+
+This compares `vdt compose` with the other converters that write Compose
+`ImageVector` Kotlin. None of them is a TypeScript library. The npm registry
+holds one package for this target, `androidboss` (pure JavaScript, no
+dependencies); the names usually associated with this conversion are GitHub
+projects in other languages, none of them published to npm:
+
+| Project | Language | What it is |
+| --- | --- | --- |
+| [`DevSrSouza/svg-to-compose`](https://github.com/DevSrSouza/svg-to-compose) | Kotlin | Kotlin script built on AOSP's `Svg2Vector` and a copy of the material-icons generator |
+| [`rafaeltonholo/svg-to-compose`](https://github.com/rafaeltonholo/svg-to-compose) | Kotlin | The CLI benchmarked here as `s2c` |
+| [`ComposeGears/Valkyrie`](https://github.com/ComposeGears/Valkyrie) | Kotlin | The plugin and CLI benchmarked here |
+| [`DevSrSouza/compose-icons`](https://github.com/DevSrSouza/compose-icons), [`composablehorizons/compose-icons`](https://github.com/composablehorizons/compose-icons) | Kotlin | Icon packs with their own generators |
+| [`jinghu-moon/compose-icons`](https://github.com/jinghu-moon/compose-icons) | Kotlin | Its `tools/svg2compose` is the `svg2compose` name, a Rust CLI that is not a published crate |
+| [`DenisMondon/Svg2Compose`](https://github.com/DenisMondon/Svg2Compose), [`SergioRibera/svg2compose_docker`](https://github.com/SergioRibera/svg2compose_docker) | Kotlin | Smaller `svg2compose` scripts, including a Docker image |
+| [`irgaly/compose-vector-plugin`](https://github.com/irgaly/compose-vector-plugin) | Kotlin | Gradle plugin and Java library, Batik-based |
+| [`serbelga/compose-vectorize`](https://github.com/serbelga/compose-vectorize) | Kotlin | Library that generates `ImageVector`s on device |
+| [`LennartEgb/vec2compose`](https://github.com/LennartEgb/vec2compose) | Kotlin | CLI for vector XML and SVG |
+| [`minoism/svg-to-compose-vector`](https://github.com/minoism/svg-to-compose-vector) | Python | Jinja2-templated CLI, `svg2compose`, needs Python 3.13 |
+
+The ones with a standalone CLI are `androidboss`, `s2c`, Valkyrie, and the
+Python tool, and all four are benchmarked below; the Python one needs Python
+3.13, so it was measured in a container with CPython 3.13.15 and
+`svg-to-compose-vector` 0.1.9 rather than on the machine the others ran on. Its
+own `svg2compose version` prints `Converter v0.1.8`: the version string in the
+package was not bumped with its metadata, which is worth knowing when citing
+either. Tools that write VectorDrawable XML instead
+(`svg2vectordrawable`, `vd-tool`) are the subject of the benchmark above, not
+this one.
+
+### Rules
+
+- Pin every tool's version, and the corpus's commit.
+- Run `vdt compose` in its default `exact` mode and in its explicit
+  `--optimize` mode, as the VectorDrawable benchmark does, since rounding is a
+  separate and lossy policy. `s2c` is run with `-opt=false`, its own SVGO-based
+  optimization being the same kind of policy.
+- Measure CLI wall time per file, in a fresh process, for every tool, so the
+  comparison is end to end: it then includes each tool's startup, which is
+  large for a Node package and absent from the warm numbers.
+- Report what each tool does with an SVG it cannot draw, because a converter
+  that exits zero and writes a vector with nothing in it has silently dropped
+  the artwork.
+- Report whether the output compiles, and its class bytes. Source bytes measure
+  formatting and decimal digits, not the app: a compiled float is four bytes
+  however many digits it is written with.
+
+### Reproduce
+
+Use the same 100-asset corpus the VectorDrawable benchmark's Python snippet
+downloads into `/tmp/vdt-benchmark-corpus`.
+
+```sh
+cargo build --release
+cargo run --example benchmark_compose --release -- /tmp/vdt-benchmark-corpus
+cargo run --example benchmark_compose --release -- /tmp/vdt-benchmark-corpus --optimize
+
+npm install androidboss@0.4.2 svg2vectordrawable@2.9.1 --no-audit --no-fund
+curl -sSL -o s2c.zip \
+  https://github.com/rafaeltonholo/svg-to-compose/releases/download/2.2.1/s2c-macosArm64-binaries.zip
+unzip -q s2c.zip
+brew install ComposeGears/repo/valkyrie
+
+tools/benchmark-compose.py --corpus /tmp/vdt-benchmark-corpus \
+  --tool vdt:"$PWD/target/release/vdt compose --package com.example -o {kt} {svg}" \
+  --tool androidboss:"npx androidboss convert-vector --input @{svg} \
+      --to image-vector --name Icon --package-name com.example" \
+  --tool s2c:"./s2c/s2c-macosArm64-binaries/s2c.kexe -p com.example \
+      -t com.example.Theme -opt=false -np -o {kt} {svg}" \
+  --tool valkyrie:"valkyrie svgxml2imagevector --input-path {svg} \
+      --output-path {dir} --package-name com.example"
+
+# The Python tool needs Python 3.13, so it was measured in a container:
+uv python install 3.13 && uv venv --python 3.13 /tmp/venv-svg2compose
+/tmp/venv-svg2compose/bin/pip install svg-to-compose-vector
+tools/benchmark-compose.py --corpus /tmp/vdt-benchmark-corpus \
+  --tool svg2compose:"/tmp/venv-svg2compose/bin/svg2compose convert {svg} -o {kt}"
+```
+
+`--kotlinc` and `--kotlin-classpath` add a compile check with a Kotlin
+compiler and a classpath holding Compose and a platform `android.jar`, as the
+`tools/android-renderer` instructions build. Compose's Google Maven coordinates
+(`androidx.compose.ui:ui` and friends) are KMP root stubs whose AARs carry no
+classes: the classes are in the `-android` variants, so `ui-android`,
+`ui-graphics-android`, `ui-geometry-android`, `ui-unit-android`, and
+`ui-util-android` are the ones to unpack. The measurements below used Kotlin
+2.4.10 against Compose ui 1.7.6 and `android-36` on an Apple M5 Max, with Node
+24.21.0, `androidboss` 0.4.2, `s2c` 2.2.1, and Valkyrie 1.2.1.
+
+### Warm in-process conversion
+
+One process, inputs preloaded, ten samples after a discarded warmup round, as
+the VectorDrawable benchmark measures `vdtoolkit`.
+
+| Policy | Median | p95 | Output bytes |
+| --- | ---: | ---: | ---: |
+| `vdt compose` | 5.10 ms | 5.12 ms | 300,596 |
+| `vdt compose --optimize` | 9.14 ms | 9.71 ms | 293,954 |
+
+### The 100 Material Symbols, one CLI process per icon
+
+| Tool | Converted | Output bytes | Path commands | Median | p95 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `vdt compose` | 100 | 311,014 | 5,374 | 2.53 ms | 2.93 ms |
+| `vdt compose --optimize` | 100 | 304,372 | 5,374 | 2.60 ms | 2.88 ms |
+| `androidboss` 0.4.2 | 100 | 343,652 | 5,374 | 78.39 ms | 79.90 ms |
+| `s2c` 2.2.1 | 100 | 797,433 | 5,374 | 6.29 ms | 7.15 ms |
+| Valkyrie 1.2.1 | 100 | 320,940 | 5,374 | 178.25 ms | 188.49 ms |
+| `svg-to-compose-vector` 0.1.9 | 100 | 208,242 | 5,374 | 120.10 ms | 166.30 ms |
+
+Two things about the Python tool's default output matter before its bytes are
+compared with anything, and both are measured on its own files.
+
+Its default template (`src/generator/templates/default.j2`) is
+`{{imports}}
+
+{{build_code}}`, with no declaration around it, so it writes a
+builder expression at file scope: not valid Kotlin until it is given one of its
+other templates (`-t val_declaration`, `composable_function`, or `icon_object`).
+
+And nothing it writes for this corpus can paint. **None** of the 100 outputs
+contains `fill =`, a `Color`, a `Brush`, or a `stroke`; all 100 use the bare
+`path { … }` form with no arguments, and all 100 import only `ImageVector`,
+`path`, and `dp`. The cause is a documented trade in its parser — `_parse_fill`
+returns `None` for an element with no `fill` attribute, "let the element be
+stroke-only", and the generator writes `fill = …` only when a fill was parsed —
+but SVG's initial fill is black, and all 100 of these icons have no `fill` and
+no `stroke`. So its 208,242 bytes are geometry that draws nothing in Compose.
+The control is the same tool on a file that declares its paints: for
+`features.svg` it writes `fill = Brush.linearGradient(…)`,
+`stroke = SolidColor(Color.Green)` with its cap, join, alpha, and width, and
+`fill = Brush.radialGradient(…)`, one per source shape, so only the missing
+`fill` is mishandled.
+
+The other four converters all apply SVG's default black: for the same corpus
+file they write `fill = SolidColor(Color(0xFF000000))`, or the named `Color.Black`
+of the tool that prefers names.
+
+All five write the same 5,374 path commands: for this corpus they agree on the
+geometry, which is the cross-check that the counting is comparable. The byte
+columns are not: `s2c` writes a comment above every command naming the source
+spelling, and every tool but `vdt` keeps the 960-unit Material viewport, so
+`vdt` writes shorter numbers for the same drawing after normalizing it to 24
+units. Every tool but `vdt` is a process-based CLI whose timing therefore
+includes interpreter or runtime startup: `androidboss` is a Node package, `s2c`
+a Kotlin/Native binary, and Valkyrie and the Python tool run on a JVM and on
+CPython, which is what separates 2.5 ms from 120 ms and 178 ms.
+
+Command counting has to know how a tool spells geometry. Only the Python tool
+writes `clipPathData` as path node constructors
+(`listOf(PathNode.MoveTo(4f, 2f), …, PathNode.Close)`), which the driver counts
+alongside builder calls, `addPathNodes` strings, and nothing else; that is 25
+nodes over this feature corpus, and none over the Material one.
+
+### What each tool does with an SVG it cannot draw
+
+The repository's feature and stress corpus, with the same three tools:
+
+| Fixture | `vdt compose` | `androidboss` | `s2c` | Valkyrie | `svg-to-compose-vector` |
+| --- | --- | --- | --- | --- | --- |
+| `<text>` | Exit 1, `VDT006` | Exit 0, a vector with no path in it | Exit 0, a vector with no path in it | Exits 1, `java.io.EOFException: input contained no data` | Exit 0, a vector with no path in it, and a warning |
+| A filter | Exit 1, `VDT002` | Exit 0, filter dropped | Exit 0, filter dropped | Exit 0, filter dropped | Exit 0, filter dropped, and a warning |
+| A pattern | Exit 1, `VDT008` | Exit 0, pattern dropped | Exit 0, pattern dropped | Exit 0, pattern dropped | Exit 0, pattern dropped, and a warning |
+| A mask (two clip paths) | Converts, 15 commands | Converts, 5 commands: the mask is gone | Converts, 10 commands | Converts, 10 commands | Converts, 5 commands: the mask is gone, and a warning |
+| Gradient, stroke, clip, even-odd | Converts, compiles | Converts, compiles | Converts, compiles | Converts, compiles | Converts |
+
+`vdt compose` reports 3 of the 13 fixtures as failures with the diagnostic and
+the suggestion that `convert` reports. Every other tool exits zero for them,
+and four of them write a file with no path geometry in it for the text fixture.
+For the mask fixture, only `vdt compose` writes both of its two clip paths,
+nested, which is what intersects them: `s2c` and Valkyrie write one clip each —
+the mask's region, not its shape — and `androidboss` and the Python tool write
+neither, so in all four the mask is not reproduced.
+
+Its missing paint reaches further than the dropped constructs: for the filter
+fixture, whose SVG also relies on the default fill, it writes the geometry with
+no fill and no stroke. For the pattern fixture the opposite fallback appears:
+`fill="url(#p)"` points at an undefined gradient, and its `url()` branch paints
+`SolidColor(Color.Black)`, so SVG's default fill shows up there and nowhere
+else. That fixture also shows the ignored `<pattern>`'s child geometry leaking
+into the output as a second, paintless `path { … }` block — the 8 commands it
+reports against the filter fixture's 4 are the inner `<path d="M0 0h4v4z"/>`.
+
+It is the only one that says so about dropped constructs: it names each one it drops
+on stderr ("Text element '<text>' is not supported by Compose ImageVector - text
+will be ignored", likewise for the filter, the pattern, and the mask) while
+still exiting 0. That is a better failure mode than `androidboss` and `s2c`,
+which write the same reduced file with no message at all, and a worse one than
+`vdt compose`, whose diagnostics are a stable code, a location, and a
+suggested fix, and whose exit status is a failure.
+
+### Compiled output and the size of one Kotlin method
+
+Kotlin inlines `path { }`, `group { }`, and `apply { }`, so every command a
+converter writes as a `PathBuilder` call becomes bytecode of the one property
+getter, and the JVM refuses a method of over 64 KB. The corpus therefore
+includes traced-outline-sized drawings of 3,000 and 6,000 cubic commands:
+
+| Drawing | `vdt compose` | `androidboss` | `s2c` | Valkyrie | `svg-to-compose-vector` (`-t val_declaration`) |
+| --- | --- | --- | --- | --- | --- |
+| 3,000 commands | Compiles, 90,585-byte class | Compiles, 70,530-byte class | Compiles, 155,058-byte class | Compiles, 70,663-byte class | Compiles, 70,344-byte class |
+| 6,000 commands | Compiles, 180,010-byte class | **Method too large** | **Method too large** | **Method too large** | **Method too large** |
+
+The Python tool needs that extra step to be judged at all: its generated body is
+byte-identical between the default template and `val_declaration` (186,238 and
+372,238 bytes for the two drawings), so putting it in a declaration isolates the
+JVM question from the invalid-output question, and shows the same
+`Method too large: Stress6000Kt.<clinit> ()V` as the other two. Its ceiling is
+about 3,600 commands, where 18.0 bytes of bytecode per command reaches the
+64 KB a method may hold: at 3,000 commands its `<clinit>` is 54,190 bytes, at
+3,600 64,990 bytes, and at 3,700 it fails. `vdt compose`'s budget of a thousand
+commands leaves room for forms that cost more per command than that.
+
+`vdt compose` writes a drawing of over a thousand commands as path data strings
+(`addPath(pathData = addPathNodes("M0 0h24v24z …"))`), one call per path, so the
+getter stays small however long the path is. Measured on its own, a drawing of
+2,500 cubic commands written as `PathBuilder` calls compiles and one of 3,000
+fails, which is where the budget comes from.
+
+Valkyrie has the same escape hatch, `--use-path-data-string`, which is off by
+default: with it on, its 6,000-command drawing compiles, at 192,878 bytes
+against 444,830 for its builder calls. Neither `androidboss` nor `s2c` has one,
+so for them the row above is the whole story. `vdt compose` switches on its own,
+because a file that does not compile is not a conversion the user can decline:
+the drawing is what they asked for, and how it is spelled is not.
+
+On eight of the 100 icons, compiled in a fresh process each:
+
+| Tool | Compiled | Class bytes |
+| --- | ---: | ---: |
+| `vdt compose` | 8 | 46,653 |
+| `androidboss` | 8 | 55,566 |
+| Valkyrie | 8 | 48,917 |
+| `svg-to-compose-vector` | Not compiled | — |
+| `s2c` | 0 | — |
+
+`s2c` takes the property name from the file it writes and does not make it a
+valid Kotlin identifier: `-o 000-mobile_off_24px.kt` writes
+`val 000MobileOff24px`, which the compiler rejects. `vdt compose` derives the
+name first and writes the file under it, so `000-mobile_off_24px.svg` becomes
+`Ic000MobileOff24px.kt` holding `public val Ic000MobileOff24px`.
+
+### What this benchmark does not measure
+
+It does not compare rendered pixels, and two things are missing from the
+compile columns. The Python tool's corpus was not compiled beyond its two large
+drawings, which were compiled through its own `val_declaration` template
+because its default output is not valid Kotlin. And where a cell says a drawing
+compiles, that says nothing about the output for the rest of a tool's corpus.
+
+What the compile columns do say is narrow and useful: against Compose ui 1.7.6,
+`vdt compose`, `androidboss`, `s2c`, and Valkyrie emit Kotlin that compiles for
+every file they were measured on except the 6,000-command drawing, where all
+three of the others exceed the JVM's 64 KB method limit and `vdt compose` does
+not.
+
+Whether they draw the same picture is a separate question, and one for a
+device: `tools/android-renderer/compose` already loads generated `ImageVector`s
+through `rememberVectorPainter`, and each tool's output would have to be
+compiled into it and compared against the source SVG. The numbers here say how
+fast each converter runs, how large its output is, and what it does with input
+it cannot represent; they are not fidelity scores.

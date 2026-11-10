@@ -1,6 +1,6 @@
 # vdtoolkit
 
-Turn SVGs into Android resources without Android Studio, the Android SDK, Gradle, or a JVM. `vdt` is a native CLI that converts SVGs to VectorDrawable XML, generates adaptive launcher and notification icons, optimizes path and coordinate precision, and checks SVG compatibility. The same converter also runs as WebAssembly in a local Figma plugin.
+Turn SVGs into Android assets without Android Studio, the Android SDK, Gradle, or a JVM. `vdt` is a native CLI that converts SVGs to VectorDrawable XML or Compose `ImageVector` Kotlin, generates adaptive launcher and notification icons, optimizes path and coordinate precision, and checks SVG compatibility. The same converter also runs as WebAssembly in a local Figma plugin.
 
 Output is deterministic across machines, and anything VectorDrawable cannot render faithfully is rejected with a diagnostic code instead of silently approximated.
 
@@ -29,6 +29,7 @@ vdt adaptive --foreground fg.svg --background-color '#3DDC84' -o app/src/main/re
 vdt adaptive --foreground fg.svg --background-image hero.webp -o app/src/main/res
 vdt notification bell.svg -o res/drawable-anydpi/ic_stat_bell.xml
 vdt convert icon.svg --pretty                         # indented XML instead of single-line compact
+vdt compose icon.svg --package com.example.icons -o Icons/Icon.kt
 ```
 
 | Command | What it does |
@@ -39,6 +40,7 @@ vdt convert icon.svg --pretty                         # indented XML instead of 
 | `optimize` | Convert, then shorten numbers and path data where it cannot change rendering. |
 | `adaptive` | Generate an adaptive launcher icon and its layer drawables into a `res/` directory. |
 | `notification` | Convert to a white 24dp notification icon drawable. |
+| `compose` | Convert to Compose `ImageVector` Kotlin source. Directory input requires `-o`. |
 
 Every command except `adaptive` accepts a file or a directory (failed files in a directory are reported on stderr while remaining files continue).
 
@@ -123,6 +125,28 @@ vdt adaptive --foreground logo.svg --background bg.svg --monochrome logo.svg \
 | `VDT026` | Warning: `--foreground-image` has no transparent pixels and hides the background layer. |
 
 Every layer is validated before any file is written, leaving the output directory untouched on error.
+
+### Compose ImageVector
+
+`compose` writes Kotlin that builds a Compose `ImageVector` instead of a drawable, in the shape the Vector Asset importer and the material-icons generator emit: `public val <Name>: ImageVector` over a private backing field.
+
+```sh
+vdt compose icon.svg --package com.example.icons -o src/main/java/com/example/icons/Icon.kt
+vdt compose icons/ --package com.example.icons -o src/main/java/com/example/icons/
+vdt compose icon.svg --package com.example.icons --size 24 --optimize
+```
+
+| Option | Meaning |
+| --- | --- |
+| `--name <Name>` | Kotlin name of the property, and of the file written for a single input. Defaults to the file name in PascalCase. |
+| `--package <package>` | `package` line of the generated file. Without it the property lands in the default package, which no other package can import. |
+| `--size <dp>` | Same as `convert`: the longer side is that size and the aspect ratio is kept. |
+| `--optimize` | Shorten numbers where it cannot change rendering, as `optimize` does. |
+| `--strict`, `--allow-approximate` | Same as `convert`. |
+
+The file name and the property are the same name: the SVG's file name in PascalCase, so `arrow-left.svg` becomes `ArrowLeft.kt` containing `ArrowLeft`. Load it with `Image(painter = rememberVectorPainter(Icon), ...)`; `Icon(imageVector = Icon)` tints it with `LocalContentColor` unless it is passed `tint = Color.Unspecified`.
+
+Compose draws the vector itself, so nothing here follows the VectorDrawable output format: a gradient, an even-odd fill, or a clip path needs no Android API level, and `minimum_api` and the `VDT004` note do not describe this output. Compose needs `minSdk` 23. A drawing with more than a thousand commands is written as path data strings, so the generated getter stays inside the JVM's 64 KB method limit however large the artwork is. What an `ImageVector` can express is as limited as a drawable in every way that concerns artwork, so the same SVGs convert and the same ones are rejected. [docs/benchmarks.md](docs/benchmarks.md) compares the output with other SVG-to-`ImageVector` converters.
 
 ## Example
 

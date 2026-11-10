@@ -14,6 +14,8 @@ pub enum Topic {
     Notification,
     /// Plain drawables: where to write them, size, minimum API.
     Drawables,
+    /// Compose ImageVector source: naming, the package, what differs.
+    Compose,
     /// Reading inspect reports, severities, and exit codes.
     Diagnostics,
     /// Gating pull requests with check, and reproducible output.
@@ -27,6 +29,7 @@ impl Topic {
             Self::Adaptive => include_str!("guide/adaptive.md"),
             Self::Notification => include_str!("guide/notification.md"),
             Self::Drawables => include_str!("guide/drawables.md"),
+            Self::Compose => include_str!("guide/compose.md"),
             Self::Diagnostics => include_str!("guide/diagnostics.md"),
             Self::Ci => include_str!("guide/ci.md"),
         }

@@ -8,6 +8,29 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `vdt compose` converts SVG to Kotlin source that builds an equivalent
+  Compose `ImageVector`, in the shape the material-icons generator and the
+  third-party `svg-to-compose` and Valkyrie converters emit: a top-level
+  `public val <Name>: ImageVector` over a private backing field, with arguments
+  that equal the `ImageVector` defaults left out. It accepts a file or a
+  directory, `--name`, `--package`, `--size`, `--optimize`, `--strict`, and
+  `--allow-approximate`, and names its output after the SVG in PascalCase
+  (`arrow-left.svg` becomes `ArrowLeft.kt`). Compose draws the vector itself, so
+  the VectorDrawable output format's rules do not apply: a gradient, an even-odd
+  fill, or a clip path needs no Android API level, `minimum_api` and the
+  `VDT004` note do not describe this output, and Compose needs `minSdk` 23. A
+  group with more than one clip path becomes nested `group` calls, which is what
+  the nested `<group>` elements it lowers for VectorDrawable do, and a stroke of
+  width zero is left out because Compose draws it as a hairline. What an
+  `ImageVector` can express is as limited as a drawable in every way that
+  concerns artwork, so the SVGs that convert are the same set. The Rust API
+  gains `Asset::to_kotlin`, and `vdt guide compose` explains the command. A
+  drawing of over a thousand commands is written as path data strings, which is
+  what keeps a generated getter inside the JVM's 64 KB method limit:
+  `docs/benchmarks.md` records that a 6,000-command drawing compiles here and
+  fails as `Method too large` with every other converter measured, and compares
+  five of them on the pinned 100-icon corpus.
+
 - `vdt guide [topic]` prints usage guidance compiled into the binary: the
   workflow, and pages for `adaptive`, `notification`, `drawables`,
   `diagnostics`, and `ci`. `vdt explain <code>` explains a diagnostic code

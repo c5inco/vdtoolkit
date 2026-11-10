@@ -6,8 +6,8 @@ always gives the same output, and anything a VectorDrawable cannot draw exactly
 is rejected with a diagnostic code instead of being approximated. Use it instead
 of writing `<vector>` XML by hand.
 
-Convert, optimize, notification, and inspect without `--as` read SVG only.
-`adaptive`, and `inspect` or `check` with `--as adaptive-foreground` or
+Convert, optimize, notification, compose, and inspect without `--as` read SVG
+only. `adaptive`, and `inspect` or `check` with `--as adaptive-foreground` or
 `--as adaptive-background`, also take PNG, WebP, or JPEG as layer images.
 vdt does not read existing VectorDrawable XML and makes no iOS or web assets.
 
@@ -24,6 +24,7 @@ Find the module's `res/` directory, usually `app/src/main/res` next to
 | A drawable (`R.drawable.x`, `painterResource`) | `vdt convert icon.svg -o res/drawable-anydpi/ic_icon.xml` | `vdt guide drawables` |
 | The same, as small as possible | `vdt optimize icon.svg -o res/drawable-anydpi/ic_icon.xml` | `vdt guide drawables` |
 | An app or launcher icon | `vdt adaptive --foreground logo.svg --background-color '#FFFFFF' -o res` | `vdt guide adaptive` |
+| A Compose `ImageVector` in Kotlin | `vdt compose icon.svg --package com.example.icons -o src/main/java/com/example/icons/Icon.kt` | `vdt guide compose` |
 | A notification or status bar icon | `vdt notification bell.svg -o res/drawable-anydpi/ic_stat_bell.xml` | `vdt guide notification` |
 | To know whether an SVG converts, without writing | `vdt check icon.svg` | `vdt guide ci` |
 | Diagnostics, minimum API, bounds, size | `vdt inspect icon.svg --format json` | `vdt guide diagnostics` |
@@ -72,5 +73,5 @@ with an option, any `VDT004` note when `minimum_api` is above the module's
 ## Topics
 
 `vdt guide adaptive`, `vdt guide notification`, `vdt guide drawables`,
-`vdt guide diagnostics`, `vdt guide ci`. `vdt explain` lists every diagnostic
-code. `vdt <command> --help` lists every option.
+`vdt guide compose`, `vdt guide diagnostics`, `vdt guide ci`. `vdt explain`
+lists every diagnostic code. `vdt <command> --help` lists every option.

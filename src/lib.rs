@@ -8,6 +8,7 @@
 mod adaptive;
 mod analysis;
 mod bitmap;
+mod compose;
 mod css;
 mod error;
 mod icon;
@@ -37,6 +38,8 @@ pub use bitmap::{
     ADAPTIVE_ICON_MAX_PIXELS, ImageFormat, LayerImage, LayerKind, analyze_layer_image,
 };
 #[doc(hidden)]
+pub use compose::{Kotlin, is_kotlin_name, kotlin_name};
+#[doc(hidden)]
 pub use error::{Error, Result};
 #[doc(hidden)]
 pub use icon::IconKind;
@@ -63,6 +66,19 @@ impl Asset {
     /// Serialize this asset as deterministic Android VectorDrawable XML.
     pub fn to_xml(&self) -> String {
         xml::write(&self.drawable, self.short_paths)
+    }
+
+    /// Serialize this asset as Kotlin that builds an equivalent Compose
+    /// `ImageVector`.
+    ///
+    /// `name` is the name of the generated property, and `package` an
+    /// optional `package` declaration. Compose draws the vector itself, so
+    /// nothing here follows the VectorDrawable output format: a gradient, an
+    /// even-odd fill, or a clip path needs no particular Android API level,
+    /// and `minimum_api` does not describe what is written. An optimized
+    /// asset carries its shortened numbers.
+    pub fn to_kotlin(&self, name: &str, package: Option<&str>) -> String {
+        compose::write(&self.drawable, &compose::Kotlin { name, package })
     }
 
     /// Serialize this asset as deterministic, whitespace-minimized

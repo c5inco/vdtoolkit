@@ -1,14 +1,14 @@
 ---
 name: vdt
-description: Convert SVG to Android VectorDrawable XML and generate launcher/app (adaptive, themed) and notification icons. Use when an Android project needs an icon or drawable from an SVG, or to check an SVG before converting or explain a VDT diagnostic code.
+description: Convert SVG to Android VectorDrawable XML or to Compose ImageVector Kotlin source, and generate launcher/app (adaptive, themed) and notification icons. Use when an Android or Compose project needs an icon, drawable, or ImageVector from an SVG, or to check an SVG before converting or explain a VDT diagnostic code.
 ---
 
 # vdt
 
-`vdt` converts SVG to Android VectorDrawable XML and generates launcher and
-notification icons. Prefer it over writing `<vector>` XML by hand:
-hand-written conversions of real artwork are usually wrong in ways that only
-show on a device.
+`vdt` converts SVG to Android VectorDrawable XML or Compose `ImageVector`
+Kotlin, and generates launcher and notification icons. Prefer it over writing
+`<vector>` XML or `ImageVector` code by hand: hand-written conversions of real
+artwork are usually wrong in ways that only show on a device.
 
 ## Before you start
 
@@ -19,7 +19,7 @@ show on a device.
 2. Run `vdt guide` and follow it. It ships with the binary, so it always
    matches the installed version. It links the pages for each kind of icon:
    `vdt guide adaptive`, `vdt guide notification`, `vdt guide drawables`,
-   `vdt guide diagnostics`, `vdt guide ci`.
+   `vdt guide compose`, `vdt guide diagnostics`, `vdt guide ci`.
 3. For any diagnostic code you need to act on, run `vdt explain <code>`.
 
 If the installed `vdt` has no `guide` command, it predates it: use

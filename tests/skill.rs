@@ -9,7 +9,7 @@ use std::process::Command;
 const SKILL: &str = include_str!("../skills/vdt/SKILL.md");
 
 /// Every page `vdt guide` and `vdt explain` print, by file name.
-const GUIDE: [(&str, &str); 7] = [
+const GUIDE: [(&str, &str); 8] = [
     ("workflow.md", include_str!("../src/guide/workflow.md")),
     ("adaptive.md", include_str!("../src/guide/adaptive.md")),
     (
@@ -17,6 +17,7 @@ const GUIDE: [(&str, &str); 7] = [
         include_str!("../src/guide/notification.md"),
     ),
     ("drawables.md", include_str!("../src/guide/drawables.md")),
+    ("compose.md", include_str!("../src/guide/compose.md")),
     (
         "diagnostics.md",
         include_str!("../src/guide/diagnostics.md"),
@@ -192,10 +193,20 @@ fn codes(text: &str, prefix: &str) -> BTreeSet<String> {
         .collect()
 }
 
+/// The page named `name`, which the tests index by file name so adding a page
+/// cannot silently point a test at the wrong one.
+fn page(name: &str) -> &'static str {
+    GUIDE
+        .iter()
+        .find(|(file, _)| *file == name)
+        .map(|(_, page)| *page)
+        .expect("the guide has that page")
+}
+
 #[test]
 fn every_diagnostic_code_has_an_explanation() {
     let defined = codes(ANALYSIS, "#[serde(rename = \"");
-    let explained = codes(GUIDE[6].1, "\n## ");
+    let explained = codes(page("codes.md"), "\n## ");
     assert_eq!(defined.len(), 26, "expected VDT001 through VDT026");
     assert_eq!(
         defined, explained,

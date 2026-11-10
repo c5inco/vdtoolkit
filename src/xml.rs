@@ -373,22 +373,159 @@ pub(crate) fn path_data(commands: &[PathCommand]) -> String {
 /// back as the same `f32` is shorter, it is used instead. Both texts denote
 /// the same value, so this only drops digits that carry no information.
 pub(crate) fn number(value: f32) -> String {
+    use std::io::{Cursor, Write as _};
+
     let value = if value.abs() < 0.000_000_5 {
         0.0
     } else {
         value
     };
-    let mut text = format!("{value:.6}");
-    while text.contains('.') && text.ends_with('0') {
-        text.pop();
-    }
-    if text.ends_with('.') {
-        text.pop();
-    }
-    let shortest = value.to_string();
-    if shortest.len() < text.len() && !shortest.contains(['e', 'E']) {
-        shortest
+    // An f32 has at most 24 significant bits; 1_000_000 = 2^6 * 15_625
+    // adds at most 14 more. The f64 product is exact, so ties-to-even gives
+    // exactly the integer digits of std's six-decimal formatting.
+    let scaled = (f64::from(value) * 1_000_000.0).round_ties_even();
+    // Even -f32::MAX with six decimals fits in 47 bytes.
+    let mut digits = [0; 64];
+    let text = if scaled.abs() < 9.0e15 {
+        // The bound keeps the integer cast in range, including after rounding.
+        let scaled = scaled.abs() as u64;
+        let mut whole = scaled / 1_000_000;
+        let mut fraction = scaled % 1_000_000;
+        let mut start = digits.len();
+        let mut end = start;
+        if fraction != 0 {
+            for _ in 0..6 {
+                start -= 1;
+                digits[start] = b'0' + (fraction % 10) as u8;
+                fraction /= 10;
+            }
+            while digits[end - 1] == b'0' {
+                end -= 1;
+            }
+            start -= 1;
+            digits[start] = b'.';
+        }
+        loop {
+            start -= 1;
+            digits[start] = b'0' + (whole % 10) as u8;
+            whole /= 10;
+            if whole == 0 {
+                break;
+            }
+        }
+        if value.is_sign_negative() {
+            start -= 1;
+            digits[start] = b'-';
+        }
+        std::str::from_utf8(&digits[start..end]).expect("number digits are ASCII")
     } else {
-        text
+        // Preserve std's spelling for large values, infinities, and NaNs.
+        let mut fixed = Cursor::new(digits.as_mut_slice());
+        write!(fixed, "{value:.6}").expect("fixed f32 fits in the buffer");
+        let end = fixed.position() as usize;
+        std::str::from_utf8(&digits[..end])
+            .expect("formatted number is ASCII")
+            .trim_end_matches('0')
+            .trim_end_matches('.')
+    };
+    // Below 16, half an ULP is at most 2^-21 < 0.000_000_5. Any shorter
+    // round-tripping decimal has at most six places and must therefore equal
+    // the rounded fixed text. Only larger values need a second formatting.
+    if value.abs() >= 16.0 {
+        // At 16 and above, Display writes at most 40 bytes.
+        let mut buffer = [0; 64];
+        let mut shortest = Cursor::new(buffer.as_mut_slice());
+        write!(shortest, "{value}").expect("displayed f32 fits in the buffer");
+        let end = shortest.position() as usize;
+        let shortest = std::str::from_utf8(&buffer[..end]).expect("formatted number is ASCII");
+        if shortest.len() < text.len() && !shortest.contains(['e', 'E']) {
+            return shortest.to_owned();
+        }
+    }
+    text.to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::number;
+
+    // Keep the original formatter as an independent, byte-for-byte oracle.
+    fn original_number(value: f32) -> String {
+        let value = if value.abs() < 0.000_000_5 {
+            0.0
+        } else {
+            value
+        };
+        let mut text = format!("{value:.6}");
+        while text.contains('.') && text.ends_with('0') {
+            text.pop();
+        }
+        if text.ends_with('.') {
+            text.pop();
+        }
+        let shortest = value.to_string();
+        if shortest.len() < text.len() && !shortest.contains(['e', 'E']) {
+            shortest
+        } else {
+            text
+        }
+    }
+
+    #[test]
+    fn number_matches_original_formatter() {
+        let check = |value: f32| {
+            assert_eq!(
+                number(value),
+                original_number(value),
+                "value {value:?}, bits {:#010x}",
+                value.to_bits()
+            );
+        };
+        let check_both_signs = |value: f32| {
+            check(value);
+            check(-value);
+        };
+
+        // Every exponent, with mantissas at both ends and in the middle:
+        // includes signed zero, subnormals, finite extremes, infinities and
+        // signaling/quiet NaNs of both signs and multiple payloads.
+        for exponent in 0..=255 {
+            for mantissa in [0, 1, 2, 0x3f_ffff, 0x7f_fffe, 0x7f_ffff] {
+                check_both_signs(f32::from_bits((exponent << 23) | mantissa));
+            }
+        }
+        // Exercise both sides of normalization, the shortest-form cutoff,
+        // decimal carries and the integer-formatting fallback boundary.
+        for value in [0.000_000_5_f32, 1.0, 10.0, 16.0, 64.0, 100.0, 9.0e9] {
+            for bits in value.to_bits() - 256..=value.to_bits() + 256 {
+                check_both_signs(f32::from_bits(bits));
+            }
+        }
+        // Odd multiples of 1/128 have an exact seventh-decimal tie. Check
+        // both ties-to-even directions and their immediate f32 neighbors.
+        for numerator in (1..131_072).step_by(2) {
+            let tie = numerator as f32 / 128.0;
+            for bits in tie.to_bits() - 1..=tie.to_bits() + 1 {
+                check_both_signs(f32::from_bits(bits));
+            }
+        }
+        // Decimal inputs exercise leading/trailing fractional zeros, carries,
+        // and values where Display is shorter than the six-decimal spelling.
+        for decimals in 0..=7 {
+            let scale = 10_f64.powi(decimals);
+            for numerator in -10_000..=10_000 {
+                check((f64::from(numerator) / scale) as f32);
+            }
+        }
+        // Reproducible random signs and mantissas, with exponents concentrated
+        // on the digit path. Earlier sections cover zeroing and std fallback.
+        let mut bits = 0x6d2b_79f5_u32;
+        for _ in 0..500_000 {
+            bits ^= bits << 13;
+            bits ^= bits >> 17;
+            bits ^= bits << 5;
+            let exponent = 105 + (bits >> 23 & 0xff) % 57;
+            check(f32::from_bits(bits & 0x807f_ffff | exponent << 23));
+        }
     }
 }

@@ -331,6 +331,33 @@ fn malformed_svg_is_a_structured_error_not_a_panic() {
 }
 
 #[test]
+fn deeply_nested_svg_is_an_input_error_not_a_stack_overflow() {
+    // `depth` counts the root `<svg>` and the leaf path. Nested `<svg>` with a
+    // position and a viewBox costs the most stack per level in a debug build,
+    // so the accepted case uses it.
+    let nested = |tag: &str, attributes: &str, depth: usize| {
+        format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">{}<path d="M1 1h2v2z"/>{}</svg>"#,
+            format!("<{tag}{attributes}>").repeat(depth - 2),
+            format!("</{tag}>").repeat(depth - 2),
+        )
+    };
+    let svg = r#" x="0" y="0" width="24" height="24" viewBox="0 0 24 24""#;
+    let xml = vdtoolkit::convert(nested("svg", svg, 200).as_bytes())
+        .unwrap()
+        .to_xml();
+    assert!(xml.contains("M1,1 L3,1 L3,3 Z"), "{xml}");
+    for source in [nested("g", "", 201), nested("g", "", 20_000)] {
+        match vdtoolkit::convert(source.as_bytes()) {
+            Err(Error::InvalidInput(message)) => {
+                assert!(message.contains("nested more than 200"), "{message}")
+            }
+            other => panic!("expected a nesting error, got {other:?}"),
+        }
+    }
+}
+
+#[test]
 fn never_converts_known_lossy_features() {
     let source = br#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
         <image href="https://example.com/pixel.png" width="24" height="24"/>

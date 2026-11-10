@@ -57,6 +57,22 @@ test("unsupported and malformed inputs are structured failures", () => {
   assert.equal("analysis" in malformedResult.error, false);
 });
 
+test("deep nesting is a structured failure rather than a trap", () => {
+  // Depth counts the root and the leaf; nested <svg> uses the most stack.
+  const nested = (open, close, depth) =>
+    bytes(`<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">${open.repeat(depth - 2)}<path d="M1 1h2v2z"/>${close.repeat(depth - 2)}</svg>`);
+  const svg = ['<svg x="0" y="0" width="24" height="24" viewBox="0 0 24 24">', "</svg>"];
+  assert.equal(convertSvg(nested(...svg, 200), false).ok, true);
+  assert.equal(analyzeSvg(nested(...svg, 200)).ok, true);
+  assert.equal(convertNotificationSvg(nested(...svg, 200), false).ok, true);
+  for (const deep of [nested("<g>", "</g>", 201), nested("<g>", "</g>", 20_000), nested(...svg, 20_000)]) {
+    const result = convertSvg(deep, false);
+    assert.equal(result.ok, false);
+    assert.equal(result.error.kind, "invalid_input");
+    assert.match(result.error.message, /nested more than 200/);
+  }
+});
+
 test("optimization is effective and output is deterministic", () => {
   const plain = convertSvg(decimals, false);
   const optimized = convertSvg(decimals, true);

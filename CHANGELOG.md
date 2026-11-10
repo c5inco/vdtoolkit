@@ -84,6 +84,14 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A deeply nested SVG returns an input error instead of overflowing the stack,
+  which aborted the native process and trapped the WebAssembly build and the
+  Figma plugin. XML parsing uses roxmltree 0.21.2, which no longer recurses, and
+  conversion rejects elements nested more than 200 levels deep on every build.
+  References are not counted: a `<use>` or `url()` reference adds the depth of
+  its target where it is used, so even one reference from deep content into
+  deep content can still exhaust the stack.
+
 - A strongly elliptical radial gradient no longer disappears after `optimize`.
   Group attributes are rounded to three decimals, so a gradient near 2500:1
   produced `android:scaleY="0"`, which collapses the group and erases the

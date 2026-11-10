@@ -29,6 +29,7 @@ pub(crate) fn process_as(
     let text = std::str::from_utf8(source)?;
     reject_unsafe_xml(text)?;
     let document = roxmltree::Document::parse(text)?;
+    reject_deep_nesting(&document)?;
     let (mut compatibility, mut diagnostics) = preflight(&document);
 
     let options = usvg::Options {
@@ -128,6 +129,34 @@ fn reject_unsafe_xml(source: &str) -> Result<()> {
     }
     if uppercase.contains("<!ENTITY") {
         return Err(Error::UnsafeXml("entity declarations are forbidden"));
+    }
+    Ok(())
+}
+
+/// Deepest element nesting accepted, counting the root `<svg>` as 1. usvg and
+/// the lowering recurse once per level, and the WebAssembly build first traps
+/// at 338 nested `<svg>` elements; 200 also leaves room on a 1 MiB release
+/// native stack and a 2 MiB debug test thread, though not on a 1 MiB debug
+/// stack. A `<use>` or `url()` reference adds the depth of its target where it
+/// is used, which this does not count, so one reference from deep content into
+/// deep content can still exhaust the stack.
+const MAX_ELEMENT_DEPTH: usize = 200;
+
+fn reject_deep_nesting(document: &roxmltree::Document<'_>) -> Result<()> {
+    // Document order visits a parent before its children, so each depth is its
+    // parent's plus one without walking ancestors.
+    let mut depths = vec![0; document.descendants().count()];
+    for node in document.descendants().filter(roxmltree::Node::is_element) {
+        let parent = node
+            .parent()
+            .map_or(0, |parent| depths[parent.id().get_usize()]);
+        let depth = parent + 1;
+        if depth > MAX_ELEMENT_DEPTH {
+            return Err(Error::InvalidInput(format!(
+                "SVG elements are nested more than {MAX_ELEMENT_DEPTH} levels deep; flatten nested groups and SVGs in the source artwork"
+            )));
+        }
+        depths[node.id().get_usize()] = depth;
     }
     Ok(())
 }

@@ -5040,7 +5040,9 @@ fn every_error_suggests_a_fix() {
         .unwrap();
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(
-        stdout.contains("dashed strokes cannot be represented by VectorDrawable\n  → Convert the dashed stroke to filled outlines.\n"),
+        stdout.contains(
+            "dashed strokes cannot be represented by a vector drawable or an ImageVector\n  → Convert the dashed stroke to filled outlines.\n"
+        ),
         "{stdout}"
     );
 }
@@ -5112,7 +5114,7 @@ fn resolving_a_wide_gamut_color_is_reported_as_an_informational_note() {
     assert!(matches!(note.severity, Severity::Info));
     assert_eq!(
         note.message,
-        "resolved 2 wide-gamut colors to sRGB; VectorDrawable has no wide-gamut color"
+        "resolved 2 wide-gamut colors to sRGB; a vector drawable has no wide-gamut color"
     );
     // A note never moves a drawable out of exact conversion.
     assert_eq!(asset.analysis.compatibility, Compatibility::Exact);

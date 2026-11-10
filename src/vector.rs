@@ -396,7 +396,7 @@ fn visit_group(
                             compatibility,
                             diagnostics,
                             DiagnosticCode::UnsupportedPaint,
-                            "dashed strokes cannot be represented by VectorDrawable",
+                            "dashed strokes cannot be represented by a vector drawable or an ImageVector",
                             "Convert the dashed stroke to filled outlines.",
                         );
                     }
@@ -405,7 +405,7 @@ fn visit_group(
                             compatibility,
                             diagnostics,
                             DiagnosticCode::UnsupportedPaint,
-                            "miter-clip stroke joins cannot be represented by VectorDrawable",
+                            "miter-clip stroke joins cannot be represented by a vector drawable or an ImageVector",
                             "Use a miter, round, or bevel stroke join.",
                         );
                     }
@@ -422,7 +422,7 @@ fn visit_group(
                                 compatibility,
                                 diagnostics,
                                 DiagnosticCode::UnsupportedGradient,
-                                "elliptical radial gradients on strokes cannot be represented by VectorDrawable",
+                                "elliptical radial gradients on strokes cannot be represented by a vector drawable or an ImageVector",
                                 "Make the stroke gradient circular, without skew or uneven scale.",
                             );
                             return None;
@@ -446,7 +446,7 @@ fn visit_group(
                         compatibility,
                         diagnostics,
                         DiagnosticCode::UnsupportedPaint,
-                        "stroke-before-fill paint order cannot be represented by VectorDrawable",
+                        "stroke-before-fill paint order cannot be represented by a vector drawable or an ImageVector",
                         "Convert the stroke to a filled outline placed below the fill.",
                     );
                 }
@@ -781,7 +781,7 @@ fn lower_paint(
                 compatibility,
                 diagnostics,
                 DiagnosticCode::UnsupportedPaint,
-                "pattern paint cannot be represented by VectorDrawable",
+                "pattern paint cannot be represented by a vector drawable or an ImageVector",
                 "Replace the pattern with the shapes it repeats.",
             );
             None
@@ -912,7 +912,7 @@ fn lower_radial_gradient(
             diagnostics.push(Diagnostic {
                 code: DiagnosticCode::UnsupportedGradient,
                 severity: Severity::Warning,
-                message: "radial gradient focal point or focal radius cannot be represented by VectorDrawable; centered at (cx, cy)".to_owned(),
+                message: "radial gradient focal point or focal radius cannot be represented by a vector drawable or an ImageVector; centered at (cx, cy)".to_owned(),
                 location: None,
                 suggestion: Some("Keep the centered gradient or remove the focal point in the SVG.".to_owned()),
             });
@@ -921,7 +921,7 @@ fn lower_radial_gradient(
                 compatibility,
                 diagnostics,
                 DiagnosticCode::UnsupportedGradient,
-                "radial gradients with a focal point cannot be represented by VectorDrawable",
+                "radial gradients with a focal point cannot be represented by a vector drawable or an ImageVector",
                 "Pass --allow-approximate to center the focal point, or remove the focal point and focal radius so the gradient is centered.",
             );
             return None;

@@ -36,6 +36,12 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Compatibility diagnostics name both output targets rather than only the
+  drawable format, so an SVG rejected by `vdt compose` reads as accurately as
+  one rejected by `convert`: "dashed strokes cannot be represented by a vector
+  drawable or an ImageVector", not "by VectorDrawable". Diagnostic codes,
+  severities, locations, and suggestions are unchanged.
+
 - The agent skill in `skills/vdt/SKILL.md` is now a short entry point that
   sends the agent to `vdt guide` and `vdt explain`, so its guidance always
   matches the installed binary.

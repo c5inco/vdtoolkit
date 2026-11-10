@@ -48,7 +48,7 @@ pub(crate) fn process_as(
             code: DiagnosticCode::WideGamutColor,
             severity: Severity::Info,
             message: format!(
-                "resolved {} to sRGB; VectorDrawable has no wide-gamut color",
+                "resolved {} to sRGB; a vector drawable has no wide-gamut color",
                 plural(resolved.colors, "wide-gamut color")
             ),
             location: None,
@@ -196,7 +196,7 @@ fn preflight(document: &roxmltree::Document<'_>) -> (Compatibility, Vec<Diagnost
                     &mut compatibility,
                     &mut diagnostics,
                     DiagnosticCode::UnsupportedFilter,
-                    "SVG filters cannot be represented by VectorDrawable",
+                    "SVG filters cannot be represented by a vector drawable or an ImageVector",
                     location(),
                     "Remove the filter, or draw its effect, such as a shadow, as shapes.",
                 )
@@ -205,7 +205,7 @@ fn preflight(document: &roxmltree::Document<'_>) -> (Compatibility, Vec<Diagnost
                 &mut compatibility,
                 &mut diagnostics,
                 DiagnosticCode::UnsupportedFilter,
-                "SVG filter primitives cannot be represented by VectorDrawable",
+                "SVG filter primitives cannot be represented by a vector drawable or an ImageVector",
                 location(),
                 "Remove the filter, or draw its effect, such as a shadow, as shapes.",
             ),
@@ -243,7 +243,7 @@ fn preflight(document: &roxmltree::Document<'_>) -> (Compatibility, Vec<Diagnost
                 &mut compatibility,
                 &mut diagnostics,
                 DiagnosticCode::UnsupportedPattern,
-                "patterns cannot be represented by VectorDrawable",
+                "patterns cannot be represented by a vector drawable or an ImageVector",
                 location(),
                 "Replace the pattern with the shapes it repeats.",
             ),
@@ -252,7 +252,7 @@ fn preflight(document: &roxmltree::Document<'_>) -> (Compatibility, Vec<Diagnost
                     &mut compatibility,
                     &mut diagnostics,
                     DiagnosticCode::UnsupportedAnimation,
-                    "SVG animation is outside the VectorDrawable compatibility profile",
+                    "SVG animation is outside what a vector drawable or an ImageVector can represent",
                     location(),
                     "Remove the animation, and animate the drawable with an AnimatedVectorDrawable instead.",
                 )
@@ -283,7 +283,7 @@ fn preflight(document: &roxmltree::Document<'_>) -> (Compatibility, Vec<Diagnost
                 &mut compatibility,
                 &mut diagnostics,
                 DiagnosticCode::UnsupportedFilter,
-                "filter usage cannot be represented by VectorDrawable",
+                "filter usage cannot be represented by a vector drawable or an ImageVector",
                 location(),
                 "Remove the filter, or draw its effect, such as a shadow, as shapes.",
             );
@@ -297,7 +297,7 @@ fn preflight(document: &roxmltree::Document<'_>) -> (Compatibility, Vec<Diagnost
                 &mut compatibility,
                 &mut diagnostics,
                 DiagnosticCode::UnsupportedStrokeTransform,
-                "non-scaling strokes cannot be represented by VectorDrawable",
+                "non-scaling strokes cannot be represented by a vector drawable or an ImageVector",
                 location(),
                 "Remove vector-effect, or convert the stroke to a filled outline.",
             );
@@ -316,7 +316,7 @@ fn preflight(document: &roxmltree::Document<'_>) -> (Compatibility, Vec<Diagnost
                 &mut compatibility,
                 &mut diagnostics,
                 DiagnosticCode::UnsupportedPaint,
-                "filtering or compositing styles cannot be represented by VectorDrawable",
+                "filtering or compositing styles cannot be represented by a vector drawable or an ImageVector",
                 location(),
                 "Remove filters, blend modes, and isolation from the styles, or flatten the artwork in the source design tool.",
             );

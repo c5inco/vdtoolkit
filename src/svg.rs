@@ -99,9 +99,6 @@ pub(crate) fn process_as(
         &mut diagnostics,
         &mut metrics,
     );
-    if let Some(ref drawable) = drawable {
-        metrics.estimated_xml_bytes = crate::xml::write(drawable, false).len();
-    }
     let minimum_api = if compatibility.is_convertible(allow_approximate) {
         diagnostics.extend(drawable.as_ref().and_then(vector::api_level_note));
         drawable.as_ref().map(VectorDrawable::minimum_api)

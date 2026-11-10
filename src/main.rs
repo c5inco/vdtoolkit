@@ -6,8 +6,8 @@ use std::process::ExitCode;
 use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 use vdtoolkit::{
-    Analysis, Asset, Bounds, Compatibility, Diagnostic, DiagnosticCode, Error, Fit, FitMode,
-    IconKind, ImageFormat, Metrics, Result, Severity,
+    Analysis, AnalysisReport, Asset, Bounds, Compatibility, Diagnostic, DiagnosticCode, Error, Fit,
+    FitMode, IconKind, ImageFormat, Metrics, MetricsReport, Result, Severity,
 };
 use walkdir::WalkDir;
 
@@ -329,7 +329,7 @@ struct FileAnalysis<'a> {
 }
 
 impl<'a> FileAnalysis<'a> {
-    fn new(path: String, icon: Option<IconTarget>, analysis: &'a Analysis) -> Self {
+    fn new(path: String, icon: Option<IconTarget>, analysis: &'a AnalysisReport) -> Self {
         let raster = analysis.image.is_some();
         Self {
             path,
@@ -346,7 +346,7 @@ impl<'a> FileAnalysis<'a> {
             metrics: if raster {
                 ReportMetrics::Raster(RasterMetrics::from(&analysis.metrics))
             } else {
-                ReportMetrics::Vector(&analysis.metrics)
+                ReportMetrics::Vector(analysis.metrics_report())
             },
             image: analysis.image,
         }
@@ -363,7 +363,7 @@ enum ReportIcon {
 #[derive(Serialize)]
 #[serde(untagged)]
 enum ReportMetrics<'a> {
-    Vector(&'a Metrics),
+    Vector(MetricsReport<'a>),
     Raster(RasterMetrics<'a>),
 }
 
@@ -1312,12 +1312,11 @@ fn convert_one(
         }
     }
     print_size_hint(args.size, &asset);
-    let generated_bytes = asset_xml(&asset, args.pretty).len();
+    let mut xml = asset_xml(&asset, args.pretty);
     if optimize {
+        let generated_bytes = xml.len();
         asset.optimize();
-    }
-    let xml = asset_xml(&asset, args.pretty);
-    if optimize {
+        xml = asset_xml(&asset, args.pretty);
         let original_bytes = std::fs::metadata(input)
             .map(|metadata| metadata.len())
             .unwrap_or_default();
@@ -1512,7 +1511,7 @@ fn report(args: ReportArgs, inspect: bool) -> Result<Outcome> {
     })
 }
 
-fn print_human(analysis: &Analysis, inspect: bool, allow_approximate: bool) {
+fn print_human(analysis: &AnalysisReport, inspect: bool, allow_approximate: bool) {
     let raster = analysis.image.is_some();
     let compatible = analysis.compatibility.is_convertible(allow_approximate);
     let verdict = if raster {
@@ -1580,7 +1579,10 @@ fn print_human(analysis: &Analysis, inspect: bool, allow_approximate: bool) {
             None => println!("Content bounds: none"),
         }
         if !raster {
-            println!("Estimated XML size: {} bytes", metrics.estimated_xml_bytes);
+            println!(
+                "Estimated XML size: {} bytes",
+                analysis.estimated_xml_bytes()
+            );
         }
     }
     if raster {
@@ -1596,7 +1598,7 @@ fn print_human(analysis: &Analysis, inspect: bool, allow_approximate: bool) {
     }
 }
 
-fn print_summary(reports: &[(&PathBuf, Result<Analysis>)]) {
+fn print_summary(reports: &[(&PathBuf, Result<AnalysisReport>)]) {
     let rasters = reports
         .iter()
         .filter(|(_, result)| {

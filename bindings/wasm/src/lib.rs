@@ -8,7 +8,7 @@ use wasm_bindgen::prelude::*;
 enum OperationResult {
     Success {
         ok: bool,
-        analysis: vdtoolkit::Analysis,
+        analysis: vdtoolkit::AnalysisReport,
         #[serde(skip_serializing_if = "Option::is_none")]
         xml: Option<String>,
     },
@@ -23,7 +23,7 @@ struct AdapterError {
     kind: &'static str,
     message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    analysis: Option<vdtoolkit::Analysis>,
+    analysis: Option<vdtoolkit::AnalysisReport>,
 }
 
 #[wasm_bindgen(typescript_custom_section)]
@@ -184,15 +184,7 @@ fn convert_result(
             if let Some(max_dp) = max_size_dp {
                 asset.fit_within(max_dp);
             }
-            OperationResult::Success {
-                ok: true,
-                xml: Some(if pretty {
-                    asset.to_xml()
-                } else {
-                    asset.to_compact_xml()
-                }),
-                analysis: asset.analysis,
-            }
+            converted(asset, pretty)
         }
         Err(error) => failure(error),
     }
@@ -221,16 +213,23 @@ fn notification_result(
         }
         asset
     }) {
-        Ok(asset) => OperationResult::Success {
-            ok: true,
-            xml: Some(if pretty {
-                asset.to_xml()
-            } else {
-                asset.to_compact_xml()
-            }),
-            analysis: asset.analysis,
-        },
+        Ok(asset) => converted(asset, pretty),
         Err(error) => failure(error),
+    }
+}
+
+fn converted(asset: vdtoolkit::Asset, pretty: bool) -> OperationResult {
+    // Compact XML is derived from readable XML, so reuse its size instead of
+    // serializing the drawable again just to fill the analysis report.
+    let xml = asset.to_xml();
+    OperationResult::Success {
+        ok: true,
+        analysis: vdtoolkit::AnalysisReport::new(asset.analysis, xml.len()),
+        xml: Some(if pretty {
+            xml
+        } else {
+            vdtoolkit::compact_xml(&xml)
+        }),
     }
 }
 
@@ -246,7 +245,9 @@ fn failure(error: vdtoolkit::Error) -> OperationResult {
     };
     let message = error.to_string();
     let analysis = match error {
-        vdtoolkit::Error::Incompatible(analysis) => Some(*analysis),
+        vdtoolkit::Error::Incompatible(analysis) => {
+            Some(vdtoolkit::AnalysisReport::new(*analysis, 0))
+        }
         _ => None,
     };
     OperationResult::Failure {
@@ -296,7 +297,7 @@ mod tests {
             );
             assert_eq!(
                 converted["analysis"],
-                serde_json::to_value(&native_asset.analysis).unwrap()
+                serde_json::to_value(native_asset.clone().into_analysis()).unwrap()
             );
             assert_eq!(converted["xml"], native_asset.to_compact_xml());
         }
@@ -342,7 +343,7 @@ mod tests {
         assert_eq!(optimized["xml"], native.to_compact_xml());
         assert_eq!(
             optimized["analysis"],
-            serde_json::to_value(native.analysis).unwrap()
+            serde_json::to_value(native.into_analysis()).unwrap()
         );
 
         assert_eq!(
@@ -378,7 +379,7 @@ mod tests {
         assert_eq!(capped["xml"], native.to_compact_xml());
         assert_eq!(
             capped["analysis"],
-            serde_json::to_value(&native.analysis).unwrap()
+            serde_json::to_value(native.into_analysis()).unwrap()
         );
         assert_eq!(capped["analysis"]["diagnostics"], serde_json::json!([]));
     }
@@ -398,7 +399,7 @@ mod tests {
         assert_eq!(converted["xml"], native.to_compact_xml());
         assert_eq!(
             converted["analysis"],
-            serde_json::to_value(native.analysis).unwrap()
+            serde_json::to_value(native.into_analysis()).unwrap()
         );
         assert_eq!(converted["analysis"]["metrics"]["width"], 24.0);
         assert!(converted["xml"].as_str().unwrap().contains("#FFFFFF"));

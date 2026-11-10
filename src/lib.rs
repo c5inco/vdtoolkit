@@ -31,7 +31,8 @@ pub use adaptive::{
 };
 #[doc(hidden)]
 pub use analysis::{
-    Analysis, Bounds, Compatibility, Diagnostic, DiagnosticCode, ElementLocation, Metrics, Severity,
+    Analysis, AnalysisReport, Bounds, Compatibility, Diagnostic, DiagnosticCode, ElementLocation,
+    Metrics, MetricsReport, Severity,
 };
 #[doc(hidden)]
 pub use bitmap::{
@@ -68,6 +69,18 @@ impl Asset {
         xml::write(&self.drawable, self.short_paths)
     }
 
+    /// Measure the current readable XML, including optimization and fitting.
+    /// This serializes the drawable only when the size is requested.
+    pub fn estimated_xml_bytes(&self) -> usize {
+        self.to_xml().len()
+    }
+
+    /// Consume the asset to report its analysis and current readable XML size.
+    pub fn into_analysis(self) -> AnalysisReport {
+        let bytes = self.estimated_xml_bytes();
+        AnalysisReport::new(self.analysis, bytes)
+    }
+
     /// Serialize this asset as Kotlin that builds an equivalent Compose
     /// `ImageVector`.
     ///
@@ -92,7 +105,6 @@ impl Asset {
     pub fn optimize(&mut self) {
         optimize::optimize(&mut self.drawable);
         self.short_paths = true;
-        self.analysis.metrics.estimated_xml_bytes = self.to_xml().len();
     }
 
     /// Scale `android:width` and `android:height` down so neither exceeds
@@ -158,7 +170,6 @@ impl Asset {
         self.analysis
             .diagnostics
             .extend(vector::large_dimensions_warning(width, height));
-        self.analysis.metrics.estimated_xml_bytes = self.to_xml().len();
     }
 
     /// Turn this asset into an adaptive icon layer: a 108dp square drawable
@@ -219,7 +230,6 @@ impl Asset {
                 .diagnostics
                 .extend(vector::api_level_note(&self.drawable));
         }
-        self.analysis.metrics.estimated_xml_bytes = self.to_xml().len();
         Ok(flattening)
     }
 
@@ -246,7 +256,6 @@ impl Asset {
             bounds.right = bounds.right * scale + dx;
             bounds.bottom = bounds.bottom * scale + dy;
         }
-        self.analysis.metrics.estimated_xml_bytes = self.to_xml().len();
     }
 
     /// How far painted content reaches from the centre of a fitted adaptive
@@ -433,7 +442,7 @@ impl Asset {
             .count();
         let minimum_api = Some(drawable.minimum_api());
         let diagnostics = vector::api_level_note(&drawable).into_iter().collect();
-        let mut asset = Asset {
+        Asset {
             drawable,
             analysis: Analysis {
                 compatibility,
@@ -445,9 +454,7 @@ impl Asset {
             declared_size: true,
             short_paths: false,
             whitening: Default::default(),
-        };
-        asset.analysis.metrics.estimated_xml_bytes = asset.to_xml().len();
-        asset
+        }
     }
 }
 
@@ -462,13 +469,13 @@ pub fn compact_xml(xml: &str) -> String {
 
 /// Analyze an SVG file without converting it.
 #[doc(hidden)]
-pub fn analyze_file(path: &Path) -> Result<Analysis> {
+pub fn analyze_file(path: &Path) -> Result<AnalysisReport> {
     analyze_file_with_options(path, false)
 }
 
 /// Analyze an SVG file without converting it, optionally allowing approximations.
 #[doc(hidden)]
-pub fn analyze_file_with_options(path: &Path, allow_approximate: bool) -> Result<Analysis> {
+pub fn analyze_file_with_options(path: &Path, allow_approximate: bool) -> Result<AnalysisReport> {
     let source = std::fs::read(path).map_err(|source| Error::Read {
         path: path.to_owned(),
         source,
@@ -478,25 +485,30 @@ pub fn analyze_file_with_options(path: &Path, allow_approximate: bool) -> Result
 
 /// Analyze SVG bytes without converting them.
 #[doc(hidden)]
-pub fn analyze(source: &[u8]) -> Result<Analysis> {
+pub fn analyze(source: &[u8]) -> Result<AnalysisReport> {
     analyze_with_options(source, false)
 }
 
 /// Analyze SVG bytes without converting them, optionally allowing approximations.
 #[doc(hidden)]
-pub fn analyze_with_options(source: &[u8], allow_approximate: bool) -> Result<Analysis> {
+pub fn analyze_with_options(source: &[u8], allow_approximate: bool) -> Result<AnalysisReport> {
     if bitmap::ImageFormat::sniff(source).is_some() {
         return Err(Error::InvalidInput(
             "this is a raster image, not an SVG".to_owned(),
         ));
     }
-    Ok(svg::process(source, false, allow_approximate)?.analysis)
+    let processed = svg::process(source, true, allow_approximate)?;
+    let bytes = processed
+        .drawable
+        .as_ref()
+        .map_or(0, |drawable| xml::write(drawable, false).len());
+    Ok(AnalysisReport::new(processed.analysis, bytes))
 }
 
 /// Analyze an SVG file as an icon of `kind` fitted to `fit` dp, without
 /// writing anything, as [`analyze_as`] does.
 #[doc(hidden)]
-pub fn analyze_file_as(path: &Path, kind: IconKind, fit: Fit) -> Result<Analysis> {
+pub fn analyze_file_as(path: &Path, kind: IconKind, fit: Fit) -> Result<AnalysisReport> {
     analyze_file_as_with_options(path, kind, fit, false)
 }
 
@@ -507,7 +519,7 @@ pub fn analyze_file_as_with_options(
     kind: IconKind,
     fit: Fit,
     allow_approximate: bool,
-) -> Result<Analysis> {
+) -> Result<AnalysisReport> {
     let source = std::fs::read(path).map_err(|source| Error::Read {
         path: path.to_owned(),
         source,
@@ -529,7 +541,7 @@ pub fn analyze_file_as_with_options(
 /// notification icon is rejected, because `notification` only writes a
 /// vector drawable.
 #[doc(hidden)]
-pub fn analyze_as(source: &[u8], kind: IconKind, fit: Fit) -> Result<Analysis> {
+pub fn analyze_as(source: &[u8], kind: IconKind, fit: Fit) -> Result<AnalysisReport> {
     analyze_as_with_options(source, kind, fit, false)
 }
 
@@ -540,20 +552,20 @@ pub fn analyze_as_with_options(
     kind: IconKind,
     fit: Fit,
     allow_approximate: bool,
-) -> Result<Analysis> {
+) -> Result<AnalysisReport> {
     if bitmap::ImageFormat::sniff(source).is_some() {
         return analyze_layer_as(source, kind);
     }
     match convert_as_with_options(source, kind, fit, allow_approximate) {
-        Ok(asset) => Ok(asset.analysis),
-        Err(Error::Incompatible(analysis)) => Ok(*analysis),
+        Ok(asset) => Ok(asset.into_analysis()),
+        Err(Error::Incompatible(analysis)) => Ok(AnalysisReport::new(*analysis, 0)),
         Err(error) => Err(error),
     }
 }
 
 /// Decode a raster file as an adaptive icon layer and report the same
 /// findings `adaptive` would, without writing anything.
-fn analyze_layer_as(source: &[u8], kind: IconKind) -> Result<Analysis> {
+fn analyze_layer_as(source: &[u8], kind: IconKind) -> Result<AnalysisReport> {
     let layer = match kind {
         IconKind::AdaptiveForeground => bitmap::LayerKind::Foreground,
         IconKind::AdaptiveBackground => bitmap::LayerKind::Background,
@@ -565,20 +577,23 @@ fn analyze_layer_as(source: &[u8], kind: IconKind) -> Result<Analysis> {
         }
     };
     let (image, diagnostics) = bitmap::analyze_layer_image(source, layer)?;
-    Ok(Analysis {
-        compatibility: Compatibility::NotApplicable,
-        minimum_api: None,
-        diagnostics,
-        metrics: Metrics {
-            width: image.width as f32,
-            height: image.height as f32,
-            viewport_width: adaptive::ADAPTIVE_ICON_SIZE,
-            viewport_height: adaptive::ADAPTIVE_ICON_SIZE,
-            content_bounds: image.content,
-            ..Metrics::default()
+    Ok(AnalysisReport::new(
+        Analysis {
+            compatibility: Compatibility::NotApplicable,
+            minimum_api: None,
+            diagnostics,
+            metrics: Metrics {
+                width: image.width as f32,
+                height: image.height as f32,
+                viewport_width: adaptive::ADAPTIVE_ICON_SIZE,
+                viewport_height: adaptive::ADAPTIVE_ICON_SIZE,
+                content_bounds: image.content,
+                ..Metrics::default()
+            },
+            image: Some(image.format),
         },
-        image: Some(image.format),
-    })
+        0,
+    ))
 }
 
 /// Convert an SVG file exactly or with safe normalization.

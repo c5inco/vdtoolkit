@@ -59,6 +59,14 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- The internal Rust API measures XML size on demand with
+  `Asset::estimated_xml_bytes()` instead of storing
+  `Metrics::estimated_xml_bytes`. The `analyze*` functions now return an
+  `AnalysisReport`; `Asset::into_analysis()` creates the same report from a
+  converted asset. CLI JSON, `inspect`, and WebAssembly results retain their
+  existing fields and values, including the current readable XML size after
+  optimization or fitting.
+
 - Compatibility diagnostics name both output targets rather than only the
   drawable format, so an SVG rejected by `vdt compose` reads as accurately as
   one rejected by `convert`: "dashed strokes cannot be represented by a vector

@@ -21,6 +21,25 @@ test("the generated module returns exact and normalized analysis", () => {
   assert.equal(result.ok, true);
   assert.equal(result.analysis.compatibility, "exact_with_normalization");
   assert.match(result.xml, /android:pathData="M1,2 L4,2 L4,6 L1,6 Z"/);
+  const pretty = convertSvg(normalized, false, undefined, true);
+  const readableBytes = Buffer.byteLength(pretty.xml, "utf8");
+  assert.equal(result.analysis.metrics.estimated_xml_bytes, readableBytes);
+  // The field order the CLI and binding wrote before the size became a method.
+  assert.deepEqual(Object.keys(result.analysis.metrics), [
+    "width",
+    "height",
+    "viewport_width",
+    "viewport_height",
+    "paths",
+    "path_commands",
+    "groups",
+    "gradients",
+    "clip_paths",
+    "content_bounds",
+    "estimated_xml_bytes",
+  ]);
+  assert.equal(pretty.analysis.metrics.estimated_xml_bytes, readableBytes);
+  assert.equal(analyzeSvg(normalized).analysis.metrics.estimated_xml_bytes, readableBytes);
 });
 
 test("unsupported and malformed inputs are structured failures", () => {
@@ -29,6 +48,8 @@ test("unsupported and malformed inputs are structured failures", () => {
   assert.equal(unsupportedResult.error.kind, "unsupported");
   assert.equal(unsupportedResult.error.analysis.compatibility, "unsupported");
   assert.ok(unsupportedResult.error.analysis.diagnostics.some(({ code }) => code === "VDT006"));
+  assert.equal(unsupportedResult.error.analysis.metrics.estimated_xml_bytes, 0);
+  assert.equal(analyzeSvg(unsupported).analysis.metrics.estimated_xml_bytes, 0);
 
   const malformedResult = convertSvg(malformed, false);
   assert.equal(malformedResult.ok, false);
@@ -62,6 +83,10 @@ test("large drawables warn and can be fit within a size cap", () => {
   assert.match(capped.xml, /android:height="133dp"/);
   assert.match(capped.xml, /android:viewportWidth="480"/);
   assert.deepEqual(capped.analysis.diagnostics, []);
+  assert.equal(
+    capped.analysis.metrics.estimated_xml_bytes,
+    Buffer.byteLength(convertSvg(large, false, 200, true).xml, "utf8"),
+  );
 });
 
 test("notification conversion whitens and fits artwork on a 24dp canvas", () => {
@@ -70,6 +95,13 @@ test("notification conversion whitens and fits artwork on a 24dp canvas", () => 
   assert.deepEqual([result.analysis.metrics.width, result.analysis.metrics.height], [24, 24]);
   assert.match(result.xml, /android:fillColor="#FFFFFF"/);
   assert.ok(result.analysis.diagnostics.some(({ code }) => code === "VDT021"));
+  for (const optimize of [false, true]) {
+    const compact = convertNotificationSvg(exact, optimize, 20);
+    const pretty = convertNotificationSvg(exact, optimize, 20, true);
+    const readableBytes = Buffer.byteLength(pretty.xml, "utf8");
+    assert.equal(compact.analysis.metrics.estimated_xml_bytes, readableBytes);
+    assert.equal(pretty.analysis.metrics.estimated_xml_bytes, readableBytes);
+  }
 });
 
 test("resource names match the command-line interface", () => {

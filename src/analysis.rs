@@ -46,7 +46,7 @@ pub struct Analysis {
     pub minimum_api: Option<u32>,
     /// Actionable compatibility and normalization findings.
     pub diagnostics: Vec<Diagnostic>,
-    /// Geometry and output-size measurements.
+    /// Geometry measurements, without serializing the drawable.
     pub metrics: Metrics,
     /// Raster format when this analysis is of a layer image rather than an SVG.
     ///
@@ -93,8 +93,117 @@ pub struct Metrics {
     /// path lies inside the viewport. When [`Analysis::image`] is set, this is
     /// the painted pixel box mapped onto the 108dp layer, not pixel coordinates.
     pub content_bounds: Option<Bounds>,
-    /// Serialized VectorDrawable size before optional optimization.
-    pub estimated_xml_bytes: usize,
+}
+
+/// An analysis snapshot with the readable XML size measured for reporting.
+///
+/// Assets keep only [`Analysis`]; creating a report measures their current
+/// drawable, including any optimization or fitting, once.
+#[derive(Clone, Debug)]
+pub struct AnalysisReport {
+    analysis: Analysis,
+    estimated_xml_bytes: usize,
+}
+
+impl AnalysisReport {
+    /// Attach a measured readable XML size, or zero when there is no drawable.
+    pub fn new(analysis: Analysis, estimated_xml_bytes: usize) -> Self {
+        Self {
+            analysis,
+            estimated_xml_bytes,
+        }
+    }
+
+    /// Size of the readable XML at the time this report was made.
+    pub fn estimated_xml_bytes(&self) -> usize {
+        self.estimated_xml_bytes
+    }
+
+    /// Metrics with the size included under the stable JSON key.
+    pub fn metrics_report(&self) -> MetricsReport<'_> {
+        MetricsReport::new(&self.analysis.metrics, self.estimated_xml_bytes)
+    }
+}
+
+impl std::ops::Deref for AnalysisReport {
+    type Target = Analysis;
+
+    fn deref(&self) -> &Analysis {
+        &self.analysis
+    }
+}
+
+impl Serialize for AnalysisReport {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+
+        let Analysis {
+            compatibility,
+            minimum_api,
+            diagnostics,
+            metrics,
+            image,
+        } = &self.analysis;
+        let mut report =
+            serializer.serialize_struct("Analysis", if image.is_some() { 5 } else { 4 })?;
+        report.serialize_field("compatibility", compatibility)?;
+        report.serialize_field("minimum_api", minimum_api)?;
+        report.serialize_field("diagnostics", diagnostics)?;
+        report.serialize_field(
+            "metrics",
+            &MetricsReport::new(metrics, self.estimated_xml_bytes),
+        )?;
+        if let Some(image) = image {
+            report.serialize_field("image", image)?;
+        }
+        report.end()
+    }
+}
+
+/// The stable report metrics, including a size measured at the output boundary.
+#[derive(Serialize)]
+pub struct MetricsReport<'a> {
+    width: f32,
+    height: f32,
+    viewport_width: f32,
+    viewport_height: f32,
+    paths: usize,
+    path_commands: usize,
+    groups: usize,
+    gradients: usize,
+    clip_paths: usize,
+    content_bounds: &'a Option<Bounds>,
+    estimated_xml_bytes: usize,
+}
+
+impl<'a> MetricsReport<'a> {
+    fn new(metrics: &'a Metrics, estimated_xml_bytes: usize) -> Self {
+        let Metrics {
+            width,
+            height,
+            viewport_width,
+            viewport_height,
+            paths,
+            path_commands,
+            groups,
+            gradients,
+            clip_paths,
+            content_bounds,
+        } = metrics;
+        Self {
+            width: *width,
+            height: *height,
+            viewport_width: *viewport_width,
+            viewport_height: *viewport_height,
+            paths: *paths,
+            path_commands: *path_commands,
+            groups: *groups,
+            gradients: *gradients,
+            clip_paths: *clip_paths,
+            content_bounds,
+            estimated_xml_bytes,
+        }
+    }
 }
 
 /// Axis-aligned bounds in VectorDrawable viewport units.

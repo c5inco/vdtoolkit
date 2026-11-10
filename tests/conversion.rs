@@ -742,13 +742,35 @@ fn embedding_api_serializes_and_optimizes_an_asset() {
     </svg>"##;
     let mut asset = vdtoolkit::convert(source).unwrap();
     let before = asset.to_xml();
+    assert_eq!(asset.estimated_xml_bytes(), before.len());
+    assert_eq!(
+        vdtoolkit::analyze(source).unwrap().estimated_xml_bytes(),
+        before.len()
+    );
+
+    for kind in [
+        vdtoolkit::IconKind::Notification,
+        vdtoolkit::IconKind::AdaptiveForeground,
+        vdtoolkit::IconKind::AdaptiveBackground,
+    ] {
+        let icon =
+            vdtoolkit::convert_as_with_options(source, kind, kind.default_fit(), false).unwrap();
+        let bytes = icon.to_xml().len();
+        assert_eq!(icon.estimated_xml_bytes(), bytes);
+        assert_eq!(
+            vdtoolkit::analyze_as(source, kind, kind.default_fit())
+                .unwrap()
+                .estimated_xml_bytes(),
+            bytes
+        );
+    }
 
     asset.optimize();
     let after = asset.to_xml();
 
     assert!(after.len() < before.len());
     assert!(after.contains("M1.235 2.346"));
-    assert_eq!(asset.analysis.metrics.estimated_xml_bytes, after.len());
+    assert_eq!(asset.estimated_xml_bytes(), after.len());
 }
 
 #[test]
@@ -842,26 +864,121 @@ fn optimize_reports_before_and_after_sizes() {
     )
     .unwrap();
 
-    let result = Command::new(env!("CARGO_BIN_EXE_vdt"))
-        .args([
-            "optimize",
-            input.to_str().unwrap(),
-            "-o",
-            output.to_str().unwrap(),
-        ])
-        .output()
-        .unwrap();
+    for flags in [&[][..], &["--pretty"][..]] {
+        let converted = Command::new(env!("CARGO_BIN_EXE_vdt"))
+            .arg("convert")
+            .arg(&input)
+            .args(flags)
+            .output()
+            .unwrap();
+        assert!(converted.status.success());
 
-    assert!(result.status.success());
-    let report = String::from_utf8(result.stderr).unwrap();
-    assert!(report.contains("Generated drawable:"));
-    assert!(report.contains("Optimized drawable:"));
-    assert!(report.contains("Reduction:"));
-    let xml = fs::read_to_string(output).unwrap();
-    assert!(xml.contains("<clip-path"));
-    assert_eq!(xml.matches("M1.235 2.346").count(), 2);
-    assert!(!xml.contains("1.234567"));
-    assert!(!xml.contains("2.345678"));
+        let result = Command::new(env!("CARGO_BIN_EXE_vdt"))
+            .arg("optimize")
+            .arg(&input)
+            .arg("-o")
+            .arg(&output)
+            .args(flags)
+            .output()
+            .unwrap();
+
+        assert!(result.status.success());
+        let report = String::from_utf8(result.stderr).unwrap();
+        let xml = fs::read_to_string(&output).unwrap();
+        assert!(converted.stdout.len() > xml.len());
+        assert!(report.contains(&format!(
+            "Generated drawable: {} bytes",
+            converted.stdout.len()
+        )));
+        assert!(report.contains(&format!("Optimized drawable: {} bytes", xml.len())));
+        let reduction =
+            100.0 * (converted.stdout.len() - xml.len()) as f64 / converted.stdout.len() as f64;
+        assert!(report.contains(&format!("Reduction: {reduction:.1}%")));
+        assert!(xml.contains("<clip-path"));
+        assert_eq!(xml.matches("M1.235 2.346").count(), 2);
+        assert!(!xml.contains("1.234567"));
+        assert!(!xml.contains("2.345678"));
+    }
+}
+
+#[test]
+fn cli_inspect_reports_readable_xml_size() {
+    let temp = tempfile::tempdir().unwrap();
+    let input = temp.path().join("icon.svg");
+    fs::write(
+        &input,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48">
+            <path d="M8 8H40V40H8Z" fill="#FF0000" fill-opacity="0.5"/>
+            <path d="M16 16H32V32H16Z" fill="none" stroke="#00FF00" stroke-width="4"/>
+        </svg>"##,
+    )
+    .unwrap();
+
+    for (kind, command) in [(None, "convert"), (Some("notification"), "notification")] {
+        let converted = Command::new(env!("CARGO_BIN_EXE_vdt"))
+            .args([command, "--pretty"])
+            .arg(&input)
+            .output()
+            .unwrap();
+        assert!(converted.status.success());
+        let mut inspect_args = vec!["inspect"];
+        if let Some(kind) = kind {
+            inspect_args.extend(["--as", kind]);
+        }
+        let inspected = Command::new(env!("CARGO_BIN_EXE_vdt"))
+            .args(&inspect_args)
+            .arg(&input)
+            .output()
+            .unwrap();
+        assert!(inspected.status.success());
+        assert!(
+            String::from_utf8(inspected.stdout)
+                .unwrap()
+                .contains(&format!(
+                    "Estimated XML size: {} bytes",
+                    converted.stdout.len()
+                ))
+        );
+        let json = Command::new(env!("CARGO_BIN_EXE_vdt"))
+            .args(&inspect_args)
+            .args(["--format", "json"])
+            .arg(&input)
+            .output()
+            .unwrap();
+        assert!(json.status.success());
+        let report: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+        assert_eq!(
+            report[0]["metrics"]["estimated_xml_bytes"],
+            converted.stdout.len()
+        );
+    }
+
+    fs::write(
+        &input,
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><text>hello</text></svg>"#,
+    )
+    .unwrap();
+    for kind in ["notification", "adaptive-foreground", "adaptive-background"] {
+        let inspected = Command::new(env!("CARGO_BIN_EXE_vdt"))
+            .args(["inspect", "--as", kind])
+            .arg(&input)
+            .output()
+            .unwrap();
+        assert_eq!(inspected.status.code(), Some(2));
+        assert!(
+            String::from_utf8(inspected.stdout)
+                .unwrap()
+                .contains("Estimated XML size: 0 bytes")
+        );
+        let json = Command::new(env!("CARGO_BIN_EXE_vdt"))
+            .args(["inspect", "--as", kind, "--format", "json"])
+            .arg(&input)
+            .output()
+            .unwrap();
+        assert_eq!(json.status.code(), Some(2));
+        let report: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+        assert_eq!(report[0]["metrics"]["estimated_xml_bytes"], 0);
+    }
 }
 
 fn attribute(xml: &str, name: &str) -> f32 {
@@ -1190,6 +1307,7 @@ fn radial_gradient_focal_offset_converts_with_allow_approximate() {
             .iter()
             .any(|d| d.code == DiagnosticCode::UnsupportedGradient)
     );
+    assert_eq!(default_analysis.estimated_xml_bytes(), 0);
     assert!(vdtoolkit::convert(source.as_bytes()).is_err());
 
     // With allow_approximate, succeeds with warning and approximate compatibility
@@ -1206,6 +1324,8 @@ fn radial_gradient_focal_offset_converts_with_allow_approximate() {
     let asset = vdtoolkit::convert_with_options(source.as_bytes(), true).unwrap();
     assert_eq!(asset.analysis.compatibility, Compatibility::Approximate);
     let xml = asset.to_xml();
+    assert_eq!(asset.estimated_xml_bytes(), xml.len());
+    assert_eq!(approx_analysis.estimated_xml_bytes(), xml.len());
     roxmltree::Document::parse(&xml).unwrap();
     assert!(xml.contains("android:gradientRadius="));
 }
@@ -1708,7 +1828,7 @@ fn fits_adaptive_layers_by_uniform_scale_and_centering() {
     let bounds = metrics.content_bounds.unwrap();
     assert_eq!((bounds.left, bounds.top), (21.0, 37.5));
     assert_eq!((bounds.right, bounds.bottom), (87.0, 70.5));
-    assert_eq!(metrics.estimated_xml_bytes, xml.len());
+    assert_eq!(asset.estimated_xml_bytes(), xml.len());
 
     assert!(matches!(
         asset.fit_adaptive_layer(vdtoolkit::Fit::contain(0.0)),
@@ -3022,7 +3142,7 @@ fn composes_a_masked_legacy_icon() {
     assert_eq!(legacy.analysis.compatibility, Compatibility::Exact);
     let metrics = &legacy.analysis.metrics;
     assert_eq!((metrics.paths, metrics.clip_paths), (2, 1));
-    assert_eq!(metrics.estimated_xml_bytes, xml.len());
+    assert_eq!(legacy.estimated_xml_bytes(), xml.len());
     // The foreground spans layer 26.5..81.5, which maps to 7.2..40.8.
     let bounds = metrics.content_bounds.unwrap();
     assert_eq!((bounds.left, bounds.right), (0.0, 48.0));
@@ -3322,7 +3442,7 @@ fn fit_within_scales_size_but_keeps_the_viewport() {
     assert!(xml.contains("android:viewportHeight=\"320\""));
     assert_eq!(asset.analysis.metrics.width, 200.0);
     assert_eq!(asset.analysis.metrics.height, 133.0);
-    assert_eq!(asset.analysis.metrics.estimated_xml_bytes, xml.len());
+    assert_eq!(asset.estimated_xml_bytes(), xml.len());
     assert!(asset.analysis.diagnostics.is_empty());
 
     let tall = br##"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="600">
@@ -3567,7 +3687,7 @@ fn notification_icons_flatten_paint_to_white_and_keep_opacity() {
     // 48 units fit into 24dp: scale 0.5, no offset. Stroke width scales too.
     assert!(xml.contains("android:pathData=\"M4,4 L20,4 L20,20 L4,20 Z\""));
     assert!(xml.contains("android:strokeWidth=\"2\""));
-    assert_eq!(asset.analysis.metrics.estimated_xml_bytes, xml.len());
+    assert_eq!(asset.estimated_xml_bytes(), xml.len());
     assert_eq!(asset.analysis.minimum_api, Some(21));
 }
 
@@ -3772,7 +3892,7 @@ fn notification_lowering_ignores_only_uniform_alpha_gradient_geometry() {
             }
             if let Ok(asset) = converted {
                 assert_eq!(
-                    serde_json::to_value(&asset.analysis).unwrap(),
+                    serde_json::to_value(asset.clone().into_analysis()).unwrap(),
                     serde_json::to_value(&analysis).unwrap()
                 );
                 let xml = asset.to_xml();
@@ -4537,6 +4657,16 @@ fn cli_inspect_as_reports_raster_foreground_findings_without_writing() {
     let opaque = write("opaque.webp", &disc(1000.0, 0xFF));
     let empty = write("empty.webp", &disc(0.0, 0xFF));
     let jpeg = write("fg.jpg", include_bytes!("fixtures/background_square.jpg"));
+
+    let raster_analysis = vdtoolkit::analyze_as(
+        &fs::read(&inside).unwrap(),
+        vdtoolkit::IconKind::AdaptiveForeground,
+        vdtoolkit::IconKind::AdaptiveForeground.default_fit(),
+    )
+    .unwrap();
+    let raster_report = serde_json::to_value(raster_analysis).unwrap();
+    assert_eq!(raster_report["image"], "webp");
+    assert_eq!(raster_report["metrics"]["estimated_xml_bytes"], 0);
 
     let inspect = |args: &[&str], input: &std::path::Path| {
         let output = Command::new(env!("CARGO_BIN_EXE_vdt"))

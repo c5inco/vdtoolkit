@@ -32,6 +32,9 @@ jpeg-decoder = { version = "0.3.2", default-features = false }
 roxmltree = "0.21.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# The selector matcher usvg applies stylesheets with; keep it on the version
+# usvg resolves to, so both read a stylesheet the same way.
+simplecss = "0.2"
 thiserror = "2"
 tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd", "png-format"] }
 unicode-normalization = "0.1.25"

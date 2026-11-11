@@ -659,6 +659,7 @@ dependencies = [
  "roxmltree",
  "serde",
  "serde_json",
+ "simplecss",
  "thiserror",
  "tiny-skia",
  "unicode-normalization",

@@ -139,9 +139,38 @@ follow [Semantic Versioning](https://semver.org/).
   which aborted the native process and trapped the WebAssembly build and the
   Figma plugin. XML parsing uses roxmltree 0.21.2, which no longer recurses, and
   conversion rejects elements nested more than 200 levels deep on every build.
-  References are not counted: a `<use>` or `url()` reference adds the depth of
-  its target where it is used, so even one reference from deep content into
-  deep content can still exhaust the stack.
+  References count toward that limit, as the next entry describes.
+
+- An SVG whose references multiply its content is rejected before anything
+  expands it, instead of after gigabytes have been allocated. A `<use>` copies
+  its target, and a mask, clip path, filter, `<feImage>`, pattern, or marker is
+  built again for each element that points at it, so content referenced twice
+  per level doubles per level: twenty masks that each hold two references to
+  the one before, a 3.3 KB file, held 1.6 GB of resident memory and were still
+  running after two minutes. The limits on emitted path commands and generated
+  bytecode could not stop that, because they are checked after the expanded
+  tree is built. A pass over the parsed XML now adds up what the references
+  would build and rejects a document they expand by more than 250,000 elements
+  beyond those it writes out, counting every 32 bytes of copied attribute or
+  stylesheet text as one more; the same file is rejected at 4 MB. The pass
+  follows a reference however it is spelled — an attribute, a `style`
+  attribute, a stylesheet rule, an inherited paint or marker, a filter's
+  `href`, or a duplicated `id` — and counts a stylesheet rule's values once for
+  every element the rule matches, since each is copied there. The most that
+  any of the 7,690 icons and illustrations it was measured on adds is 1,413. A
+  large document that uses no references is not affected and costs what it
+  always did.
+
+- A chain or a cycle of references returns an input error instead of
+  overflowing the stack. Each reference followed counts as a level of the
+  200-level nesting limit, so a chain of more than about 66 masks, patterns,
+  markers, or `<use>` elements that each point at the next is rejected, where
+  a chain of 166 patterns aborted a release build. References that form a
+  cycle are rejected too: three masks that each mask the next one's content,
+  or a pattern whose content inherits the fill that names the pattern,
+  overflowed the stack. This also rejects the cycles that converted before
+  with the offending element left out, such as a `<use>` that points at its
+  own ancestor or a clip path clipped by itself.
 
 - A strongly elliptical radial gradient no longer disappears after `optimize`.
   Group attributes are rounded to three decimals, so a gradient near 2500:1

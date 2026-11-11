@@ -218,7 +218,9 @@ becomes, with `--pretty` (by default the same XML is written on one line):
 | Solid strokes: opacity, width, caps, joins | Nested effects or paint effects inside `<clipPath>`/`<mask>` |
 | Single-path clips and hard white single-shape masks (lowered to clips) | |
 
-Elements may be nested at most 200 levels deep, counting the root `<svg>`; deeper input is rejected with an error rather than risking a stack overflow. References are not counted: a `<use>` or `url()` reference adds the depth of its target at the point of use, so even one reference from deep content into deep content can still exhaust the stack. Flatten or expand such references in very deep artwork.
+Elements may be nested at most 200 levels deep, counting the root `<svg>`; deeper input is rejected with an error rather than risking a stack overflow. References count toward the same limit: a `<use>`, or a `url()` reference to a mask, clip path, filter, pattern, marker, or gradient, adds the depth of its target at the point of use plus one level for the reference itself, and references that form a cycle are rejected.
+
+References are also bounded by what they expand to, before anything expands them. A `<use>` copies its target, and a mask, clip path, filter, pattern, or marker is built again for each element that points at it, so content referenced twice per level doubles per level and a file of a few kilobytes can ask for gigabytes of memory. An SVG whose references and stylesheet rules add more than 250,000 elements to what it writes out — counting every 32 bytes of copied attribute or stylesheet text as one more — is rejected with an error. Artwork that reuses a symbol a few thousand times is far below that; flatten the references in artwork that is not.
 
 `inspect` reports `exact`, `exact_with_normalization`, `approximate`, or `unsupported`. Plain paths and a single clip target API 21; multiple clips, `android:fillType`, or inline `aapt` gradients raise the minimum to API 24 (`VDT004`). See [docs/research.md](docs/research.md) for renderer details.
 

@@ -358,6 +358,240 @@ fn deeply_nested_svg_is_an_input_error_not_a_stack_overflow() {
     }
 }
 
+/// A document of `levels` definitions in which each refers `width` times to the
+/// one before it, so the last expands to `width^(levels - 1)` copies of the
+/// first. `kind` picks the reference that does it.
+fn chained_references(kind: &str, levels: usize, width: usize) -> String {
+    let rect = r##"<rect width="24" height="24" fill="#808080"/>"##;
+    let mut definitions = String::new();
+    let mut styles = String::new();
+    for level in 0..levels {
+        let Some(below) = level.checked_sub(1) else {
+            definitions += &match kind {
+                "use" | "duplicated use id" | "feImage" | "filter alias" => {
+                    format!(r#"<g id="d0">{rect}</g>"#)
+                }
+                "clip-path" | "style attribute" => {
+                    r#"<clipPath id="d0" clipPathUnits="objectBoundingBox"><rect width="1" height="1"/></clipPath>"#.to_owned()
+                }
+                "pattern" => format!(
+                    r#"<pattern id="d0" width="4" height="4" patternUnits="userSpaceOnUse">{rect}</pattern>"#
+                ),
+                _ => format!(r#"<mask id="d0">{rect}</mask>"#),
+            };
+            continue;
+        };
+        let repeated = |one: String| one.repeat(width);
+        definitions += &match kind {
+            "use" => format!(
+                r##"<g id="d{level}">{}</g>"##,
+                repeated(format!(r##"<use href="#d{below}"/>"##))
+            ),
+            // `<use>` takes the first element with the id, so the empty one
+            // after it is the decoy.
+            "duplicated use id" => format!(
+                r##"<g id="d{level}">{}</g><g id="d{level}"/>"##,
+                repeated(format!(r##"<use href="#d{below}"/>"##))
+            ),
+            "feImage" => format!(
+                r##"<filter id="f{level}"><feImage href="#d{below}"/></filter><g id="d{level}">{}</g>"##,
+                repeated(format!(
+                    r##"<rect width="24" height="24" filter="url(#f{level})"/>"##
+                ))
+            ),
+            // The filter that is applied has no primitives of its own and takes
+            // them from the one its `href` names.
+            "filter alias" => format!(
+                r##"<filter id="f{level}"><feImage href="#d{below}"/></filter><filter id="a{level}" href="#f{level}"/><g id="d{level}">{}</g>"##,
+                repeated(format!(
+                    r##"<rect width="24" height="24" filter="url(#a{level})"/>"##
+                ))
+            ),
+            "clip-path" => format!(
+                r##"<clipPath id="d{level}" clipPathUnits="objectBoundingBox">{}</clipPath>"##,
+                repeated(format!(
+                    r##"<rect width="1" height="1" clip-path="url(#d{below})"/>"##
+                ))
+            ),
+            "style attribute" => format!(
+                r##"<clipPath id="d{level}" clipPathUnits="objectBoundingBox">{}</clipPath>"##,
+                repeated(format!(
+                    r##"<rect width="1" height="1" style="clip-path:url(#d{below})"/>"##
+                ))
+            ),
+            "pattern" => format!(
+                r##"<pattern id="d{level}" width="4" height="4" patternUnits="userSpaceOnUse">{}</pattern>"##,
+                repeated(format!(
+                    r##"<rect width="4" height="4" fill="url(#d{below})"/>"##
+                ))
+            ),
+            "mask" => format!(
+                r##"<mask id="d{level}">{}</mask>"##,
+                repeated(format!(r##"<g mask="url(#d{below})">{rect}</g>"##))
+            ),
+            // `url()` takes the last element with the id, so the empty one
+            // before it is the decoy.
+            "duplicated mask id" => format!(
+                r##"<mask id="d{level}"/><mask id="d{level}">{}</mask>"##,
+                repeated(format!(r##"<g mask="url(#d{below})">{rect}</g>"##))
+            ),
+            "stylesheet" => {
+                styles += &format!(".c{below}{{mask:url(#d{below})}}");
+                format!(
+                    r##"<mask id="d{level}">{}</mask>"##,
+                    repeated(format!(r##"<g class="c{below}">{rect}</g>"##))
+                )
+            }
+            other => panic!("unknown kind of reference: {other}"),
+        };
+    }
+    let last = levels - 1;
+    let content = match kind {
+        "use" | "duplicated use id" | "feImage" | "filter alias" => {
+            format!(r##"<use href="#d{last}"/>"##)
+        }
+        "clip-path" => format!(r##"<g clip-path="url(#d{last})">{rect}</g>"##),
+        "style attribute" => format!(r##"<g style="clip-path:url(#d{last})">{rect}</g>"##),
+        "pattern" => format!(r##"<rect width="24" height="24" fill="url(#d{last})"/>"##),
+        "stylesheet" => {
+            styles += &format!(".c{last}{{mask:url(#d{last})}}");
+            format!(r##"<g class="c{last}">{rect}</g>"##)
+        }
+        _ => format!(r##"<g mask="url(#d{last})">{rect}</g>"##),
+    };
+    format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><style>{styles}</style><defs>{definitions}</defs>{content}</svg>"#
+    )
+}
+
+#[test]
+fn references_that_multiply_their_content_are_rejected_before_they_expand() {
+    // Each level holds two references to the one below, so sixteen levels ask
+    // for 32,768 copies of the first: a file under 4 KB that took up to 224 MB
+    // to expand, and sixteen times that at twenty levels. Sixteen is enough to
+    // pass the limit, and few enough that losing the check fails this test in
+    // seconds rather than exhausting the machine that runs it.
+    for kind in [
+        "use",
+        "mask",
+        "clip-path",
+        "feImage",
+        "filter alias",
+        "stylesheet",
+        "style attribute",
+        "duplicated use id",
+        "duplicated mask id",
+    ] {
+        let source = chained_references(kind, 16, 2);
+        assert!(source.len() < 4_000, "{kind}: {} bytes", source.len());
+        match vdtoolkit::convert(source.as_bytes()) {
+            Err(Error::InvalidInput(message)) => {
+                assert!(
+                    message.contains("expands to more than"),
+                    "{kind}: {message}"
+                )
+            }
+            other => panic!("{kind}: expected an expansion error, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn a_stylesheet_value_repeated_on_every_element_is_rejected_before_it_is_copied() {
+    // A rule's values are copied onto each element it matches, so 100 KB of one
+    // value on a thousand elements is 100 MB that the source never wrote.
+    let source = format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><style>*{{font-family:{}}}</style>{}<path d="M1 1h2v2z"/></svg>"#,
+        "a".repeat(100_000),
+        "<g/>".repeat(1_000),
+    );
+    match vdtoolkit::convert(source.as_bytes()) {
+        Err(Error::InvalidInput(message)) => {
+            assert!(message.contains("expands to more than"), "{message}")
+        }
+        other => panic!("expected an expansion error, got {other:?}"),
+    }
+}
+
+#[test]
+fn artwork_that_reuses_its_content_heavily_still_converts() {
+    let paths = |xml: &str| xml.matches("<path").count();
+    // Eight levels of doubling are 128 copies, far more reuse than a drawing
+    // makes and far less than the limit.
+    let xml = vdtoolkit::convert(chained_references("use", 8, 2).as_bytes())
+        .unwrap()
+        .to_xml();
+    assert_eq!(paths(&xml), 128, "{xml}");
+    // A sprite sheet: one ten-path symbol drawn two thousand times.
+    let source = format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><defs><g id="glyph">{}</g></defs>{}</svg>"##,
+        r##"<path d="M1 1h2v2H1z" fill="#123456"/>"##.repeat(10),
+        r##"<use href="#glyph"/>"##.repeat(2_000),
+    );
+    let xml = vdtoolkit::convert(source.as_bytes()).unwrap().to_xml();
+    assert_eq!(paths(&xml), 20_000);
+    // A stylesheet that paints every one of a few thousand shapes.
+    let source = format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><style>.a{{fill:#123456;stroke:#654321;stroke-width:2}}</style>{}</svg>"##,
+        r##"<path class="a" d="M1 1h2v2H1z"/>"##.repeat(5_000),
+    );
+    let xml = vdtoolkit::convert(source.as_bytes()).unwrap().to_xml();
+    assert_eq!(paths(&xml), 5_000);
+    assert_eq!(
+        xml.matches("android:strokeColor=\"#654321\"").count(),
+        5_000
+    );
+}
+
+#[test]
+fn a_long_chain_of_references_is_an_input_error_not_a_stack_overflow() {
+    // One reference per level multiplies nothing, but usvg recurses along the
+    // chain: 150 patterns overflow a 2 MiB stack in a debug build, and 170 a
+    // 1 MiB one in a release build.
+    for kind in ["use", "mask", "clip-path", "pattern", "feImage"] {
+        let source = chained_references(kind, 150, 1);
+        match vdtoolkit::convert(source.as_bytes()) {
+            Err(Error::InvalidInput(message)) => {
+                assert!(message.contains("levels deep"), "{kind}: {message}")
+            }
+            other => panic!("{kind}: expected a nesting error, got {other:?}"),
+        }
+    }
+    // A chain within the limit is followed to its end.
+    let xml = vdtoolkit::convert(chained_references("use", 60, 1).as_bytes())
+        .unwrap()
+        .to_xml();
+    assert_eq!(xml.matches("<path").count(), 1, "{xml}");
+}
+
+#[test]
+fn a_cycle_of_references_is_an_input_error_not_a_stack_overflow() {
+    // Three masks that each mask the next one's content, and a pattern whose
+    // content inherits the fill that names the pattern. usvg guards against an
+    // element that refers to itself, and overflowed its stack on both of these.
+    let masks: String = [("a", "b"), ("b", "c"), ("c", "a")]
+        .iter()
+        .map(|(id, next)| {
+            format!(r##"<mask id="{id}"><rect width="24" height="24" fill="#808080" mask="url(#{next})"/></mask>"##)
+        })
+        .collect();
+    let masked = format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><defs>{masks}</defs><path d="M1 1h2v2z" mask="url(#a)"/></svg>"##
+    );
+    let inherited = r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><g fill="url(#p)">
+        <pattern id="p" width="4" height="4" patternUnits="userSpaceOnUse"><rect width="4" height="4"/></pattern>
+        <rect width="24" height="24"/>
+    </g></svg>"##;
+    for source in [masked.as_str(), inherited] {
+        match vdtoolkit::convert(source.as_bytes()) {
+            Err(Error::InvalidInput(message)) => {
+                assert!(message.contains("form a cycle"), "{message}")
+            }
+            other => panic!("expected a cycle error, got {other:?}"),
+        }
+    }
+}
+
 #[test]
 fn never_converts_known_lossy_features() {
     let source = br#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">

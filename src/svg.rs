@@ -37,6 +37,7 @@ pub(crate) fn process_as(
     reject_unsafe_xml(text)?;
     let document = roxmltree::Document::parse(text)?;
     reject_deep_nesting(&document)?;
+    crate::expansion::check(&document, MAX_ELEMENT_DEPTH)?;
     let (mut compatibility, mut diagnostics) = preflight(&document, target);
 
     let options = usvg::Options {
@@ -158,8 +159,10 @@ fn reject_unsafe_xml(source: &str) -> Result<()> {
 /// at 338 nested `<svg>` elements; 200 also leaves room on a 1 MiB release
 /// native stack and a 2 MiB debug test thread, though not on a 1 MiB debug
 /// stack. A `<use>` or `url()` reference adds the depth of its target where it
-/// is used, which this does not count, so one reference from deep content into
-/// deep content can still exhaust the stack.
+/// is used. [`reject_deep_nesting`] counts written nesting only;
+/// [`crate::expansion::check`] applies the same limit along references, where
+/// each reference followed is a level of its own because it costs usvg more
+/// stack than a child element does.
 const MAX_ELEMENT_DEPTH: usize = 200;
 
 fn reject_deep_nesting(document: &roxmltree::Document<'_>) -> Result<()> {

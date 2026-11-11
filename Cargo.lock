@@ -675,6 +675,7 @@ dependencies = [
  "roxmltree",
  "serde",
  "serde_json",
+ "simplecss",
  "tempfile",
  "thiserror",
  "tiny-skia",

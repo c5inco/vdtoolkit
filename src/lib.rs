@@ -12,6 +12,7 @@ mod compose;
 mod css;
 mod draw;
 mod error;
+mod expansion;
 mod icon;
 mod kotlin;
 mod notification;

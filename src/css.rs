@@ -15,6 +15,7 @@
 //! and sRGB is what VectorDrawable renders in anyway.
 
 use crate::ElementLocation;
+use crate::svg::SourceLines;
 
 /// A document with its `color()` functions resolved, and what did not resolve.
 pub(crate) struct Resolved {
@@ -59,6 +60,7 @@ pub(crate) fn resolve_color_functions(
 ) -> Resolved {
     let mut edits: Vec<(std::ops::Range<usize>, Rewrite)> = Vec::new();
     let mut unresolved = Vec::new();
+    let lines = SourceLines::new(source);
     for node in document.descendants() {
         let (element, left) = if node.is_element() {
             let mut left = None;
@@ -90,12 +92,12 @@ pub(crate) fn resolve_color_functions(
             continue;
         };
         if let Some(opaque_fill) = left {
-            let position = document.text_pos_at(element.range().start);
+            let (line, column) = lines.position(element.range().start);
             unresolved.push(Unresolved {
                 location: ElementLocation {
                     element: element.tag_name().name().to_owned(),
-                    line: position.row,
-                    column: position.col,
+                    line,
+                    column,
                 },
                 opaque_fill,
             });

@@ -1,5 +1,6 @@
 use std::fs;
 use std::process::Command;
+use std::time::{Duration, Instant};
 
 use vdtoolkit::{Compatibility, DiagnosticCode, Error, Severity};
 
@@ -5353,5 +5354,46 @@ fn resolving_a_wide_gamut_color_is_reported_as_an_informational_note() {
             .diagnostics
             .iter()
             .any(|diagnostic| diagnostic.code.as_str() == "VDT022"),
+    );
+}
+
+/// A document that reports on every element stays linear in its size.
+///
+/// Preflight asks for a diagnostic location once per element, and the position
+/// lookup used to rescan the text from its start on each call: quadratic, so
+/// this document spent nine seconds in a release build and minutes in a debug
+/// one, which a sweep reads as a hang. The bound is loose because it only has
+/// to catch that regression, not measure the fix, which runs well inside it.
+#[test]
+fn reports_on_a_large_document_in_linear_time() {
+    let prefix = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\">";
+    let groups = "<g transform=\"translate(1 1)\"><path d=\"M1 1h2v2z\"/></g>".repeat(20_000);
+    let source = format!("{prefix}{groups}</svg>");
+
+    let started = Instant::now();
+    let converted = vdtoolkit::convert_draw(source.as_bytes());
+    let elapsed = started.elapsed();
+
+    let Err(Error::Incompatible(analysis)) = converted else {
+        panic!("expected the transformed groups to require normalization");
+    };
+    let normalization = analysis
+        .diagnostics
+        .iter()
+        .find(|diagnostic| matches!(diagnostic.code, DiagnosticCode::NormalizationRequired))
+        .expect("a transformed group requires normalization");
+    let location = normalization
+        .location
+        .as_ref()
+        .expect("a normalization diagnostic is located");
+    // The location is the first transformed group, on the only line.
+    assert_eq!(
+        (location.line, location.column),
+        (1, prefix.len() as u32 + 1)
+    );
+    assert!(
+        elapsed < Duration::from_secs(10),
+        "took {elapsed:?} to report on {} bytes",
+        source.len()
     );
 }

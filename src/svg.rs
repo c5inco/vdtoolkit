@@ -181,6 +181,38 @@ fn reject_deep_nesting(document: &roxmltree::Document<'_>) -> Result<()> {
     Ok(())
 }
 
+/// Source line starts, for turning a byte offset into a diagnostic location.
+///
+/// `roxmltree::Document::text_pos_at` scans the text from its start on every
+/// call — the crate calls the operation "very expensive" — and preflight asks
+/// for a location once per element it reports on, so a document with tens of
+/// thousands of transformed groups or `<use>` references spent minutes there.
+/// A run that slow outlives the sweep that started it and reads as a hang, so
+/// the line starts are computed once here and a position is a binary search.
+pub(crate) struct SourceLines<'a> {
+    text: &'a str,
+    /// Byte offset of the first character of each line, starting with 0.
+    starts: Vec<usize>,
+}
+
+impl<'a> SourceLines<'a> {
+    pub(crate) fn new(text: &'a str) -> Self {
+        let mut starts = vec![0];
+        starts.extend(text.match_indices('\n').map(|(offset, _)| offset + 1));
+        Self { text, starts }
+    }
+
+    /// One-based line and column of `offset`, matching
+    /// [`roxmltree::Document::text_pos_at`]: the column counts characters since
+    /// the last newline.
+    pub(crate) fn position(&self, offset: usize) -> (u32, u32) {
+        let offset = offset.min(self.text.len());
+        let line = self.starts.partition_point(|start| *start <= offset) - 1;
+        let column = self.text[self.starts[line]..offset].chars().count();
+        (line as u32 + 1, column as u32 + 1)
+    }
+}
+
 fn preflight(
     document: &roxmltree::Document<'_>,
     target: vector::Target,
@@ -188,14 +220,15 @@ fn preflight(
     let mut compatibility = Compatibility::Exact;
     let mut diagnostics = Vec::new();
     let direct = target == vector::Target::Draw;
+    let lines = SourceLines::new(document.input_text());
     for node in document.descendants().filter(roxmltree::Node::is_element) {
         let name = node.tag_name().name();
         let location = || {
-            let position = document.text_pos_at(node.range().start);
+            let (line, column) = lines.position(node.range().start);
             Some(ElementLocation {
                 element: name.to_owned(),
-                line: position.row,
-                column: position.col,
+                line,
+                column,
             })
         };
         match name {
@@ -213,7 +246,7 @@ fn preflight(
                     );
                 } else if width.is_none() || height.is_none() {
                     if width.is_none() && height.is_none() && node.has_attribute("viewBox") {
-                        mark_normalization(&mut compatibility, &mut diagnostics, location());
+                        mark_normalization(&mut compatibility, &mut diagnostics, location);
                     } else {
                         push_unsupported(
                             &mut compatibility,
@@ -228,7 +261,7 @@ fn preflight(
             }
             "mask" if direct => {}
             "mask" if source_mask_may_lower(&node) => {
-                mark_normalization(&mut compatibility, &mut diagnostics, location())
+                mark_normalization(&mut compatibility, &mut diagnostics, location)
             }
             "mask" => push_unsupported(
                 &mut compatibility,
@@ -324,16 +357,16 @@ fn preflight(
             ),
             "rect" | "circle" | "ellipse" | "line" | "polyline" | "polygon" | "use" | "style"
             | "marker" | "symbol" | "a" => {
-                mark_normalization(&mut compatibility, &mut diagnostics, location())
+                mark_normalization(&mut compatibility, &mut diagnostics, location)
             }
             _ => {}
         }
 
         if node.has_attribute("transform") {
-            mark_normalization(&mut compatibility, &mut diagnostics, location());
+            mark_normalization(&mut compatibility, &mut diagnostics, location);
         }
         if has_nondefault_opacity(&node) {
-            mark_normalization(&mut compatibility, &mut diagnostics, location());
+            mark_normalization(&mut compatibility, &mut diagnostics, location);
         }
         if node.has_attribute("filter") || style_contains(&node, "filter:") {
             push_unsupported(
@@ -533,10 +566,16 @@ fn has_external_url(value: &str) -> bool {
     lower.contains("@import")
 }
 
+/// Record that safe normalization is required, at most once.
+///
+/// The location is computed on demand: only the first element that asks for
+/// this diagnostic keeps its location, so taking it eagerly would look up a
+/// position for every transformed group and `<use>` in the document and throw
+/// all but one away.
 fn mark_normalization(
     compatibility: &mut Compatibility,
     diagnostics: &mut Vec<Diagnostic>,
-    location: Option<ElementLocation>,
+    location: impl Fn() -> Option<ElementLocation>,
 ) {
     compatibility.worsen(Compatibility::ExactWithNormalization);
     if diagnostics
@@ -547,7 +586,7 @@ fn mark_normalization(
             code: DiagnosticCode::NormalizationRequired,
             severity: Severity::Info,
             message: "safe SVG normalization is required before lowering".to_owned(),
-            location,
+            location: location(),
             suggestion: None,
         });
     }
@@ -585,6 +624,24 @@ fn push_unsupported(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_lines_report_the_positions_roxmltree_reports() {
+        let text = "<svg>\n  <g id=\"a\"/>\n  <text>é</text>\n</svg>\n";
+        let document = roxmltree::Document::parse(text).unwrap();
+        let lines = SourceLines::new(text);
+        for (offset, _) in text
+            .char_indices()
+            .chain(std::iter::once((text.len(), ' ')))
+        {
+            let expected = document.text_pos_at(offset);
+            assert_eq!(
+                lines.position(offset),
+                (expected.row, expected.col),
+                "at offset {offset}"
+            );
+        }
+    }
 
     #[test]
     fn rejects_doctype_before_xml_parser() {

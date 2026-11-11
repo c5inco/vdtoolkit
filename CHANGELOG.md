@@ -124,6 +124,17 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A document whose elements each need a diagnostic location converts in time
+  linear in its size. Every location rescanned the source text from its start,
+  and one is asked for per transformed group, `<use>`, or `<style>` element, so
+  a 20,000-group drawing spent nine seconds in a release build and nearly four
+  minutes in a debug one — slow enough that a sweep reads it as a hang, because
+  the process outlives the run that started it. Line starts are computed once
+  per document and a position is a binary search over them, and the
+  normalization note is located only for the element that records it. Resolving
+  `color()` functions shares the same index rather than looking up positions
+  the same way.
+
 - A deeply nested SVG returns an input error instead of overflowing the stack,
   which aborted the native process and trapped the WebAssembly build and the
   Figma plugin. XML parsing uses roxmltree 0.21.2, which no longer recurses, and

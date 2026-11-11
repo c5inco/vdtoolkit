@@ -59,6 +59,7 @@ python3 tools/check-material-symbols.py --suite outlined-all  # exhaustive pinne
 python3 tools/check-studio-icons.py                           # Studio Icons stress suite
 python3 tools/check-runeicons.py                              # Rune Icons stress suite
 python3 tools/check-hugeicons.py                              # Hugeicons stress suite
+python3 tools/check-codicons.py                               # Codicons stress suite
 python3 tools/check-illustrations.py                          # complex-illustration corpus, with visual comparison
 ```
 
@@ -79,7 +80,9 @@ pinned GitHub commit and checks per-style coverage floors and deterministic
 output, but has no official VectorDrawables to compare against. See
 [research.md](research.md#rune-icons-stress-corpus). The Hugeicons suite works the
 same way on the MIT-licensed free Stroke Rounded set; see
-[research.md](research.md#hugeicons-stress-corpus).
+[research.md](research.md#hugeicons-stress-corpus). The Codicons suite works the
+same way on the MIT-licensed set VS Code draws its own interface with; see
+[research.md](research.md#codicons-stress-corpus).
 
 [`tools/android-renderer`](../tools/android-renderer) is a standalone harness
 that converts its SVG fixtures with the current binary and verifies rendered

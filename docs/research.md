@@ -109,6 +109,34 @@ express. Six pairs of upstream names, such as `rubber-duck.svg` and
 `rubber--duck.svg`, map to the same Android resource name, so the suite renames
 its copies before converting them.
 
+## Codicons stress corpus
+
+[microsoft/vscode-codicons](https://github.com/microsoft/vscode-codicons)
+publishes the MIT-licensed set VS Code draws its own interface with, as SVGs
+under `src/icons/`. The suite sparse-checks out commit `6200d186` and converts
+all 659 icons: paths only, filled with `currentColor`, at a 16-unit viewport for
+568 of them and one of seven other sizes for the rest. Five hundred and
+twenty-seven icons are a single path, the largest is fourteen, and `blank.svg`
+is deliberately empty. There are no paired VectorDrawables, so the suite
+measures compatibility and repeated-output determinism only and is not a release
+gate.
+
+At that commit all 659 icons convert exactly, none approximately, and all 659
+are byte-identical on repeat; the suite fails if that count drops.
+`currentColor` resolves to the opaque black that SVG gives a colour nothing
+sets, which an Android theme then replaces by tinting the drawable. The only
+diagnostic is `VDT004` on the 112 icons whose fills are even-odd, which reports
+that `android:fillType` needs API 24. One upstream name, `package`, is a Kotlin
+keyword, so it is written as `ic_package`; no other name needs changing.
+
+Warm in-process conversion of all 659, ten samples after a discarded warmup
+round, measured on an Intel Xeon at 2.60 GHz with Rust 1.99.1:
+
+| Policy | Median | Slowest | Output bytes | Bytes per icon |
+| --- | ---: | ---: | ---: | ---: |
+| `exact` | 39.28 ms | 64.01 ms | 942,433 | 1,430 |
+| `optimize` | 67.13 ms | 76.50 ms | 727,267 | 1,104 |
+
 ## Gradient lowering
 
 VectorDrawable gradients are inline complex colors from API 24. Linear

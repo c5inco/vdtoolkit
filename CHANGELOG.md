@@ -96,6 +96,12 @@ follow [Semantic Versioning](https://semver.org/).
   with off-center focal points (`fx != cx` or `fy != cy`) are centered with
   warning `VDT003` and reported as `approximate` compatibility, rather than
   blocking conversion.
+- Optional Codicons stress suite, `tools/check-codicons.py`, covering all 659
+  icons of the set VS Code draws its own interface with, from a pinned commit.
+  Every one converts exactly and byte-identically on repeat, and the 112 whose
+  fills are even-odd report `VDT004`. The suite checks a coverage floor,
+  repeated-output determinism, and that no upstream name collides as an Android
+  resource name.
 
 ### Changed
 

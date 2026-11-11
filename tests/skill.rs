@@ -207,7 +207,7 @@ fn page(name: &str) -> &'static str {
 fn every_diagnostic_code_has_an_explanation() {
     let defined = codes(ANALYSIS, "#[serde(rename = \"");
     let explained = codes(page("codes.md"), "\n## ");
-    assert_eq!(defined.len(), 26, "expected VDT001 through VDT026");
+    assert_eq!(defined.len(), 27, "expected VDT001 through VDT027");
     assert_eq!(
         defined, explained,
         "src/guide/codes.md and DiagnosticCode differ"

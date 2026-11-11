@@ -36,17 +36,21 @@ compatibility, and converts; the highlight moves, so tell the user. Or remove
 `fx`/`fy`/`fr` in the SVG. For a transform or a stroke, fix it in the design
 tool, for example by making the stroke gradient circular.
 
-## VDT004: needs API 24
+## VDT004: needs a newer API level
 
-Info. The drawable uses gradients, even-odd fills, or more than one clip path,
-which VectorDrawable draws only on API 24 and newer. It mirrors
-`minimum_api: 24` and names the features that raised it.
+Info. The output uses something its platform draws only on a newer API level,
+and it mirrors `minimum_api`. A drawable: gradients, even-odd fills, or more
+than one clip path, which VectorDrawable draws only on API 24 and newer. Drawn
+Kotlin: a blend mode that Android's `PorterDuff` has no equivalent for, which
+Compose draws only on API 29 and newer and falls back to painting the group
+normally below.
 
-Nothing to do when the module's `minSdk` is 24 or higher. When it is lower,
-tell the user: the suggestion says how to stay on API 21, such as flattening
-a gradient to a solid fill, converting even-odd fills to nonzero, or combining
-clips. `adaptive --legacy` handles this for launcher icons by writing WebPs
-for older devices.
+Nothing to do when the module's `minSdk` is at least that level. When it is
+lower, tell the user: for a drawable the suggestion says how to stay on API 21,
+such as flattening a gradient to a solid fill, converting even-odd fills to
+nonzero, or combining clips, and `adaptive --legacy` handles launcher icons by
+writing WebPs for older devices. For drawn Kotlin, the only way to stay below
+API 29 is not to use the blend mode.
 
 ## VDT005: external image
 
@@ -215,3 +219,20 @@ Warning. A raster foreground has no transparent pixels, so it hides the
 background layer entirely and the icon is a flat image without parallax.
 Export the foreground on a transparent canvas, or pass the flat image as
 `--background-image` with a foreground that is only the mark.
+
+## VDT027: drawing too large for one method
+
+Error. The drawing asks for more than one Kotlin method can hold. Compose
+inlines the blocks `vdt compose --draw` writes, so every draw call, clip, and
+layer lands in the one method the painter draws in, and the JVM refuses a method
+of over 64 KB; a luminance mask is written twice as well, so each nested mask
+doubles what is under it. What a statement costs is the bytecode it compiles to
+rather than how much of the file it takes, so a gradient brush, which builds an
+array of boxed pairs, costs several times a solid colour. A drawing of a few
+thousand shapes is fine, and a mask of one opaque white shape costs nothing
+extra, but a chain of nested masks, or hundreds of shapes each painted with a
+gradient of its own, does not compile.
+
+Fix in the artwork: flatten the nested masks, or split the drawing into several
+icons. Nothing here is a limit of Compose or of the SVG; it is the size of one
+generated method, and the `ImageVector` target has the same one.

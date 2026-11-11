@@ -183,3 +183,96 @@ divergence from the platform renderer, recorded in `docs/research.md`.
 Pixels are read from an offscreen bitmap drawn with `CanvasDrawScope` at
 density 1. Compose's `captureToImage` was tried first and fails below API 26,
 where it calls a `PixelCopy.request` overload that does not exist yet.
+
+### Draw target
+
+`DrawTargetRendererTest` draws the Kotlin `vdt compose --draw` writes, at the
+same ten pixels per viewport unit, and checks the pixels the source SVG draws.
+Verified on 2026-11-10 with Compose BOM 2026.01.01:
+
+| Device | API | Result |
+| --- | ---: | --- |
+| sdk_gphone64_arm64 emulator | 36 | 15/15 passed |
+
+The drawing is `tests/fixtures/draw/features.svg`, twelve 12x12 cells, one per
+feature only this target can express: a group at opacity 0.5 over two shapes at
+`fill-opacity` 0.5, whose overlap proves the group is one layer (0x60 where
+folding its opacity into each shape would give 0x70); a dashed stroke, sampled
+where the pattern is on and where it is off; a `mix-blend-mode:multiply` group
+over a backdrop; an even-odd clip, whose hole is transparent; a clip path of two
+shapes, unioned; a luminance mask that subtracts its black shape; an alpha mask,
+where the same black shape keeps; a luminance mask that fades to half; a
+luminance mask whose content is white at half opacity, which masks by half
+rather than keeping everything (0x80 where a colour matrix that replaced the
+alpha with the luminance would give 0xFF); an alpha mask whose content is a
+gradient from opaque white to transparent white, which reads the content's alpha
+and so fades the artwork out across the cell (0xE6 at the left, 0x80 in the
+middle, 0x1A at the right, where converting a colour into alpha would keep it
+whole); a group whose mask is one opaque white rect, which lowers to a clip and
+is isolated all the same, so the multiply inside it reads the group's own empty
+backdrop and the yellow stays yellow (black, where the multiply reached the blue
+rect behind it); and a luminance mask whose content is a white rect masked by a
+luminance mask of `#808080`, which masks by half twice, so the outer mask has to
+apply that alpha as well as the luminance (0x80 where dropping the second layer
+would keep the red opaque). One more test draws the same drawing at 10.5 pixels
+per viewport unit, so that shape edges land inside a pixel: the fade cell's mask
+edge keeps its coverage as well as its luminance (0x40 where dropping the alpha
+layer would leave the fully covered 0x80), which is what `resvg` draws there.
+Two more tests draw `even_odd` and `transformed_clip` and assert the same pixels
+`ComposeRendererTest` asserts for their drawables. Rendering the same fixture
+with `resvg` and compositing both over white differs only in anti-aliasing at
+shape edges: 288 of 172,800 pixels, worst channel delta 31, all of them in the
+group-opacity and luminance-subtract cells. The two cells added last match
+`resvg` exactly, pixel for pixel, and so does the mask edge at the fractional
+scale; at that scale 75 of 190,512 pixels differ by more than eight levels,
+worst 29, again the edges of those two cells' circles.
+
+### The draw target's method budget
+
+`compose --draw` rejects a drawing whose statements would compile to more than
+the JVM's 64 KB method with `VDT027`, so what it accepts compiles. It estimates
+the bytecode from the lowered drawing rather than counting statements, because
+the constructs differ by an order of magnitude: a `Color` is one constant, while
+a gradient brush builds an array of boxed `Pair`s and a layer is an inlined
+`withSaveLayer` block around everything inside it.
+
+Each weight in `src/draw.rs` is the cost of the construct with about 1.6 times
+that on top, which is the margin in the table below: the limit is 60,000
+estimated bytes, so a drawing it accepts compiles to roughly 37 KB. The weights
+that scale with the artwork — one gradient stop, one builder command, one dash
+interval, one `Path + Path` union — are derived from the *widest* encoding of
+that item rather than a typical one, because a drawing made only of them has
+nothing else to average against: a stop is `aload`, `sipush` for the array
+index, `ldc_w` for the offset, `Float.valueOf`, `ldc2_w`, `ColorKt.Color`,
+`Color.box-impl`, `TuplesKt.to`, and `aastore`, which is 24 bytes where a
+two-stop gradient measures 21; a `cubicTo` is six `ldc_w` floats and an
+`invokeinterface`, 25 bytes at worst where the `lineTo` of a rect measures 13.
+
+Measured on 2026-11-11 by compiling one probe per family with this project
+(`tools/android-renderer/compose`, Compose BOM 2026.01.01, JDK 21,
+`:app:compileDebugKotlin`), each probe N copies of one construct in a 240-wide
+viewBox. "vdt" is the largest N `compose --draw` accepts, "compiles" an N that
+compiles, and "fails" an N that does not, with the Kotlin backend reporting
+`Method too large: …Painter.onDraw`.
+
+| One construct per copy | vdt | compiles | fails |
+| --- | ---: | ---: | ---: |
+| solid-filled 5×5 rect | 1,250 | 2,000 | 2,500 |
+| rect filled with a 2-stop linear gradient | 108 | 320 | 350 |
+| rect filled with a 6-stop radial gradient | 84 | 250 | 300 |
+| rect filled and stroked from a 3-stop gradient, dashed | 41 | 100 | 125 |
+| group at opacity 0.5 around a rect (a layer) | 106 | 300 | 350 |
+| group with a clip path around a rect | 164 | 300 | 350 |
+| transformed group around a stroked rect | 625 | 1,200 | 1,500 |
+| group with a luminance mask around a rect | 22 | 70 | 85 |
+| rect that is both filled and stroked | 394 | 800 | 1,000 |
+| rect filled with a 32-stop linear gradient | 34 | 58 | 75 |
+| rect filled with a 100-stop linear gradient | 13 | 25 | 30 |
+| rect filled with a 300-stop linear gradient | 4 | 8 | 9 |
+| rect filled with a 1,000-stop linear gradient | 1 | 2 | 3 |
+
+The largest drawing in the repository, `tests/fixtures/draw/features.svg`,
+costs 25,152 estimated bytes, and the largest in the 102-icon corpus under
+`.amp/in/corpus` costs 9,648, so no checked-in artwork is close to the limit.
+The limit is a safety margin rather than a measurement of the artwork: a drawing
+just under it is roughly half the size that would still have compiled.

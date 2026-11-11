@@ -39,7 +39,8 @@ enum Command {
     Adaptive(AdaptiveArgs),
     /// Convert SVG files to white 24dp notification icon drawables.
     Notification(NotificationArgs),
-    /// Convert SVG files to Compose ImageVector Kotlin source.
+    /// Convert SVG files to Compose Kotlin source, as an ImageVector or a
+    /// Painter that draws the paths.
     Compose(ComposeArgs),
     /// Explain how to use vdt: the workflow, each kind of icon, diagnostics.
     Guide(GuideArgs),
@@ -112,6 +113,12 @@ struct ComposeArgs {
     /// Allow lossy lowering for constructs Compose cannot draw exactly.
     #[arg(long)]
     allow_approximate: bool,
+    /// Write a Painter that draws the artwork's paths directly, instead of an
+    /// ImageVector. It keeps group opacity, dashed strokes, blend modes, any
+    /// clip path, and alpha and luminance masks, which an ImageVector cannot
+    /// hold.
+    #[arg(long)]
+    draw: bool,
 }
 
 #[derive(Args)]
@@ -547,7 +554,8 @@ fn notification_one(args: &NotificationArgs, input: &Path, output: Option<Output
     Ok(())
 }
 
-/// Convert SVG files to Kotlin that builds Compose `ImageVector`s.
+/// Convert SVG files to Compose Kotlin source, as an `ImageVector` or a
+/// `Painter` that draws the paths.
 fn compose(args: ComposeArgs) -> Result<Outcome> {
     let inputs = inputs(&args.input)?;
     if args.input.is_dir() && args.output.is_none() {
@@ -557,8 +565,8 @@ fn compose(args: ComposeArgs) -> Result<Outcome> {
     }
     if args.name.is_some() && args.input.is_dir() {
         return Err(Error::InvalidInput(
-            "--name names one ImageVector, and a directory writes one per SVG; rename the files \
-             instead, or convert them one at a time"
+            "--name names the one declaration a file holds, and a directory writes one per SVG; \
+             rename the files instead, or convert them one at a time"
                 .to_owned(),
         ));
     }
@@ -604,7 +612,7 @@ fn compose(args: ComposeArgs) -> Result<Outcome> {
         let name = stem_of(Some(&output.path), input);
         if let Some(first) = names.insert(name.clone(), input) {
             return Err(Error::InvalidInput(format!(
-                "{}: {name} is already the Kotlin name of {}; two ImageVectors in one package \
+                "{}: {name} is already the Kotlin name of {}; two declarations in one package \
                  cannot share a name, so rename one of the SVGs",
                 input.display(),
                 first.display()
@@ -629,15 +637,27 @@ fn compose(args: ComposeArgs) -> Result<Outcome> {
 }
 
 fn compose_one(args: &ComposeArgs, input: &Path, output: Option<Output>) -> Result<()> {
-    let mut asset = vdtoolkit::convert_file_with_options(input, args.allow_approximate)
-        .map_err(hint_raster_convert)?;
+    let mut asset = if args.draw {
+        vdtoolkit::convert_draw_file_with_options(input, args.allow_approximate)
+    } else {
+        vdtoolkit::convert_file_with_options(input, args.allow_approximate)
+    }
+    .map_err(hint_raster_convert)?;
     if args.strict && asset.analysis.compatibility != Compatibility::Exact {
         return Err(Error::InvalidInput(
             "requires normalization and was rejected by --strict".to_owned(),
         ));
     }
     apply_size(args.size, &mut asset, input)?;
-    print_findings(input, &asset.analysis);
+    // The API level the drawn Kotlin needs is a note about this file's output,
+    // and only the draw target's output can need one, so `--draw` reports it
+    // where every other command leaves it to `inspect`.
+    let notes: &[&str] = if args.draw {
+        &[DiagnosticCode::ApiLevelRequirement.as_str()]
+    } else {
+        &[]
+    };
+    print_diagnostics(input, &asset.analysis.diagnostics, notes);
     print_size_hint(args.size, &asset);
     if args.optimize {
         asset.optimize();
@@ -648,7 +668,11 @@ fn compose_one(args: &ComposeArgs, input: &Path, output: Option<Output>) -> Resu
         // after the file it is written in; to stdout, after the SVG.
         None => kotlin_name(&stem_of(output.as_ref().map(|output| &output.path), input))?,
     };
-    let kotlin = asset.to_kotlin(&name, args.package.as_deref());
+    let kotlin = if args.draw {
+        asset.to_draw_kotlin(&name, args.package.as_deref())
+    } else {
+        asset.to_kotlin(&name, args.package.as_deref())
+    };
     match output {
         Some(output) => output.write(input, &kotlin)?,
         None => print!("{kotlin}"),
@@ -669,12 +693,16 @@ fn stem_of(output: Option<&PathBuf>, input: &Path) -> String {
 /// Print a converted file's warnings, and the flattening note a notification
 /// icon carries, with their codes. Normalization notes stay with `inspect`.
 fn print_findings(input: &Path, analysis: &Analysis) {
-    print_diagnostics(input, &analysis.diagnostics);
+    print_diagnostics(input, &analysis.diagnostics, &[]);
 }
 
 /// Print the warnings and the notes that name something vdt changed or chose,
 /// for findings that do not come from converting a file.
-fn print_diagnostics(input: &Path, diagnostics: &[Diagnostic]) {
+///
+/// `notes` are the Info codes this command reports besides the ones that always
+/// describe the icon being generated. `compose --draw` reports the API level
+/// its output needs, which every other command leaves to `inspect`.
+fn print_diagnostics(input: &Path, diagnostics: &[Diagnostic], notes: &[&str]) {
     for diagnostic in diagnostics {
         // Notes about the icon being generated are printed: what the generator
         // changed about the artwork, and artwork close enough to the mask edge
@@ -685,7 +713,8 @@ fn print_diagnostics(input: &Path, diagnostics: &[Diagnostic]) {
             DiagnosticCode::BackgroundCropped.as_str(),
             DiagnosticCode::OutsideSafeZone.as_str(),
         ]
-        .contains(&diagnostic.code.as_str());
+        .contains(&diagnostic.code.as_str())
+            || notes.contains(&diagnostic.code.as_str());
         let label = match diagnostic.severity {
             Severity::Warning => "warning",
             Severity::Info if about_this_icon => "note",
@@ -1151,7 +1180,7 @@ fn raster_layer(
         source,
     })?;
     let (image, diagnostics) = vdtoolkit::analyze_layer_image(&data, layer)?;
-    print_diagnostics(input, &diagnostics);
+    print_diagnostics(input, &diagnostics, &[]);
     Ok((
         dir.join(name).with_extension(image.format.extension()),
         data,

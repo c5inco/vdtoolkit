@@ -395,7 +395,7 @@ fn compose_rejects_a_name_that_cannot_be_a_kotlin_property() {
     assert!(
         String::from_utf8(result.stderr)
             .unwrap()
-            .contains("--name names one ImageVector")
+            .contains("--name names the one declaration a file holds")
     );
 }
 

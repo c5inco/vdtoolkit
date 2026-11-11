@@ -284,8 +284,13 @@ pixel-identical. Getting there showed three things parser checks missed:
 
 `compose/` is a small Gradle project that loads the same generated drawables
 with `painterResource` and checks the same pixels through Compose's own
-VectorDrawable parser. Run `build.sh` first so `build/generated/res` exists,
-then:
+VectorDrawable parser. Its `DrawTargetRendererTest` draws the Kotlin
+`vdt compose --draw` writes and checks the pixels the same way, which is the
+only place group opacity, a dash pattern, a blend mode, a mask, and a clip that
+is not one nonzero path are drawn on a device. That Kotlin is generated, from
+`tests/fixtures/draw/features.svg` and this module's own `even_odd.svg` and
+`transformed_clip.svg`, so regenerate it after a change to the emitter. Run
+`build.sh` first so `build/generated/res` exists, then:
 
 ```sh
 cd tools/android-renderer/compose
@@ -300,4 +305,5 @@ The module's minimum is API 23 because current Compose no longer supports 21.
 Two tests are expected to fail on API 24 and above: `nested_clip_scope` and
 the diagnostic `diag_clip_then_plain_group`. They document a Compose parser
 divergence where a `</group>` closes enclosing clip paths; see `RESULTS.md`.
+All fifteen `DrawTargetRendererTest` tests pass on an API 36 emulator.
 The Compose module is not part of Cargo, CI, packaging, or the acceptance gate.

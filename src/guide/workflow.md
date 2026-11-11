@@ -25,6 +25,7 @@ Find the module's `res/` directory, usually `app/src/main/res` next to
 | The same, as small as possible | `vdt optimize icon.svg -o res/drawable-anydpi/ic_icon.xml` | `vdt guide drawables` |
 | An app or launcher icon | `vdt adaptive --foreground logo.svg --background-color '#FFFFFF' -o res` | `vdt guide adaptive` |
 | A Compose `ImageVector` in Kotlin | `vdt compose icon.svg --package com.example.icons -o src/main/java/com/example/icons/Icon.kt` | `vdt guide compose` |
+| A Compose `Painter` that draws the paths | `vdt compose --draw icon.svg --package com.example.icons -o src/main/java/com/example/icons/Icon.kt` | `vdt guide compose` |
 | A notification or status bar icon | `vdt notification bell.svg -o res/drawable-anydpi/ic_stat_bell.xml` | `vdt guide notification` |
 | To know whether an SVG converts, without writing | `vdt check icon.svg` | `vdt guide ci` |
 | Diagnostics, minimum API, bounds, size | `vdt inspect icon.svg --format json` | `vdt guide diagnostics` |

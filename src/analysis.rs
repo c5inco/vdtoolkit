@@ -329,6 +329,9 @@ pub enum DiagnosticCode {
     /// background layer entirely.
     #[serde(rename = "VDT026")]
     ForegroundOpaque,
+    /// The drawing is too large for the one method a target writes it into.
+    #[serde(rename = "VDT027")]
+    TooLargeToCompile,
 }
 
 impl DiagnosticCode {
@@ -361,6 +364,7 @@ impl DiagnosticCode {
             Self::BackgroundImageShape => "VDT024",
             Self::BackgroundImageResolution => "VDT025",
             Self::ForegroundOpaque => "VDT026",
+            Self::TooLargeToCompile => "VDT027",
         }
     }
 }

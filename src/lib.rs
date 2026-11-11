@@ -10,8 +10,10 @@ mod analysis;
 mod bitmap;
 mod compose;
 mod css;
+mod draw;
 mod error;
 mod icon;
+mod kotlin;
 mod notification;
 mod optimize;
 mod render;
@@ -41,6 +43,8 @@ pub use bitmap::{
 #[doc(hidden)]
 pub use compose::{Kotlin, is_kotlin_name, kotlin_name};
 #[doc(hidden)]
+pub use draw::Painter;
+#[doc(hidden)]
 pub use error::{Error, Result};
 #[doc(hidden)]
 pub use icon::IconKind;
@@ -50,6 +54,17 @@ pub use notification::{Flattening, NOTIFICATION_ICON_LIVE_AREA, NOTIFICATION_ICO
 pub use resource::{is_resource_name, resource_name};
 
 /// A converted SVG and its compatibility analysis.
+///
+/// An asset converted for the draw target — [`convert_draw`] or
+/// [`convert_draw_with_options`] — carries what only drawn paths can express:
+/// a group's opacity, a dashed stroke, a blend mode, any clip path, and an
+/// alpha or luminance mask. [`Asset::to_draw_kotlin`] writes all of it, and the
+/// render methods draw all of it. [`Asset::to_xml`] and [`Asset::to_kotlin`]
+/// write the subset a drawable or an `ImageVector` can hold, so they silently
+/// drop a group's opacity, a dash, a blend mode, a mask, and all but the first
+/// shape of a clip path, and they write a clip path filled by the nonzero rule
+/// whatever it was: a clip that subtracts comes out as the intersection it is
+/// not. Convert with [`convert`] for those targets.
 #[doc(hidden)]
 #[derive(Clone, Debug)]
 pub struct Asset {
@@ -79,6 +94,22 @@ impl Asset {
     pub fn into_analysis(self) -> AnalysisReport {
         let bytes = self.estimated_xml_bytes();
         AnalysisReport::new(self.analysis, bytes)
+    }
+
+    /// Serialize this asset as Kotlin that draws the artwork's paths directly
+    /// with Compose, as a `Painter`.
+    ///
+    /// `name` is the name of the generated `remember` function and of the
+    /// private `Painter` class, and `package` an optional `package`
+    /// declaration.
+    ///
+    /// The output is for an asset converted with [`convert_draw_with_options`]
+    /// or [`convert_draw_file_with_options`], which keep a group's opacity, a
+    /// dashed stroke, a blend mode, any clip path, and an alpha or luminance
+    /// mask. An asset converted for a drawable has none of those and draws the
+    /// same either way.
+    pub fn to_draw_kotlin(&self, name: &str, package: Option<&str>) -> String {
+        draw::write(&self.drawable, &draw::Painter { name, package })
     }
 
     /// Serialize this asset as Kotlin that builds an equivalent Compose
@@ -621,7 +652,7 @@ pub fn convert(source: &[u8]) -> Result<Asset> {
 /// Convert SVG bytes, optionally allowing approximations.
 #[doc(hidden)]
 pub fn convert_with_options(source: &[u8], allow_approximate: bool) -> Result<Asset> {
-    convert_source(source, allow_approximate, None)
+    convert_source(source, allow_approximate, None, vector::Target::Vector)
 }
 
 /// Convert SVG bytes for an icon, applying its paint semantics during lowering.
@@ -632,18 +663,52 @@ pub fn convert_as_with_options(
     fit: Fit,
     allow_approximate: bool,
 ) -> Result<Asset> {
-    let mut asset = convert_source(source, allow_approximate, Some(kind))?;
+    let mut asset = convert_source(
+        source,
+        allow_approximate,
+        Some(kind),
+        vector::Target::Vector,
+    )?;
     asset.to_icon(kind, fit)?;
     Ok(asset)
 }
 
-fn convert_source(source: &[u8], allow_approximate: bool, kind: Option<IconKind>) -> Result<Asset> {
+/// Convert an SVG file to an asset for the draw target, which keeps a group's
+/// opacity, a dashed stroke, a blend mode, any clip path, and a mask.
+#[doc(hidden)]
+pub fn convert_draw_file_with_options(path: &Path, allow_approximate: bool) -> Result<Asset> {
+    let source = std::fs::read(path).map_err(|source| Error::Read {
+        path: path.to_owned(),
+        source,
+    })?;
+    convert_draw_with_options(&source, allow_approximate)
+}
+
+/// Convert SVG bytes to an asset for the draw target.
+#[doc(hidden)]
+pub fn convert_draw(source: &[u8]) -> Result<Asset> {
+    convert_draw_with_options(source, false)
+}
+
+/// Convert SVG bytes to an asset for the draw target, optionally allowing
+/// approximations.
+#[doc(hidden)]
+pub fn convert_draw_with_options(source: &[u8], allow_approximate: bool) -> Result<Asset> {
+    convert_source(source, allow_approximate, None, vector::Target::Draw)
+}
+
+fn convert_source(
+    source: &[u8],
+    allow_approximate: bool,
+    kind: Option<IconKind>,
+    target: vector::Target,
+) -> Result<Asset> {
     if bitmap::ImageFormat::sniff(source).is_some() {
         return Err(Error::InvalidInput(
             "this is a raster image, not an SVG".to_owned(),
         ));
     }
-    let processed = svg::process_as(source, true, allow_approximate, kind)?;
+    let processed = svg::process_as(source, true, allow_approximate, kind, target)?;
     if !processed
         .analysis
         .compatibility

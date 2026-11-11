@@ -703,6 +703,40 @@ fn preserves_nested_clip_intersection_and_scope() {
 }
 
 #[test]
+fn multiplies_the_coverage_of_a_clip_inside_a_clip() {
+    // A clip path nested in another narrows the clip already in effect, and the
+    // render API composites the two by multiplying their coverages, as it did
+    // before the draw target could clip with paths of its own. At 53 pixels
+    // across, the outer clip's diagonal edge crosses the inner clip's edge
+    // inside one pixel, so that pixel is cut by both and keeps less than either
+    // alone: 40, where keeping the smaller coverage would leave 63.
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <defs>
+            <clipPath id="outer"><path d="M0 0H24L0 24Z"/></clipPath>
+            <clipPath id="inner"><rect x="0" y="8" width="24" height="8"/></clipPath>
+        </defs>
+        <g clip-path="url(#outer)">
+            <g clip-path="url(#inner)"><rect width="24" height="24" fill="#123456"/></g>
+        </g>
+    </svg>"##;
+    let asset = vdtoolkit::convert(source).unwrap();
+    let size = 53;
+    let rgba = asset.render_rgba(size, size).unwrap();
+    let pixel = |x: usize, y: usize| {
+        let index = (y * size as usize + x) * 4;
+        [
+            rgba[index],
+            rgba[index + 1],
+            rgba[index + 2],
+            rgba[index + 3],
+        ]
+    };
+    assert_eq!(pixel(20, 20), [18, 52, 86, 255], "inside both clips");
+    assert_eq!(pixel(35, 17), [19, 57, 89, 40], "cut by both clip edges");
+    assert_eq!(pixel(36, 17), [0, 0, 0, 0], "outside the outer clip");
+}
+
+#[test]
 fn rejects_clip_semantics_android_cannot_represent_exactly() {
     for source in [
         br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><defs><clipPath id="c"><path d="M0 0H8V24H0Z"/><path d="M16 0H24V24H16Z"/></clipPath></defs><path d="M0 0H24V24H0Z" clip-path="url(#c)"/></svg>"##.as_slice(),
@@ -1355,6 +1389,22 @@ fn radial_gradient_focal_offset_converts_with_allow_approximate() {
     assert_eq!(approx_analysis.estimated_xml_bytes(), xml.len());
     roxmltree::Document::parse(&xml).unwrap();
     assert!(xml.contains("android:gradientRadius="));
+}
+
+#[test]
+fn a_dashed_stroke_is_rejected_even_with_allow_approximate() {
+    // A drawable has no dash attribute and there is no approximation of a
+    // pattern, so this stays an error however the conversion is asked for it.
+    // That is what keeps a dash out of a drawable's model: `VectorPath::dash`
+    // is only ever set for the draw target, and the XML and `ImageVector`
+    // writers never see one.
+    let source = r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <path d="M2 12H22" stroke="#000000" stroke-width="2" stroke-dasharray="4 2"/>
+    </svg>"##;
+
+    let analysis = vdtoolkit::analyze_with_options(source.as_bytes(), true).unwrap();
+    assert_eq!(analysis.compatibility, Compatibility::Unsupported);
+    assert!(vdtoolkit::convert_with_options(source.as_bytes(), true).is_err());
 }
 
 #[test]

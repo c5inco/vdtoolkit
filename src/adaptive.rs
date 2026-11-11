@@ -6,8 +6,8 @@ use serde::Serialize;
 
 use crate::analysis::{Diagnostic, DiagnosticCode, Severity};
 use crate::vector::{
-    Color, FillRule, LineCap, LineJoin, Paint, PathCommand, PathData, VectorDrawable, VectorGroup,
-    VectorNode, VectorPath,
+    Color, FillRule, LineCap, LineJoin, Paint, PathCommand, PathData, VectorClip, VectorDrawable,
+    VectorGroup, VectorNode, VectorPath,
 };
 
 /// Edge length in dp of every adaptive icon layer.
@@ -234,12 +234,28 @@ fn transform_nodes(nodes: &mut [VectorNode], scale: f32, dx: f32, dy: f32) {
                 group.pivot_y = group.pivot_y * scale + dy;
                 group.translate_x *= scale;
                 group.translate_y *= scale;
+                if let Some(mask) = &mut group.mask {
+                    if let Some(region) = &mut mask.region {
+                        transform_path_data(region, scale, dx, dy);
+                    }
+                    transform_nodes(&mut mask.children, scale, dx, dy);
+                }
                 transform_nodes(&mut group.children, scale, dx, dy);
             }
-            VectorNode::ClipPath(path_data) => transform_path_data(path_data, scale, dx, dy),
+            VectorNode::ClipPath(clip) => {
+                for shape in &mut clip.shapes {
+                    transform_path_data(&mut shape.data, scale, dx, dy);
+                }
+            }
             VectorNode::Path(path) => {
                 transform_path_data(&mut path.path_data, scale, dx, dy);
                 path.stroke_width *= scale;
+                if let Some(dash) = &mut path.dash {
+                    for interval in &mut dash.intervals {
+                        *interval *= scale;
+                    }
+                    dash.offset *= scale;
+                }
                 for paint in [&mut path.fill, &mut path.stroke].into_iter().flatten() {
                     transform_paint(paint, scale, dx, dy);
                 }
@@ -328,6 +344,7 @@ pub(crate) fn solid_layer(color: Color, alpha: f32) -> VectorDrawable {
             stroke_cap: LineCap::Butt,
             stroke_join: LineJoin::Miter,
             stroke_miter: 4.0,
+            dash: None,
         })],
     }
 }
@@ -365,11 +382,11 @@ pub(crate) fn legacy_icon(
 ) -> VectorDrawable {
     let (scale, offset) = legacy_mapping();
     let center = LEGACY_ICON_SIZE / 2.0;
-    let mut children = vec![VectorNode::ClipPath(circle(
+    let mut children = vec![VectorNode::ClipPath(VectorClip::intersect(circle(
         center,
         center,
         LEGACY_ICON_KEYLINE / 2.0,
-    ))];
+    )))];
     for layer in [background, foreground] {
         let mut nodes = layer.children.clone();
         transform_nodes(&mut nodes, scale, offset, offset);

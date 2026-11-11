@@ -17,7 +17,13 @@ pub(crate) fn process(
     keep_drawable: bool,
     allow_approximate: bool,
 ) -> Result<Processed> {
-    process_as(source, keep_drawable, allow_approximate, None)
+    process_as(
+        source,
+        keep_drawable,
+        allow_approximate,
+        None,
+        vector::Target::Vector,
+    )
 }
 
 pub(crate) fn process_as(
@@ -25,12 +31,13 @@ pub(crate) fn process_as(
     keep_drawable: bool,
     allow_approximate: bool,
     kind: Option<crate::IconKind>,
+    target: vector::Target,
 ) -> Result<Processed> {
     let text = std::str::from_utf8(source)?;
     reject_unsafe_xml(text)?;
     let document = roxmltree::Document::parse(text)?;
     reject_deep_nesting(&document)?;
-    let (mut compatibility, mut diagnostics) = preflight(&document);
+    let (mut compatibility, mut diagnostics) = preflight(&document, target);
 
     let options = usvg::Options {
         resources_dir: None,
@@ -92,6 +99,7 @@ pub(crate) fn process_as(
     let mut options = vector::LowerOptions {
         allow_approximate,
         notification: notification.then(Default::default),
+        target,
     };
     let drawable = vector::lower(
         &tree,
@@ -100,9 +108,21 @@ pub(crate) fn process_as(
         &mut diagnostics,
         &mut metrics,
     );
+    // Neither Kotlin target follows the VectorDrawable output format, so no API
+    // level describes the artwork for the `ImageVector` target. Drawn Kotlin
+    // can need one: a blend mode that Compose falls back on below API 29.
     let minimum_api = if compatibility.is_convertible(allow_approximate) {
-        diagnostics.extend(drawable.as_ref().and_then(vector::api_level_note));
-        drawable.as_ref().map(VectorDrawable::minimum_api)
+        match target {
+            vector::Target::Vector => {
+                diagnostics.extend(drawable.as_ref().and_then(vector::api_level_note));
+                drawable.as_ref().map(VectorDrawable::minimum_api)
+            }
+            vector::Target::Draw => drawable.as_ref().and_then(|drawable| {
+                vector::draw_api_level(drawable).inspect(|level| {
+                    diagnostics.push(vector::draw_api_level_note(*level));
+                })
+            }),
+        }
     } else {
         None
     };
@@ -161,9 +181,13 @@ fn reject_deep_nesting(document: &roxmltree::Document<'_>) -> Result<()> {
     Ok(())
 }
 
-fn preflight(document: &roxmltree::Document<'_>) -> (Compatibility, Vec<Diagnostic>) {
+fn preflight(
+    document: &roxmltree::Document<'_>,
+    target: vector::Target,
+) -> (Compatibility, Vec<Diagnostic>) {
     let mut compatibility = Compatibility::Exact;
     let mut diagnostics = Vec::new();
+    let direct = target == vector::Target::Draw;
     for node in document.descendants().filter(roxmltree::Node::is_element) {
         let name = node.tag_name().name();
         let location = || {
@@ -202,6 +226,7 @@ fn preflight(document: &roxmltree::Document<'_>) -> (Compatibility, Vec<Diagnost
                     }
                 }
             }
+            "mask" if direct => {}
             "mask" if source_mask_may_lower(&node) => {
                 mark_normalization(&mut compatibility, &mut diagnostics, location())
             }
@@ -222,7 +247,7 @@ fn preflight(document: &roxmltree::Document<'_>) -> (Compatibility, Vec<Diagnost
                     &mut compatibility,
                     &mut diagnostics,
                     DiagnosticCode::UnsupportedFilter,
-                    "SVG filters cannot be represented by a vector drawable or an ImageVector",
+                    &unrepresentable("SVG filters", direct),
                     location(),
                     "Remove the filter, or draw its effect, such as a shadow, as shapes.",
                 )
@@ -231,7 +256,7 @@ fn preflight(document: &roxmltree::Document<'_>) -> (Compatibility, Vec<Diagnost
                 &mut compatibility,
                 &mut diagnostics,
                 DiagnosticCode::UnsupportedFilter,
-                "SVG filter primitives cannot be represented by a vector drawable or an ImageVector",
+                &unrepresentable("SVG filter primitives", direct),
                 location(),
                 "Remove the filter, or draw its effect, such as a shadow, as shapes.",
             ),
@@ -269,7 +294,7 @@ fn preflight(document: &roxmltree::Document<'_>) -> (Compatibility, Vec<Diagnost
                 &mut compatibility,
                 &mut diagnostics,
                 DiagnosticCode::UnsupportedPattern,
-                "patterns cannot be represented by a vector drawable or an ImageVector",
+                &unrepresentable("patterns", direct),
                 location(),
                 "Replace the pattern with the shapes it repeats.",
             ),
@@ -278,7 +303,13 @@ fn preflight(document: &roxmltree::Document<'_>) -> (Compatibility, Vec<Diagnost
                     &mut compatibility,
                     &mut diagnostics,
                     DiagnosticCode::UnsupportedAnimation,
-                    "SVG animation is outside what a vector drawable or an ImageVector can represent",
+                    // A drawable and an `ImageVector` cannot represent
+                    // animation at all, and the draw target draws one frame.
+                    if direct {
+                        "SVG animation is not supported by the draw target"
+                    } else {
+                        "SVG animation is outside what a vector drawable or an ImageVector can represent"
+                    },
                     location(),
                     "Remove the animation, and animate the drawable with an AnimatedVectorDrawable instead.",
                 )
@@ -309,7 +340,11 @@ fn preflight(document: &roxmltree::Document<'_>) -> (Compatibility, Vec<Diagnost
                 &mut compatibility,
                 &mut diagnostics,
                 DiagnosticCode::UnsupportedFilter,
-                "filter usage cannot be represented by a vector drawable or an ImageVector",
+                if direct {
+                    "filter usage is not supported by the draw target"
+                } else {
+                    "filter usage cannot be represented by a vector drawable or an ImageVector"
+                },
                 location(),
                 "Remove the filter, or draw its effect, such as a shadow, as shapes.",
             );
@@ -323,12 +358,12 @@ fn preflight(document: &roxmltree::Document<'_>) -> (Compatibility, Vec<Diagnost
                 &mut compatibility,
                 &mut diagnostics,
                 DiagnosticCode::UnsupportedStrokeTransform,
-                "non-scaling strokes cannot be represented by a vector drawable or an ImageVector",
+                &unrepresentable("non-scaling strokes", direct),
                 location(),
                 "Remove vector-effect, or convert the stroke to a filled outline.",
             );
         }
-        if style_contains(&node, "mix-blend-mode:")
+        let composited = style_contains(&node, "mix-blend-mode:")
             || style_contains(&node, "isolation:")
             || (name == "style"
                 && node.text().is_some_and(|text| {
@@ -336,8 +371,8 @@ fn preflight(document: &roxmltree::Document<'_>) -> (Compatibility, Vec<Diagnost
                     text.contains("filter:")
                         || text.contains("mix-blend-mode:")
                         || text.contains("isolation:")
-                }))
-        {
+                }));
+        if composited && !direct {
             push_unsupported(
                 &mut compatibility,
                 &mut diagnostics,
@@ -515,6 +550,17 @@ fn mark_normalization(
             location,
             suggestion: None,
         });
+    }
+}
+
+/// Name a construct neither Kotlin target draws for the target that rejects
+/// it: a drawable and an `ImageVector` cannot represent it at all, and the draw
+/// target does not draw it either.
+fn unrepresentable(subject: &str, direct: bool) -> String {
+    if direct {
+        format!("{subject} are not supported by the draw target")
+    } else {
+        format!("{subject} cannot be represented by a vector drawable or an ImageVector")
     }
 }
 

@@ -468,7 +468,11 @@ mod tests {
             for node in nodes {
                 match node {
                     VectorNode::Group(group) => map_paths(&mut group.children, visit),
-                    VectorNode::ClipPath(data) => visit(data),
+                    VectorNode::ClipPath(clip) => {
+                        for shape in &mut clip.shapes {
+                            visit(&mut shape.data);
+                        }
+                    }
                     VectorNode::Path(path) => visit(&mut path.path_data),
                 }
             }
@@ -656,7 +660,11 @@ mod tests {
         for node in nodes {
             match node {
                 crate::vector::VectorNode::Group(group) => for_each_path(&group.children, visit),
-                crate::vector::VectorNode::ClipPath(data) => visit(&data.0),
+                crate::vector::VectorNode::ClipPath(clip) => {
+                    for shape in &clip.shapes {
+                        visit(&shape.data.0);
+                    }
+                }
                 crate::vector::VectorNode::Path(path) => visit(&path.path_data.0),
             }
         }

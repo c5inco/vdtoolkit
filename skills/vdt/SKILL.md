@@ -1,14 +1,18 @@
 ---
 name: vdt
-description: Convert SVG to Android VectorDrawable XML or to Compose ImageVector Kotlin source, and generate launcher/app (adaptive, themed) and notification icons. Use when an Android or Compose project needs an icon, drawable, or ImageVector from an SVG, or to check an SVG before converting or explain a VDT diagnostic code.
+description: Convert SVG to Android VectorDrawable XML or to Compose Kotlin source (an ImageVector, or with --draw a Painter that draws the paths directly), and generate launcher/app (adaptive, themed) and notification icons. Use when an Android or Compose project needs an icon, drawable, ImageVector, or drawn vector from an SVG, or to check an SVG before converting or explain a VDT diagnostic code.
 ---
 
 # vdt
 
-`vdt` converts SVG to Android VectorDrawable XML or Compose `ImageVector`
-Kotlin, and generates launcher and notification icons. Prefer it over writing
-`<vector>` XML or `ImageVector` code by hand: hand-written conversions of real
-artwork are usually wrong in ways that only show on a device.
+`vdt` converts SVG to Android VectorDrawable XML or Compose Kotlin — an
+`ImageVector`, or with `--draw` a `Painter` that draws the paths directly — and
+generates launcher and notification icons. Prefer it over writing `<vector>`
+XML or `ImageVector` code by hand: hand-written conversions of real artwork are
+usually wrong in ways that only show on a device. An SVG that `vdt check`
+rejects is often still drawable with `vdt compose --draw`, which is the only
+target that can express group opacity, dashed strokes, blend modes, any clip
+path, and alpha and luminance masks.
 
 ## Before you start
 

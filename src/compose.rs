@@ -27,36 +27,16 @@
 //! [`INLINE_COMMAND_BUDGET`] commands is written as path data strings instead,
 //! one call per path. A string constant holds at most 64 KB, so path data
 //! longer than [`PATH_DATA_STRING_LIMIT`] is written as concatenated
-//! literals.
+//! literals. Both limits and the layout machinery behind them live in
+//! [`crate::kotlin`], which this writer shares with the draw target.
 
-use std::collections::BTreeSet;
 use std::fmt::Write;
 
+use crate::kotlin::{Body, Parameter, number, path_data_call, path_data_strings};
 use crate::vector::{
-    Color, FillRule, GradientStop, LineCap, LineJoin, Paint, PathCommand, PathData, TileMode,
-    VectorDrawable, VectorGroup, VectorNode, VectorPath,
+    FillRule, LineCap, LineJoin, Paint, PathData, VectorDrawable, VectorGroup, VectorNode,
+    VectorPath,
 };
-
-/// Longest line this writer produces before a call's arguments go one per
-/// line, matching the width `ktfmt`, which formats generated Kotlin in an
-/// Android project, wraps at.
-const LINE_WIDTH: usize = 100;
-
-/// Most path commands a drawing may carry and still write each of them as a
-/// `PathBuilder` call.
-///
-/// Kotlin inlines `path { }`, `group { }`, and `apply { }`, so every command
-/// becomes bytecode of the one property getter, and the JVM refuses a method
-/// of over 64 KB. Compiled with Kotlin 2.4.10 against Compose ui 1.7.6, a
-/// drawing of 2,500 cubic commands compiles and one of 3,000 fails with
-/// "Method too large". A drawing over this budget is written as path data
-/// strings instead, which is one call per path however long the path is.
-const INLINE_COMMAND_BUDGET: usize = 1_000;
-
-/// Longest string literal to write for path data. The JVM holds a string
-/// constant of at most 64 KB, so a longer path is written as several literals
-/// concatenated.
-const PATH_DATA_STRING_LIMIT: usize = 60_000;
 
 /// The Kotlin name and package of a generated `ImageVector`.
 pub struct Kotlin<'a> {
@@ -75,7 +55,7 @@ pub fn write(drawable: &VectorDrawable, options: &Kotlin<'_>) -> String {
     // of indentation.
     let mut body = Body {
         depth: 3,
-        path_data_strings: commands(&drawable.children) > INLINE_COMMAND_BUDGET,
+        path_data_strings: path_data_strings(&drawable.children),
         ..Body::default()
     };
     body.import("androidx.compose.ui.graphics.vector.ImageVector");
@@ -132,160 +112,7 @@ pub fn write(drawable: &VectorDrawable, options: &Kotlin<'_>) -> String {
     kotlin
 }
 
-/// One argument of a Kotlin call.
-struct Parameter {
-    name: Option<&'static str>,
-    /// The value. Lines after the first are already indented, because the
-    /// writer that produced them placed them at the depth they belong at.
-    value: String,
-}
-
-impl Parameter {
-    fn named(name: &'static str, value: String) -> Self {
-        Self {
-            name: Some(name),
-            value,
-        }
-    }
-
-    fn plain(value: String) -> Self {
-        Self { name: None, value }
-    }
-
-    fn first_line(&self) -> &str {
-        self.value.lines().next().unwrap_or_default()
-    }
-
-    fn rest(&self) -> impl Iterator<Item = &str> {
-        self.value.lines().skip(1)
-    }
-
-    /// Width of this argument written on one line, or `None` when one of its
-    /// own values spans lines.
-    fn width(&self) -> Option<usize> {
-        (!self.value.contains('\n'))
-            .then(|| self.name.map_or(0, |name| name.len() + 3) + self.value.chars().count())
-    }
-}
-
-#[derive(Default)]
-struct Body {
-    text: String,
-    depth: usize,
-    imports: BTreeSet<&'static str>,
-    /// Write path data as a string for `addPathNodes` instead of as
-    /// `PathBuilder` calls, for a drawing too large to compile otherwise.
-    path_data_strings: bool,
-}
-
 impl Body {
-    fn import(&mut self, path: &'static str) {
-        self.imports.insert(path);
-    }
-
-    fn line_at(&mut self, depth: usize, text: &str) {
-        for _ in 0..depth {
-            self.text.push_str("    ");
-        }
-        self.text.push_str(text);
-        self.text.push('\n');
-    }
-
-    fn line(&mut self, text: &str) {
-        self.line_at(self.depth, text);
-    }
-
-    /// Append a line that already carries its own indentation, as the
-    /// continuation lines of a multi-line argument do.
-    fn raw_line(&mut self, text: &str) {
-        self.text.push_str(text);
-        self.text.push('\n');
-    }
-
-    /// Render `block` at `depth` into a `String` instead of the body, keeping
-    /// the imports it added.
-    fn scratch(&mut self, depth: usize, block: impl FnOnce(&mut Self)) -> String {
-        let outer = std::mem::take(&mut self.text);
-        let outer_depth = std::mem::replace(&mut self.depth, depth);
-        block(self);
-        let inner = std::mem::take(&mut self.text);
-        self.text = outer;
-        self.depth = outer_depth;
-        inner
-    }
-
-    /// Emit `name(...)suffix`, one argument per line when the single-line form
-    /// does not fit the writer's line width.
-    fn call(&mut self, name: &str, parameters: &[Parameter], suffix: &str) {
-        let arguments = self.single_line(parameters);
-        match arguments {
-            Some(arguments) => self.line(&format!("{name}({arguments}){suffix}")),
-            None => {
-                self.line(&format!("{name}("));
-                self.parameters(parameters, self.depth + 1);
-                self.line(&format!("){suffix}"));
-            }
-        }
-    }
-
-    /// A call whose arguments always fall one per line, used as the value of a
-    /// named parameter. Its first line follows `name = `, so only the lines
-    /// inside it carry indentation of their own.
-    fn block_call(&mut self, name: &str, parameters: &[Parameter], depth: usize) -> String {
-        let inner = self.scratch(depth + 1, |body| body.parameters(parameters, depth + 1));
-        format!("{name}(\n{inner}{})", "    ".repeat(depth))
-    }
-
-    /// The arguments of a call joined onto one line, or `None` when they
-    /// cannot be: one of their values spans lines, or the line would be longer
-    /// than the writer wraps at.
-    fn single_line(&self, parameters: &[Parameter]) -> Option<String> {
-        let widths = parameters
-            .iter()
-            .map(Parameter::width)
-            .collect::<Option<Vec<_>>>()?;
-        let arguments: usize = widths.iter().sum::<usize>() + 2 * widths.len().saturating_sub(1);
-        if self.depth * 4 + arguments > LINE_WIDTH {
-            return None;
-        }
-        Some(
-            parameters
-                .iter()
-                .map(|parameter| match parameter.name {
-                    Some(name) => format!("{name} = {}", parameter.first_line()),
-                    None => parameter.first_line().to_owned(),
-                })
-                .collect::<Vec<_>>()
-                .join(", "),
-        )
-    }
-
-    /// Every argument on its own line at `depth`, a multi-line value keeping
-    /// the indentation its own writer gave it. The separating comma belongs
-    /// after the argument's last line, which for a value that spans lines is
-    /// its closing bracket.
-    fn parameters(&mut self, parameters: &[Parameter], depth: usize) {
-        for parameter in parameters {
-            let first = match parameter.name {
-                Some(name) => format!("{name} = {}", parameter.first_line()),
-                None => parameter.first_line().to_owned(),
-            };
-            let mut rest = parameter.rest().peekable();
-            if rest.peek().is_none() {
-                self.line_at(depth, &format!("{first},"));
-                continue;
-            }
-            self.line_at(depth, &first);
-            while let Some(line) = rest.next() {
-                if rest.peek().is_some() {
-                    self.raw_line(line);
-                } else {
-                    self.raw_line(&format!("{line},"));
-                }
-            }
-        }
-    }
-
     fn nodes<'a>(&mut self, nodes: impl IntoIterator<Item = &'a VectorNode>) {
         for node in nodes {
             match node {
@@ -489,30 +316,8 @@ impl Body {
     /// Path data as the argument `addPathNodes` parses, written at `depth`.
     fn path_data(&mut self, data: &PathData, depth: usize) -> String {
         self.import("androidx.compose.ui.graphics.vector.addPathNodes");
-        let mut text = crate::short_path::write(&data.0);
-        if text.len() <= PATH_DATA_STRING_LIMIT {
-            return format!("addPathNodes(\"{text}\")");
-        }
-        // Split at spaces and concatenate the pieces: each piece holds whole
-        // numbers, so reading the concatenation back gives exactly what one
-        // literal would, and no piece reaches the JVM's string constant limit.
-        let mut expression = String::from("addPathNodes(\n");
-        while !text.is_empty() {
-            let end = if text.len() <= PATH_DATA_STRING_LIMIT {
-                text.len()
-            } else {
-                text[..PATH_DATA_STRING_LIMIT]
-                    .rfind(' ')
-                    .map_or(text.len(), |space| space + 1)
-            };
-            let (chunk, rest) = text.split_at(end);
-            let indent = "    ".repeat(depth + 1);
-            let _ = write!(expression, "{indent}\"{chunk}\"");
-            expression.push_str(if rest.is_empty() { ",\n" } else { " +\n" });
-            text = rest.to_owned();
-        }
-        let _ = write!(expression, "{})", "    ".repeat(depth));
-        expression
+        let text = crate::short_path::write(&data.0);
+        path_data_call(&text, depth)
     }
 
     /// A `clipPathData` argument: the clip's geometry as Compose path nodes.
@@ -530,112 +335,6 @@ impl Body {
         });
         format!("PathData {{\n{body}{}}}", "    ".repeat(depth))
     }
-
-    fn command(&mut self, command: &PathCommand) {
-        fn arguments(values: &[f32]) -> Vec<Parameter> {
-            values
-                .iter()
-                .map(|value| Parameter::plain(format!("{}f", number(*value))))
-                .collect()
-        }
-        match *command {
-            PathCommand::Move(x, y) => self.call("moveTo", &arguments(&[x, y]), ""),
-            PathCommand::Line(x, y) => self.call("lineTo", &arguments(&[x, y]), ""),
-            PathCommand::Quad(a, b, x, y) => self.call("quadTo", &arguments(&[a, b, x, y]), ""),
-            PathCommand::Cubic(a, b, c, d, x, y) => {
-                self.call("curveTo", &arguments(&[a, b, c, d, x, y]), "")
-            }
-            PathCommand::Close => self.line("close()"),
-        }
-    }
-
-    /// A fill or stroke as a Compose brush, written at `depth`, the indentation
-    /// of the argument it is the value of.
-    fn brush(&mut self, paint: &Paint, depth: usize) -> String {
-        match paint {
-            Paint::Solid(color) => {
-                self.import("androidx.compose.ui.graphics.SolidColor");
-                format!("SolidColor({})", self.color(*color, 1.0))
-            }
-            Paint::Linear(gradient) => {
-                self.import("androidx.compose.ui.geometry.Offset");
-                self.import("androidx.compose.ui.graphics.Brush");
-                let mut parameters = vec![
-                    Parameter::named("colorStops", self.stops(&gradient.stops, depth + 1)),
-                    Parameter::named(
-                        "start",
-                        format!(
-                            "Offset({}f, {}f)",
-                            number(gradient.start_x),
-                            number(gradient.start_y)
-                        ),
-                    ),
-                    Parameter::named(
-                        "end",
-                        format!(
-                            "Offset({}f, {}f)",
-                            number(gradient.end_x),
-                            number(gradient.end_y)
-                        ),
-                    ),
-                ];
-                parameters.extend(self.tile_mode(gradient.tile_mode));
-                self.block_call("Brush.linearGradient", &parameters, depth)
-            }
-            Paint::Radial(gradient) => {
-                self.import("androidx.compose.ui.geometry.Offset");
-                self.import("androidx.compose.ui.graphics.Brush");
-                let mut parameters = vec![
-                    Parameter::named("colorStops", self.stops(&gradient.stops, depth + 1)),
-                    Parameter::named(
-                        "center",
-                        format!(
-                            "Offset({}f, {}f)",
-                            number(gradient.center_x),
-                            number(gradient.center_y)
-                        ),
-                    ),
-                    Parameter::named("radius", format!("{}f", number(gradient.radius))),
-                ];
-                parameters.extend(self.tile_mode(gradient.tile_mode));
-                self.block_call("Brush.radialGradient", &parameters, depth)
-            }
-        }
-    }
-
-    fn tile_mode(&mut self, tile_mode: TileMode) -> Option<Parameter> {
-        let value = match tile_mode {
-            TileMode::Clamp => return None,
-            TileMode::Mirror => "TileMode.Mirror",
-            // Compose spells the repeated tile mode `Repeated`.
-            TileMode::Repeat => "TileMode.Repeated",
-        };
-        self.import("androidx.compose.ui.graphics.TileMode");
-        Some(Parameter::named("tileMode", value.to_owned()))
-    }
-
-    /// The `colorStops` argument of a brush, written at `depth`.
-    fn stops(&mut self, stops: &[GradientStop], depth: usize) -> String {
-        let parameters = stops
-            .iter()
-            .map(|stop| {
-                let color = self.color(stop.color, stop.alpha);
-                Parameter::plain(format!("{}f to {color}", number(stop.offset)))
-            })
-            .collect::<Vec<_>>();
-        self.block_call("arrayOf", &parameters, depth)
-    }
-
-    fn color(&mut self, color: Color, alpha: f32) -> String {
-        self.import("androidx.compose.ui.graphics.Color");
-        format!(
-            "Color(0x{:02X}{:02X}{:02X}{:02X})",
-            crate::vector::alpha_byte(alpha),
-            color.0,
-            color.1,
-            color.2
-        )
-    }
 }
 
 /// Split a node list into the clip paths that scope it and what they scope.
@@ -649,7 +348,9 @@ fn split_scope(nodes: &[VectorNode]) -> (Vec<&PathData>, Vec<&VectorNode>) {
         .iter()
         .take_while(|node| matches!(node, VectorNode::ClipPath(_)))
         .filter_map(|node| match node {
-            VectorNode::ClipPath(data) => Some(data),
+            // An `ImageVector` group clips with one nonzero path, which is
+            // what the lowering gives the drawable target it shares.
+            VectorNode::ClipPath(clip) => clip.shapes.first().map(|shape| &shape.data),
             _ => None,
         })
         .collect::<Vec<&PathData>>();
@@ -663,26 +364,6 @@ fn split_scope(nodes: &[VectorNode]) -> (Vec<&PathData>, Vec<&VectorNode>) {
     );
     let children = nodes.iter().skip(clips.len()).collect();
     (clips, children)
-}
-
-/// Number of path commands in a node list, which is what the generated
-/// getter's size is proportional to.
-fn commands(nodes: &[VectorNode]) -> usize {
-    nodes
-        .iter()
-        .map(|node| match node {
-            VectorNode::Path(path) => path.path_data.0.len(),
-            VectorNode::ClipPath(data) => data.0.len(),
-            VectorNode::Group(group) => commands(&group.children),
-        })
-        .sum()
-}
-
-/// Format a viewport value as the digits of a Kotlin `Float` literal, using
-/// the same formatter as the XML writer, so both targets agree on every
-/// number.
-fn number(value: f32) -> String {
-    crate::xml::number(value)
 }
 
 /// Kotlin keywords, which cannot name a property or be a package segment.

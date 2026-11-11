@@ -31,6 +31,46 @@ follow [Semantic Versioning](https://semver.org/).
   fails as `Method too large` with every other converter measured, and compares
   five of them on the pinned 100-icon corpus.
 
+- `vdt compose --draw` writes a Compose `Painter` that draws an SVG's paths
+  directly with `DrawScope`, instead of Kotlin that builds an `ImageVector`. An
+  `ImageVector` is as limited as a VectorDrawable in every way that concerns
+  artwork, so this is the target that lifts those limits: it expresses a group's
+  opacity composited as one layer, so overlapping shapes darken together as the
+  SVG draws them; a dashed stroke with its dash array and offset; a blend mode
+  on the layer it blends; a clip path that is not one nonzero path, so an
+  even-odd clip keeps its hole through its path's fill type, a clip path of
+  several shapes is unioned with `Path.op`, and a luminance mask that subtracts
+  a shape becomes `ClipOp.Difference`; and an alpha or luminance mask, as a
+  layer the group is composited through with `BlendMode.DstIn`, a luminance mask
+  through a second such layer that applies the alpha its colour matrix replaced.
+  A mask every
+  shape of which is opaque is exactly the region its shapes cover, so it is
+  written as clips rather than as a layer; the group is still isolated, so a
+  blend mode inside it reaches the group's own backdrop and not the artwork
+  behind. A drawing that blends is composited
+  in a layer of its own first, so a blend mode reaches the artwork's own
+  backdrop rather than the view the icon is drawn on. A blend mode that
+  Android's `PorterDuff` has no equivalent for — every `mix-blend-mode` except
+  `screen`, `overlay`, `darken`, and `lighten` — is drawn only on API 29 and
+  newer, so `minimum_api` is 29 and a `VDT004` note reports it for such a
+  drawing; below API 29 Compose paints the group normally.
+- The output is a `Painter` subclass behind a `@Composable` factory, the shape
+  `rememberVectorPainter` has. `Painter` is what keeps `Icon(painter = …)` and
+  tinting working, and the factory is what makes the intrinsic size right: a
+  `Painter` reports its size in pixels, and the only density a non-composable
+  declaration can see is none. `--draw` takes the same options as `compose`,
+  writes the same file names, and shares the 64 KB method budget, the path data
+  strings, and the number formatting. That budget is estimated from the bytecode
+  each construct compiles to, where a gradient brush, a dash, or a layer costs
+  several times a plain `Color`, and a drawing that would pass 64 KB is rejected
+  with `VDT027` rather than written, so what `--draw` accepts compiles. The Rust
+  API gains `Asset::to_draw_kotlin`, `convert_draw`, and
+  `convert_draw_with_options`, and the lowering keeps the extra constructs only
+  for this target, so the drawable and `ImageVector` outputs are unchanged. A
+  radial gradient's focal point, a pattern paint, an SVG filter, a non-uniform
+  scale on a stroked path, and text that is not outlined are still rejected by
+  either target.
+
 - `vdt guide [topic]` prints usage guidance compiled into the binary: the
   workflow, and pages for `adaptive`, `notification`, `drawables`,
   `diagnostics`, and `ci`. `vdt explain <code>` explains a diagnostic code

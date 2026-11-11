@@ -122,12 +122,19 @@ fn write_nodes(xml: &mut String, nodes: &[VectorNode], depth: usize, short_paths
                 write_nodes(xml, &group.children, depth + 1, short_paths);
                 let _ = writeln!(xml, "{indent}</group>");
             }
-            VectorNode::ClipPath(path_data_value) => {
+            VectorNode::ClipPath(clip) => {
+                // A drawable's clip path is one path filled by the nonzero
+                // rule, which is what the lowering gives it. A clip holding no
+                // shape writes nothing rather than panicking; the lowering
+                // never makes one.
+                let Some(shape) = clip.shapes.first() else {
+                    continue;
+                };
                 let _ = writeln!(xml, "{indent}<clip-path");
                 let _ = writeln!(
                     xml,
                     "{attribute_indent}android:pathData=\"{}\"",
-                    path_text(&path_data_value.0, short_paths)
+                    path_text(&shape.data.0, short_paths)
                 );
                 let _ = writeln!(xml, "{attribute_indent}/>");
             }

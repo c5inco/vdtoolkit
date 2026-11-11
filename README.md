@@ -40,7 +40,7 @@ vdt compose icon.svg --package com.example.icons -o Icons/Icon.kt
 | `optimize` | Convert, then shorten numbers and path data where it cannot change rendering. |
 | `adaptive` | Generate an adaptive launcher icon and its layer drawables into a `res/` directory. |
 | `notification` | Convert to a white 24dp notification icon drawable. |
-| `compose` | Convert to Compose `ImageVector` Kotlin source. Directory input requires `-o`. |
+| `compose` | Convert to Compose Kotlin source, as an `ImageVector` or with `--draw` a `Painter` that draws the paths. Directory input requires `-o`. |
 
 Every command except `adaptive` accepts a file or a directory (failed files in a directory are reported on stderr while remaining files continue).
 
@@ -126,9 +126,9 @@ vdt adaptive --foreground logo.svg --background bg.svg --monochrome logo.svg \
 
 Every layer is validated before any file is written, leaving the output directory untouched on error.
 
-### Compose ImageVector
+### Compose Kotlin
 
-`compose` writes Kotlin that builds a Compose `ImageVector` instead of a drawable, in the shape the Vector Asset importer and the material-icons generator emit: `public val <Name>: ImageVector` over a private backing field.
+`compose` writes Kotlin that draws the SVG instead of a drawable. By default it builds a Compose `ImageVector`, in the shape the Vector Asset importer and the material-icons generator emit: `public val <Name>: ImageVector` over a private backing field.
 
 ```sh
 vdt compose icon.svg --package com.example.icons -o src/main/java/com/example/icons/Icon.kt
@@ -143,10 +143,39 @@ vdt compose icon.svg --package com.example.icons --size 24 --optimize
 | `--size <dp>` | Same as `convert`: the longer side is that size and the aspect ratio is kept. |
 | `--optimize` | Shorten numbers where it cannot change rendering, as `optimize` does. |
 | `--strict`, `--allow-approximate` | Same as `convert`. |
+| `--draw` | Write a `Painter` that draws the artwork's paths directly, instead of an `ImageVector`. |
 
 The file name and the property are the same name: the SVG's file name in PascalCase, so `arrow-left.svg` becomes `ArrowLeft.kt` containing `ArrowLeft`. Load it with `Image(painter = rememberVectorPainter(Icon), ...)`; `Icon(imageVector = Icon)` tints it with `LocalContentColor` unless it is passed `tint = Color.Unspecified`.
 
 Compose draws the vector itself, so nothing here follows the VectorDrawable output format: a gradient, an even-odd fill, or a clip path needs no Android API level, and `minimum_api` and the `VDT004` note do not describe this output. Compose needs `minSdk` 23. A drawing with more than a thousand commands is written as path data strings, so the generated getter stays inside the JVM's 64 KB method limit however large the artwork is. What an `ImageVector` can express is as limited as a drawable in every way that concerns artwork, so the same SVGs convert and the same ones are rejected. [docs/benchmarks.md](docs/benchmarks.md) compares the output with other SVG-to-`ImageVector` converters.
+
+`--draw` writes the target that lifts those limits, because it does not go through a vector model at all. It emits a `Painter` subclass behind a `@Composable` factory — the shape `rememberVectorPainter` has — that draws the paths with `DrawScope`, and it is the only target that can express a group's opacity composited as one layer, a dashed stroke, a blend mode, a clip path that is not one nonzero path, and an alpha or luminance mask. A drawing that blends is composited in a layer of its own first, so a blend mode reaches the artwork's own backdrop and not whatever is behind the icon. One thing it needs an API level for: Compose draws a blend mode only on API 29 and newer, and paints the group normally below that for every mode Android's `PorterDuff` has no equivalent for — every `mix-blend-mode` except `screen`, `overlay`, `darken`, and `lighten` — so `minimum_api` is 29 for such a drawing. It inlines its blocks the way Kotlin inlines `apply { }`, so it estimates the bytecode its statements compile to — a gradient brush or a layer costs several times a plain `Color` — and rejects a drawing that would pass the JVM's 64 KB method with `VDT027` rather than write one that does not compile.
+
+```sh
+vdt compose --draw icon.svg --package com.example.icons -o src/main/java/com/example/icons/Icon.kt
+```
+
+```kotlin
+@Composable
+public fun rememberIcon(): Painter {
+    val density = LocalDensity.current
+    return remember(density) { IconPainter(density) }
+}
+
+private class IconPainter(private val density: Density) : Painter() {
+    override val intrinsicSize: Size = with(density) {
+        Size(24.dp.toPx(), 24.dp.toPx())
+    }
+
+    override fun DrawScope.onDraw() {
+        scale(size.width / 24f, size.height / 24f, pivot = Offset.Zero) {
+            drawPath(path = ..., color = Color(0xFF3DDC84))
+        }
+    }
+}
+```
+
+Use `Icon(painter = rememberIcon())`, which tints it with `LocalContentColor` unless it is passed `tint = Color.Unspecified`. A `Painter` is what keeps that call site the same as the `ImageVector` target's, and `rememberIcon()` is what makes the intrinsic size right, because a `Painter` reports its size in pixels and the only density a non-composable declaration can see is none. The painter rebuilds its paths every time it draws, where a `VectorPainter` caches a bitmap, so keep an icon on the `ImageVector` target when nothing needs the extra features. A radial gradient's focal point, a pattern, an SVG filter, and a non-uniform scale on a stroked path are rejected by either target.
 
 ## Example
 
